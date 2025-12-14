@@ -1,5 +1,14 @@
 {
   "servers": {
+    "telescope-mcp": {
+      "command": "/home/mark/src/telescope-mcp/.venv/bin/python",
+      "args": [
+        "-m",
+        "telescope_mcp.server",
+        "--dashboard-host", "127.0.0.1",
+        "--dashboard-port", "8080"
+      ]
+    },
     "docscope-mcp": {
       "command": "/home/mark/src/telescope-mcp/.venv/bin/python",
       "args": [

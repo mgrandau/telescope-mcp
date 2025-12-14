@@ -9,7 +9,7 @@ Use drivers.config to switch modes:
     config.use_digital_twin()  # or config.use_hardware()
 """
 
-from telescope_mcp.drivers import pyasi, motors, sensors, config
+from telescope_mcp.drivers import asi_sdk, motors, sensors, config
 from telescope_mcp.drivers.config import (
     DriverMode,
     DriverConfig,
@@ -21,7 +21,7 @@ from telescope_mcp.drivers.config import (
 )
 
 __all__ = [
-    "pyasi",
+    "asi_sdk",
     "motors",
     "sensors",
     "config",
