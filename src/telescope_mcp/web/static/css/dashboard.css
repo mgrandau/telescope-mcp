@@ -1,0 +1,237 @@
+/* Telescope Control Dashboard Styles */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    background: #16213e;
+    border-bottom: 2px solid #0f3460;
+}
+
+header h1 {
+    font-size: 1.5rem;
+}
+
+.status {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    background: #0f3460;
+}
+
+.status.connected {
+    background: #1b4332;
+}
+
+.status.error {
+    background: #6b2020;
+}
+
+main {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1rem;
+    padding: 1rem;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+@media (max-width: 1200px) {
+    main {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Camera Panel */
+.camera-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.camera-view {
+    background: #16213e;
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.camera-view h2 {
+    margin-bottom: 0.5rem;
+    font-size: 1.1rem;
+    color: #94a3b8;
+}
+
+.camera-view img {
+    width: 100%;
+    max-height: 400px;
+    object-fit: contain;
+    background: #000;
+    border-radius: 4px;
+}
+
+.camera-controls {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.camera-controls label {
+    font-size: 0.9rem;
+}
+
+.camera-controls input {
+    width: 80px;
+    padding: 0.3rem;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    background: #1a1a2e;
+    color: #eee;
+}
+
+.camera-controls button {
+    padding: 0.4rem 1rem;
+    background: #0f3460;
+    border: none;
+    border-radius: 4px;
+    color: #eee;
+    cursor: pointer;
+}
+
+.camera-controls button:hover {
+    background: #1a4a7e;
+}
+
+/* Control Panel */
+.control-panel {
+    background: #16213e;
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.control-panel h2 {
+    margin-bottom: 1rem;
+    font-size: 1.2rem;
+}
+
+.position-display {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: #1a1a2e;
+    border-radius: 4px;
+}
+
+.position-display strong {
+    color: #60a5fa;
+    font-family: monospace;
+    font-size: 1.2rem;
+}
+
+/* Direction Pad */
+.direction-pad {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.horizontal {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.direction-pad button {
+    width: 60px;
+    height: 60px;
+    font-size: 1.5rem;
+    background: #0f3460;
+    border: none;
+    border-radius: 8px;
+    color: #eee;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.direction-pad button:hover {
+    background: #1a4a7e;
+}
+
+.direction-pad button:active {
+    background: #2563eb;
+}
+
+.btn-stop {
+    background: #7f1d1d !important;
+}
+
+.btn-stop:hover {
+    background: #991b1b !important;
+}
+
+/* Speed Control */
+.speed-control {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.speed-control input[type="range"] {
+    flex: 1;
+}
+
+/* Goto Controls */
+.goto-controls {
+    padding-top: 1rem;
+    border-top: 1px solid #0f3460;
+}
+
+.goto-controls h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+    color: #94a3b8;
+}
+
+.goto-controls label {
+    margin-right: 1rem;
+}
+
+.goto-controls input {
+    width: 70px;
+    padding: 0.3rem;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    background: #1a1a2e;
+    color: #eee;
+}
+
+.goto-controls button {
+    padding: 0.5rem 1.5rem;
+    background: #166534;
+    border: none;
+    border-radius: 4px;
+    color: #eee;
+    cursor: pointer;
+    margin-left: 0.5rem;
+}
+
+.goto-controls button:hover {
+    background: #15803d;
+}

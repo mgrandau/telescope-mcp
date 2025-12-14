@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <header>
+        <h1>🔭 Telescope Control</h1>
+        <div id="status" class="status">Connecting...</div>
+    </header>
+
+    <main>
+        <section class="camera-panel">
+            <div class="camera-view">
+                <h2>Finder Camera</h2>
+                <img id="finder-stream" src="/stream/finder" alt="Finder Camera">
+                <div class="camera-controls">
+                    <label>Exposure (ms): <input type="number" id="finder-exposure" value="500"></label>
+                    <label>Gain: <input type="number" id="finder-gain" value="50"></label>
+                    <button onclick="updateFinderSettings()">Apply</button>
+                </div>
+            </div>
+
+            <div class="camera-view">
+                <h2>Main Camera</h2>
+                <img id="main-stream" src="/stream/main" alt="Main Camera">
+                <div class="camera-controls">
+                    <label>Exposure (ms): <input type="number" id="main-exposure" value="2000"></label>
+                    <label>Gain: <input type="number" id="main-gain" value="80"></label>
+                    <button onclick="updateMainSettings()">Apply</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="control-panel">
+            <h2>Motor Control</h2>
+            <div class="position-display">
+                <span>Altitude: <strong id="altitude">--</strong>°</span>
+                <span>Azimuth: <strong id="azimuth">--</strong>°</span>
+            </div>
+
+            <div class="motor-controls">
+                <div class="direction-pad">
+                    <button class="btn-up" onclick="moveAlt(100)">▲</button>
+                    <div class="horizontal">
+                        <button class="btn-left" onclick="moveAz(-100)">◀</button>
+                        <button class="btn-stop" onclick="stopMotors()">⏹</button>
+                        <button class="btn-right" onclick="moveAz(100)">▶</button>
+                    </div>
+                    <button class="btn-down" onclick="moveAlt(-100)">▼</button>
+                </div>
+
+                <div class="speed-control">
+                    <label>Speed: <input type="range" id="speed" min="10" max="500" value="100"></label>
+                    <span id="speed-value">100</span> steps/s
+                </div>
+            </div>
+
+            <div class="goto-controls">
+                <h3>Go To Position</h3>
+                <label>Alt: <input type="number" id="goto-alt" min="0" max="90" value="45"></label>
+                <label>Az: <input type="number" id="goto-az" min="0" max="360" value="180"></label>
+                <button onclick="gotoPosition()">Go</button>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

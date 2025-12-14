@@ -1,0 +1,77 @@
+[project]
+name = "telescope-mcp"
+version = "0.1.0"
+description = "MCP server + Web dashboard for telescope control (cameras, motors, sensors)"
+authors = [
+    {name = "mgrandau", email = "mgrandau@gmail.com"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "numpy>=2.0.0",
+    "opencv-python>=4.10.0",
+    "jinja2>=3.1.0",
+    "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.14.9",
+    "mypy>=1.19.0",
+    "pytest-cov>=7.0.0",
+]
+build = [
+    "cython>=3.0.0",
+    "setuptools>=75.0.0",
+]
+
+[project.scripts]
+telescope-mcp = "telescope_mcp.server:main"
+telescope-web = "telescope_mcp.web.app:main"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+includes = ["src/telescope_mcp"]
+package-dir = "src"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov-report=term-missing --no-cov-on-fail"
+
+[tool.coverage.run]
+source = ["telescope_mcp"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
