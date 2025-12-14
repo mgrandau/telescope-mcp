@@ -207,3 +207,4 @@ marimo/_lsp/
 __marimo__/
 pdm.lock
 .ai_sessions/
+utils/*.json
