@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "docscope-mcp": {
+      "command": "/home/mark/src/telescope-mcp/.venv/bin/python",
+      "args": [
+        "-m",
+        "docscope_mcp.server"
+      ]
+    },
+    "ai-session-tracker": {
+      "command": "/home/mark/src/telescope-mcp/.venv/bin/ai-session-tracker",
+      "args": [
+        "server"
+      ]
+    }
+  }
+}

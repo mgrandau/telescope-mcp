@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../../telescope-control"
+		},
+		{
+			"path": ".."
+		}
+	],
+	"settings": {
+		"dendron.rootDir": "."
+	}
+}
