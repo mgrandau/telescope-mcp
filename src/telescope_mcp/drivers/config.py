@@ -4,8 +4,9 @@ Supports switching between real hardware drivers and digital twin (stub) drivers
 for testing and development without physical hardware.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Protocol
 
 from telescope_mcp.drivers.motors import MotorController, StubMotorController
@@ -18,10 +19,21 @@ class DriverMode(Enum):
     DIGITAL_TWIN = "digital_twin"  # Simulated drivers for testing
 
 
+def _default_data_dir() -> Path:
+    """Get default data directory."""
+    return Path.home() / ".telescope-mcp" / "data"
+
+
 @dataclass
 class DriverConfig:
     """Configuration for driver selection."""
     mode: DriverMode = DriverMode.DIGITAL_TWIN
+    
+    # Data storage settings
+    data_dir: Path = field(default_factory=_default_data_dir)
+    
+    # Observer location (lat, lon, alt)
+    location: dict[str, float] = field(default_factory=dict)
     
     # Camera settings
     finder_camera_id: int = 0
@@ -234,6 +246,9 @@ class DriverFactory:
 # Global driver factory instance - can be reconfigured
 _factory: DriverFactory | None = None
 
+# Global session manager instance
+_session_manager: "SessionManager | None" = None
+
 
 def get_factory() -> DriverFactory:
     """Get the global driver factory."""
@@ -243,9 +258,31 @@ def get_factory() -> DriverFactory:
     return _factory
 
 
+def get_session_manager() -> "SessionManager":
+    """Get the global session manager.
+    
+    Creates the session manager on first access using the current config.
+    """
+    global _session_manager
+    if _session_manager is None:
+        from telescope_mcp.data import SessionManager
+        config = get_factory().config
+        _session_manager = SessionManager(
+            data_dir=config.data_dir,
+            location=config.location if config.location else None,
+        )
+    return _session_manager
+
+
 def configure(config: DriverConfig) -> None:
-    """Configure the global driver factory."""
-    global _factory
+    """Configure the global driver factory and session manager."""
+    global _factory, _session_manager
+    
+    # Shutdown existing session manager if reconfiguring
+    if _session_manager is not None:
+        _session_manager.shutdown()
+        _session_manager = None
+    
     _factory = DriverFactory(config)
 
 
@@ -257,3 +294,21 @@ def use_digital_twin() -> None:
 def use_hardware() -> None:
     """Switch to hardware mode."""
     configure(DriverConfig(mode=DriverMode.HARDWARE))
+
+
+def set_data_dir(data_dir: Path | str) -> None:
+    """Set the data directory for session storage."""
+    factory = get_factory()
+    factory.config.data_dir = Path(data_dir)
+    
+    # Reset session manager to pick up new config
+    global _session_manager
+    if _session_manager is not None:
+        _session_manager.shutdown()
+        _session_manager = None
+
+
+def set_location(lat: float, lon: float, alt: float = 0.0) -> None:
+    """Set the observer location."""
+    factory = get_factory()
+    factory.config.location = {"lat": lat, "lon": lon, "alt": alt}

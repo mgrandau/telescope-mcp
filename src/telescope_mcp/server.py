@@ -10,7 +10,7 @@ import uvicorn
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from telescope_mcp.tools import cameras, motors, position
+from telescope_mcp.tools import cameras, motors, position, sessions
 from telescope_mcp.web.app import create_app
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ def create_server() -> Server:
     cameras.register(server)
     motors.register(server)
     position.register(server)
+    sessions.register(server)
 
     return server
 
@@ -94,6 +95,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Port to run the web dashboard on (e.g., 8080)",
     )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Directory to store session data (ASDF files)",
+    )
     return parser.parse_args()
 
 
@@ -106,6 +113,18 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    
+    # Configure data directory if specified
+    if args.data_dir:
+        from pathlib import Path
+        from telescope_mcp.drivers.config import set_data_dir
+        set_data_dir(Path(args.data_dir))
+        logger.info(f"Data directory set to: {args.data_dir}")
+    
+    # Initialize session manager and log startup
+    from telescope_mcp.drivers.config import get_session_manager
+    manager = get_session_manager()
+    manager.log("INFO", "Telescope MCP server starting", source="server")
     
     asyncio.run(run_server(args.dashboard_host, args.dashboard_port))
 

@@ -10,8 +10,4 @@
     "python.analysis.extraPaths": [
         "${workspaceFolder}/src"
     ],
-    "terminal.integrated.env.linux": {
-        "PATH": "${workspaceFolder}/.venv/bin:${env:PATH}",
-        "VIRTUAL_ENV": "${workspaceFolder}/.venv"
-    }
 }
