@@ -9,8 +9,9 @@ from enum import Enum
 from pathlib import Path
 
 from telescope_mcp.drivers.cameras import (
+    ASICameraDriver,
     CameraDriver,
-    StubCameraDriver,
+    DigitalTwinCameraDriver,
 )
 from telescope_mcp.drivers.motors import MotorController, StubMotorController
 from telescope_mcp.drivers.sensors import PositionSensor, StubPositionSensor
@@ -63,10 +64,19 @@ class DriverFactory:
     def create_camera_driver(self) -> CameraDriver:
         """Create camera driver based on config."""
         if self.config.mode == DriverMode.HARDWARE:
-            # TODO: Import and return real zwoasi-based driver
-            raise NotImplementedError("Hardware camera driver not yet implemented")
+            return ASICameraDriver()
         else:
-            return StubCameraDriver()
+            # Use DigitalTwinCameraDriver with configured image source
+            from telescope_mcp.drivers.cameras import (
+                DigitalTwinConfig,
+                ImageSource,
+            )
+            
+            twin_config = DigitalTwinConfig(
+                image_source=ImageSource.DIRECTORY if self.config.stub_image_path else ImageSource.SYNTHETIC,
+                image_path=self.config.stub_image_path,
+            )
+            return DigitalTwinCameraDriver(twin_config)
     
     def create_motor_controller(self) -> MotorController:
         """Create motor controller based on config."""

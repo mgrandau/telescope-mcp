@@ -22,6 +22,14 @@ _dashboard_thread: Optional[threading.Thread] = None
 def create_server() -> Server:
     """Create and configure the MCP server."""
     server = Server("telescope-mcp")
+    
+    # Initialize camera registry with configured driver
+    from telescope_mcp.devices import init_registry
+    from telescope_mcp.drivers.config import get_factory
+    
+    driver = get_factory().create_camera_driver()
+    init_registry(driver)
+    logger.info(f"Initialized camera registry with {type(driver).__name__}")
 
     # Register tool handlers
     cameras.register(server)
@@ -70,12 +78,18 @@ async def run_server(dashboard_host: Optional[str], dashboard_port: Optional[int
     if dashboard_host and dashboard_port:
         start_dashboard(dashboard_host, dashboard_port)
     
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    finally:
+        # Clean up camera registry on shutdown
+        from telescope_mcp.devices import shutdown_registry
+        shutdown_registry()
+        logger.info("Camera registry shut down")
 
 
 def parse_args() -> argparse.Namespace:

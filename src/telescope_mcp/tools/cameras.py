@@ -1,37 +1,22 @@
 """MCP Tools for camera control.
 
-Uses the zwoasi Python package with the ASI Camera 2 SDK.
+Uses the device layer with CameraRegistry for hardware abstraction.
+Supports both real ASI cameras and digital twin simulation.
 """
 
 import base64
 import json
 import logging
+from dataclasses import asdict
 from typing import Any
 
-import zwoasi as asi
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
-from telescope_mcp.drivers.asi_sdk import get_sdk_library_path
+from telescope_mcp.devices import CameraRegistry, CaptureOptions, get_registry
+from telescope_mcp.drivers.config import get_factory
 
 logger = logging.getLogger(__name__)
-
-# Initialize ASI SDK on module load
-_sdk_initialized = False
-
-
-def _ensure_sdk_initialized() -> None:
-    """Initialize the ASI SDK if not already done."""
-    global _sdk_initialized
-    if not _sdk_initialized:
-        try:
-            sdk_path = get_sdk_library_path()
-            asi.init(sdk_path)
-            _sdk_initialized = True
-            logger.info(f"ASI SDK initialized from {sdk_path}")
-        except Exception as e:
-            logger.error(f"Failed to initialize ASI SDK: {e}")
-            raise
 
 
 # Tool definitions
@@ -160,24 +145,28 @@ def register(server: Server) -> None:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
 
-# Tool implementations using zwoasi + ASI SDK
+# Tool implementations using device layer
 
 
 async def _list_cameras() -> list[TextContent]:
-    """List connected ASI cameras."""
+    """List connected cameras via CameraRegistry."""
     try:
-        _ensure_sdk_initialized()
-        num_cameras = asi.get_num_cameras()
+        registry = get_registry()
+        cameras = registry.discover()
         
-        if num_cameras == 0:
-            return [TextContent(type="text", text="No ASI cameras connected")]
+        if not cameras:
+            return [TextContent(type="text", text="No cameras connected")]
         
-        camera_names = asi.list_cameras()
         result = {
-            "count": num_cameras,
+            "count": len(cameras),
             "cameras": [
-                {"id": i, "name": name}
-                for i, name in enumerate(camera_names)
+                {
+                    "id": cam_id,
+                    "name": info.name,
+                    "max_width": info.max_width,
+                    "max_height": info.max_height,
+                }
+                for cam_id, info in cameras.items()
             ]
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
@@ -189,26 +178,16 @@ async def _list_cameras() -> list[TextContent]:
 async def _get_camera_info(camera_id: int) -> list[TextContent]:
     """Get detailed camera information."""
     try:
-        _ensure_sdk_initialized()
+        registry = get_registry()
+        camera = registry.get(camera_id, auto_connect=True)
         
-        camera = asi.Camera(camera_id)
-        info = camera.get_camera_property()
-        controls = camera.get_controls()
-        camera.close()
+        # Get info from camera
+        info_dict = asdict(camera.info)
         
         result = {
             "camera_id": camera_id,
-            "properties": info,
-            "controls": {
-                name: {
-                    "min": ctrl["MinValue"],
-                    "max": ctrl["MaxValue"],
-                    "default": ctrl["DefaultValue"],
-                    "is_auto_supported": ctrl["IsAutoSupported"],
-                    "is_writable": ctrl["IsWritable"],
-                }
-                for name, ctrl in controls.items()
-            }
+            "info": info_dict,
+            "is_connected": camera.is_connected,
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
@@ -219,141 +198,78 @@ async def _get_camera_info(camera_id: int) -> list[TextContent]:
 async def _capture_frame(camera_id: int, exposure_us: int, gain: int) -> list[TextContent]:
     """Capture a single frame and return as base64 JPEG."""
     try:
-        _ensure_sdk_initialized()
+        registry = get_registry()
+        camera = registry.get(camera_id, auto_connect=True)
         
-        camera = asi.Camera(camera_id)
-        camera_info = camera.get_camera_property()
+        # Capture with specified settings
+        capture_result = camera.capture(CaptureOptions(
+            exposure_us=exposure_us,
+            gain=gain,
+        ))
         
-        # Set up capture parameters
-        camera.set_control_value(asi.ASI_GAIN, gain)
-        camera.set_control_value(asi.ASI_EXPOSURE, exposure_us)
+        # Encode image as base64
+        b64_image = base64.b64encode(capture_result.image_data).decode('utf-8')
         
-        # Use camera's native resolution
-        camera.set_image_type(asi.ASI_IMG_RAW8)
-        
-        # Capture image
-        camera.start_exposure()
-        
-        # Wait for exposure and get data
-        import time
-        time.sleep(exposure_us / 1_000_000 + 0.1)  # Wait for exposure + buffer
-        
-        status = camera.get_exposure_status()
-        while status == asi.ASI_EXP_WORKING:
-            time.sleep(0.01)
-            status = camera.get_exposure_status()
-        
-        if status == asi.ASI_EXP_SUCCESS:
-            # Get the image data
-            img = camera.get_data_after_exposure()
-            camera.close()
-            
-            # Convert to JPEG using opencv
-            import cv2
-            import numpy as np
-            
-            # Reshape based on camera info
-            width = camera_info["MaxWidth"]
-            height = camera_info["MaxHeight"]
-            img_array = np.frombuffer(img, dtype=np.uint8).reshape((height, width))
-            
-            # Encode as JPEG
-            _, jpeg_data = cv2.imencode('.jpg', img_array)
-            b64_image = base64.b64encode(jpeg_data.tobytes()).decode('utf-8')
-            
-            result = {
-                "camera_id": camera_id,
-                "width": width,
-                "height": height,
-                "exposure_us": exposure_us,
-                "gain": gain,
-                "image_base64": b64_image,
-            }
-            return [TextContent(type="text", text=json.dumps(result))]
-        else:
-            camera.close()
-            return [TextContent(type="text", text=f"Exposure failed with status: {status}")]
-            
+        result = {
+            "camera_id": camera_id,
+            "exposure_us": capture_result.exposure_us,
+            "gain": capture_result.gain,
+            "timestamp": capture_result.timestamp.isoformat(),
+            "image_base64": b64_image,
+        }
+        return [TextContent(type="text", text=json.dumps(result))]
     except Exception as e:
         logger.error(f"Error capturing frame from camera {camera_id}: {e}")
         return [TextContent(type="text", text=f"Error capturing frame: {e}")]
 
 
 async def _set_camera_control(camera_id: int, control: str, value: int) -> list[TextContent]:
-    """Set a camera control value."""
+    """Set a camera control value.
+    
+    Note: Control names should not include 'ASI_' prefix.
+    Valid names: Gain, Exposure, WB_R, WB_B, Gamma, etc.
+    """
     try:
-        _ensure_sdk_initialized()
+        registry = get_registry()
+        camera = registry.get(camera_id, auto_connect=True)
         
-        # Map control name to ASI constant
-        control_map = {
-            "ASI_GAIN": asi.ASI_GAIN,
-            "ASI_EXPOSURE": asi.ASI_EXPOSURE,
-            "ASI_GAMMA": asi.ASI_GAMMA,
-            "ASI_WB_R": asi.ASI_WB_R,
-            "ASI_WB_B": asi.ASI_WB_B,
-            "ASI_BRIGHTNESS": asi.ASI_BRIGHTNESS,
-            "ASI_OFFSET": asi.ASI_OFFSET,
-            "ASI_BANDWIDTHOVERLOAD": asi.ASI_BANDWIDTHOVERLOAD,
-            "ASI_FLIP": asi.ASI_FLIP,
-            "ASI_HIGH_SPEED_MODE": asi.ASI_HIGH_SPEED_MODE,
-        }
+        # Remove ASI_ prefix if provided for backwards compatibility
+        control_name = control.replace("ASI_", "")
         
-        if control not in control_map:
-            return [TextContent(type="text", text=f"Unknown control: {control}. Valid controls: {list(control_map.keys())}")]
+        # Set control via camera instance
+        if not camera._instance:
+            return [TextContent(type="text", text="Camera not connected")]
         
-        camera = asi.Camera(camera_id)
-        camera.set_control_value(control_map[control], value)
+        result_dict = camera._instance.set_control(control_name, value)
+        result_dict["camera_id"] = camera_id
         
-        # Read back the value to confirm
-        current = camera.get_control_value(control_map[control])
-        camera.close()
-        
-        result = {
-            "camera_id": camera_id,
-            "control": control,
-            "value_set": value,
-            "value_current": current[0],
-            "auto": current[1],
-        }
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        return [TextContent(type="text", text=json.dumps(result_dict, indent=2))]
     except Exception as e:
         logger.error(f"Error setting {control} on camera {camera_id}: {e}")
         return [TextContent(type="text", text=f"Error setting control: {e}")]
 
 
 async def _get_camera_control(camera_id: int, control: str) -> list[TextContent]:
-    """Get current value of a camera control."""
+    """Get current value of a camera control.
+    
+    Note: Control names should not include 'ASI_' prefix.
+    Valid names: Gain, Exposure, WB_R, WB_B, Temperature, etc.
+    """
     try:
-        _ensure_sdk_initialized()
+        registry = get_registry()
+        camera = registry.get(camera_id, auto_connect=True)
         
-        control_map = {
-            "ASI_GAIN": asi.ASI_GAIN,
-            "ASI_EXPOSURE": asi.ASI_EXPOSURE,
-            "ASI_GAMMA": asi.ASI_GAMMA,
-            "ASI_WB_R": asi.ASI_WB_R,
-            "ASI_WB_B": asi.ASI_WB_B,
-            "ASI_BRIGHTNESS": asi.ASI_BRIGHTNESS,
-            "ASI_OFFSET": asi.ASI_OFFSET,
-            "ASI_BANDWIDTHOVERLOAD": asi.ASI_BANDWIDTHOVERLOAD,
-            "ASI_TEMPERATURE": asi.ASI_TEMPERATURE,
-            "ASI_FLIP": asi.ASI_FLIP,
-            "ASI_HIGH_SPEED_MODE": asi.ASI_HIGH_SPEED_MODE,
-        }
+        # Remove ASI_ prefix if provided for backwards compatibility
+        control_name = control.replace("ASI_", "")
         
-        if control not in control_map:
-            return [TextContent(type="text", text=f"Unknown control: {control}. Valid controls: {list(control_map.keys())}")]
+        # Get control via camera instance
+        if not camera._instance:
+            return [TextContent(type="text", text="Camera not connected")]
         
-        camera = asi.Camera(camera_id)
-        current = camera.get_control_value(control_map[control])
-        camera.close()
+        result_dict = camera._instance.get_control(control_name)
+        result_dict["camera_id"] = camera_id
         
-        result = {
-            "camera_id": camera_id,
-            "control": control,
-            "value": current[0],
-            "auto": current[1],
-        }
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        return [TextContent(type="text", text=json.dumps(result_dict, indent=2))]
     except Exception as e:
         logger.error(f"Error getting {control} from camera {camera_id}: {e}")
         return [TextContent(type="text", text=f"Error getting control: {e}")]

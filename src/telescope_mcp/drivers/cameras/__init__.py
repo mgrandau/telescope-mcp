@@ -6,6 +6,10 @@ simulation for development without hardware.
 
 from typing import Protocol
 
+from telescope_mcp.drivers.cameras.asi import (
+    ASICameraDriver,
+    ASICameraInstance,
+)
 from telescope_mcp.drivers.cameras.twin import (
     DigitalTwinCameraDriver,
     DigitalTwinConfig,
@@ -74,6 +78,8 @@ class CameraDriver(Protocol):
 __all__ = [
     "CameraDriver",
     "CameraInstance",
+    "ASICameraDriver",
+    "ASICameraInstance",
     "DigitalTwinCameraDriver",
     "DigitalTwinConfig",
     "ImageSource",

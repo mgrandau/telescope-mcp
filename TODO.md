@@ -28,6 +28,38 @@ This document outlines the steps needed to port functionality from `telescope-co
 - [ ] Add new tool: `stop_video_capture`
 - [ ] Add new tool: `apply_overlay` (for finder camera alignment)
 
+### 1.4 Implement ASICameraDriver ✅ (Completed 2025-12-17)
+- [x] Created `drivers/cameras/asi.py` wrapping zwoasi
+- [x] Implemented `ASICameraDriver` following CameraDriver protocol
+- [x] Implemented `ASICameraInstance` following CameraInstance protocol
+- [x] SDK initialization with error handling
+- [x] Control mapping (Gain, Exposure, WB_R, WB_B, etc.)
+- [x] Image capture with RAW8 → JPEG encoding
+- [x] Updated `DriverFactory` to use real hardware
+- [x] Created test notebook `notebooks/test_asi_driver.ipynb`
+
+### 1.5 CameraController for Synchronized Captures ✅ (Completed 2025-12-17)
+- [x] `CameraController` already implemented in `devices/controller.py`
+- [x] Supports multi-camera coordination
+- [x] Calculates precise timing for centered exposures
+- [x] ThreadPoolExecutor for parallel capture
+- [x] Timing accuracy tracking (ideal vs actual)
+- [x] Injectable Clock protocol for testing
+- [x] Created test notebook `notebooks/test_sync_capture.ipynb`
+- [x] Already exported from `devices/__init__.py`
+
+### 1.6 Refactor MCP Tools to Use CameraRegistry ✅ (Completed 2025-12-17)
+- [x] Removed direct zwoasi calls from `tools/cameras.py`
+- [x] Updated to use `CameraRegistry` and device layer
+- [x] `list_cameras()` uses `registry.discover()`
+- [x] `get_camera_info()` uses `registry.get()` with `auto_connect=True`
+- [x] `capture_frame()` uses `camera.capture(CaptureOptions())`
+- [x] `set_camera_control()` uses `camera._instance.set_control()`
+- [x] `get_camera_control()` uses `camera._instance.get_control()`
+- [x] Added `init_registry()` call in `server.py` create_server()
+- [x] Added `shutdown_registry()` cleanup in server shutdown
+- [x] Backwards compatible with ASI_ prefix stripping
+
 ---
 
 ## Phase 2: Motor Control
