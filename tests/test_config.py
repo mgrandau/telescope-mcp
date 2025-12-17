@@ -10,7 +10,7 @@ from telescope_mcp.drivers import (
     use_digital_twin,
     use_hardware,
 )
-from telescope_mcp.drivers.config import StubCameraDriver, StubCameraInstance
+from telescope_mcp.drivers.cameras import StubCameraDriver, StubCameraInstance
 
 
 class TestDriverConfig:
