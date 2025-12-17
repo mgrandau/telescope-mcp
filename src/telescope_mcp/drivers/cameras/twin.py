@@ -30,8 +30,8 @@ class ImageSource(Enum):
 
 
 @dataclass
-class StubCameraConfig:
-    """Configuration for stub camera behavior."""
+class DigitalTwinConfig:
+    """Configuration for digital twin camera behavior."""
 
     image_source: ImageSource = ImageSource.SYNTHETIC
     image_path: Path | None = None  # Directory or file path
@@ -59,48 +59,48 @@ DEFAULT_CAMERAS: dict[int, dict] = {
 }
 
 
-class StubCameraDriver:
-    """Digital twin camera driver for testing without hardware."""
+class DigitalTwinCameraDriver:
+    """Digital twin camera driver for development without hardware."""
 
     def __init__(
         self,
-        config: StubCameraConfig | None = None,
+        config: DigitalTwinConfig | None = None,
         cameras: dict[int, dict] | None = None,
     ) -> None:
-        """Initialize stub camera driver.
+        """Initialize digital twin camera driver.
 
         Args:
             config: Configuration for image source behavior
             cameras: Custom camera definitions (defaults to ASI120MC-S and ASI482MC)
         """
-        self.config = config or StubCameraConfig()
+        self.config = config or DigitalTwinConfig()
         self._cameras = cameras or DEFAULT_CAMERAS.copy()
 
     def get_connected_cameras(self) -> dict:
         """Return simulated camera list."""
         return self._cameras.copy()
 
-    def open(self, camera_id: int) -> "StubCameraInstance":
+    def open(self, camera_id: int) -> "DigitalTwinCameraInstance":
         """Open a simulated camera."""
         if camera_id not in self._cameras:
             raise ValueError(f"Camera {camera_id} not found")
-        return StubCameraInstance(
+        return DigitalTwinCameraInstance(
             camera_id,
             self._cameras[camera_id],
             self.config,
         )
 
 
-class StubCameraInstance:
+class DigitalTwinCameraInstance:
     """Digital twin camera instance."""
 
     def __init__(
         self,
         camera_id: int,
         info: dict,
-        config: StubCameraConfig,
+        config: DigitalTwinConfig,
     ) -> None:
-        """Initialize stub camera instance.
+        """Initialize digital twin camera instance.
 
         Args:
             camera_id: Camera identifier
@@ -325,30 +325,30 @@ class StubCameraInstance:
         pass
 
 
-# Convenience function for creating pre-configured stubs
-def create_file_camera(image_path: Path | str, camera_id: int = 0) -> StubCameraDriver:
-    """Create a stub camera that returns a single image.
+# Convenience function for creating pre-configured twins
+def create_file_camera(image_path: Path | str, camera_id: int = 0) -> DigitalTwinCameraDriver:
+    """Create a digital twin camera that returns a single image.
 
     Args:
         image_path: Path to the image file
         camera_id: Which camera ID to simulate
 
     Returns:
-        Configured StubCameraDriver
+        Configured DigitalTwinCameraDriver
     """
-    config = StubCameraConfig(
+    config = DigitalTwinConfig(
         image_source=ImageSource.FILE,
         image_path=Path(image_path),
     )
-    return StubCameraDriver(config=config)
+    return DigitalTwinCameraDriver(config=config)
 
 
 def create_directory_camera(
     image_dir: Path | str,
     camera_id: int = 0,
     cycle: bool = True,
-) -> StubCameraDriver:
-    """Create a stub camera that cycles through images in a directory.
+) -> DigitalTwinCameraDriver:
+    """Create a digital twin camera that cycles through images in a directory.
 
     Args:
         image_dir: Path to directory containing images
@@ -356,11 +356,11 @@ def create_directory_camera(
         cycle: Whether to loop back to start after last image
 
     Returns:
-        Configured StubCameraDriver
+        Configured DigitalTwinCameraDriver
     """
-    config = StubCameraConfig(
+    config = DigitalTwinConfig(
         image_source=ImageSource.DIRECTORY,
         image_path=Path(image_dir),
         cycle_images=cycle,
     )
-    return StubCameraDriver(config=config)
+    return DigitalTwinCameraDriver(config=config)

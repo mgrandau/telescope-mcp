@@ -6,19 +6,13 @@ simulation for development without hardware.
 
 from typing import Protocol
 
-from telescope_mcp.drivers.cameras.stub import StubCameraDriver, StubCameraInstance
-
-
-class CameraDriver(Protocol):
-    """Protocol for camera drivers (real or simulated)."""
-
-    def get_connected_cameras(self) -> dict:
-        """List connected cameras."""
-        ...
-
-    def open(self, camera_id: int) -> "CameraInstance":
-        """Open a camera."""
-        ...
+from telescope_mcp.drivers.cameras.twin import (
+    DigitalTwinCameraDriver,
+    DigitalTwinConfig,
+    ImageSource,
+    create_directory_camera,
+    create_file_camera,
+)
 
 
 class CameraInstance(Protocol):
@@ -49,7 +43,40 @@ class CameraInstance(Protocol):
         ...
 
 
+class CameraDriver(Protocol):
+    """Protocol for camera drivers (real or simulated).
+    
+    Drivers can return either:
+    - dict[int, dict]: Raw info dicts (legacy, converted by registry)
+    - dict[int, CameraInfo]: Structured info (preferred)
+    """
+
+    def get_connected_cameras(self) -> dict:
+        """List connected cameras.
+        
+        Returns:
+            Dict mapping camera_id to camera info (dict or CameraInfo)
+        """
+        ...
+
+    def open(self, camera_id: int) -> CameraInstance:
+        """Open a camera.
+        
+        Args:
+            camera_id: ID of camera to open
+            
+        Returns:
+            CameraInstance for the opened camera
+        """
+        ...
+
+
 __all__ = [
     "CameraDriver",
-    "StubCameraDriver",
+    "CameraInstance",
+    "DigitalTwinCameraDriver",
+    "DigitalTwinConfig",
+    "ImageSource",
+    "create_directory_camera",
+    "create_file_camera",
 ]
