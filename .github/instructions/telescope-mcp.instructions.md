@@ -26,3 +26,10 @@ When defining settings in server.py or config:
 - `drivers/` = hardware implementations (ASI, DigitalTwin)
 - `tools/` = MCP tool definitions
 - Inject drivers into devices (DI pattern)
+
+## Documentation (AI-Optimized)
+Heavy docs on **all** functions (including `_private()` and tests):
+- Google-style: Args, Returns, Raises, Example
+- Module docstrings with usage at top
+
+Why: AI sees docstrings inline → less file traversal → faster assistance.

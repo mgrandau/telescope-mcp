@@ -292,7 +292,7 @@ class TestSessionManager:
         manager.start_session(SessionType.ALIGNMENT, purpose="ra_dec_calibration")
         manager.log("INFO", "Beginning plate solve")
         manager.add_calibration("plate_solve_results", {"ra": 12.5, "dec": 45.2})
-        alignment_path = manager.end_session()
+        _alignment_path = manager.end_session()  # noqa: F841
 
         # Back to idle
         manager.log("INFO", "Waiting for observation command")
@@ -305,7 +305,7 @@ class TestSessionManager:
         obs_path = manager.end_session()
 
         # Shutdown
-        final_path = manager.shutdown()
+        _final_path = manager.shutdown()  # noqa: F841
 
         # Verify files created
         asdf_files = list(tmp_path.rglob("*.asdf"))
@@ -328,9 +328,7 @@ class TestSessionManager:
         manager.start_session("alignment", purpose="focus")
         assert manager.active_session_type == SessionType.ALIGNMENT
 
-    def test_manager_shutdown_returns_none_if_no_session(
-        self, tmp_path: Path
-    ) -> None:
+    def test_manager_shutdown_returns_none_if_no_session(self, tmp_path: Path) -> None:
         """Shutdown returns None if no active session."""
         manager = SessionManager(data_dir=tmp_path)
         manager.shutdown()  # Closes idle session

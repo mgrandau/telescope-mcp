@@ -239,8 +239,12 @@ _MODEL_CONFIGS: dict[str, ModelConfig] = {
         notes="Best for day-to-day coding, fast responses",
     ),
     # OTHER ANTHROPIC CLAUDE MODELS
-    "claude-sonnet-4.5": ModelConfig(context=200_000, tools=32_000, conversation=160_000),
-    "claude-haiku-4.5": ModelConfig(context=200_000, tools=32_000, conversation=160_000),
+    "claude-sonnet-4.5": ModelConfig(
+        context=200_000, tools=32_000, conversation=160_000
+    ),
+    "claude-haiku-4.5": ModelConfig(
+        context=200_000, tools=32_000, conversation=160_000
+    ),
     "claude-opus-4.1": ModelConfig(context=200_000, tools=32_000, conversation=160_000),
     # GOOGLE GEMINI MODELS
     "gemini-2.5-pro": ModelConfig(
@@ -249,17 +253,25 @@ _MODEL_CONFIGS: dict[str, ModelConfig] = {
         conversation=920_000,
         notes="Large context, good for multi-file refactoring",
     ),
-    "gemini-3-pro": ModelConfig(context=2_000_000, tools=128_000, conversation=1_840_000),
+    "gemini-3-pro": ModelConfig(
+        context=2_000_000, tools=128_000, conversation=1_840_000
+    ),
     # OPENAI GPT-5 SERIES
     "gpt-5": ModelConfig(context=256_000, tools=40_000, conversation=206_000),
     "gpt-5-codex": ModelConfig(context=256_000, tools=40_000, conversation=206_000),
     "gpt-5.1": ModelConfig(context=512_000, tools=48_000, conversation=452_000),
     "gpt-5.1-codex": ModelConfig(context=512_000, tools=48_000, conversation=452_000),
-    "gpt-5.1-codex-mini": ModelConfig(context=256_000, tools=40_000, conversation=206_000),
-    "gpt-5.1-codex-max": ModelConfig(context=1_000_000, tools=64_000, conversation=920_000),
+    "gpt-5.1-codex-mini": ModelConfig(
+        context=256_000, tools=40_000, conversation=206_000
+    ),
+    "gpt-5.1-codex-max": ModelConfig(
+        context=1_000_000, tools=64_000, conversation=920_000
+    ),
     "gpt-5.2": ModelConfig(context=1_000_000, tools=64_000, conversation=920_000),
     # OTHER MODELS
-    "grok-code-fast-1": ModelConfig(context=131_072, tools=24_000, conversation=101_000),
+    "grok-code-fast-1": ModelConfig(
+        context=131_072, tools=24_000, conversation=101_000
+    ),
     "raptor-mini": ModelConfig(
         context=264_000,
         tools=40_000,
@@ -267,8 +279,12 @@ _MODEL_CONFIGS: dict[str, ModelConfig] = {
         notes="Fast, efficient overhead ratio",
     ),
     # LEGACY MODELS (for reference)
-    "gpt-4o": ModelConfig(context=128_000, tools=24_000, conversation=98_000, legacy=True),
-    "gpt-4-turbo": ModelConfig(context=128_000, tools=24_000, conversation=98_000, legacy=True),
+    "gpt-4o": ModelConfig(
+        context=128_000, tools=24_000, conversation=98_000, legacy=True
+    ),
+    "gpt-4-turbo": ModelConfig(
+        context=128_000, tools=24_000, conversation=98_000, legacy=True
+    ),
     "o1": ModelConfig(context=200_000, tools=32_000, conversation=160_000),
     "o1-mini": ModelConfig(context=128_000, tools=24_000, conversation=98_000),
 }
@@ -325,7 +341,9 @@ class BuiltinToolSpec:
         cls, name: str, desc_length: int, params: list[str] | tuple[str, ...]
     ) -> BuiltinToolSpec:
         """Factory method to create BuiltinToolSpec from list or tuple params."""
-        return cls(name, desc_length, tuple(params) if isinstance(params, list) else params)
+        return cls(
+            name, desc_length, tuple(params) if isinstance(params, list) else params
+        )
 
 
 # VS Code built-in tools (estimated from typical Copilot agent sessions)
@@ -345,11 +363,19 @@ VSCODE_BUILTIN_TOOLS: dict[str, list[BuiltinToolSpec]] = {
         BuiltinToolSpec.create(
             "grep_search",
             890,
-            ["query", "isRegexp", "includePattern?", "includeIgnoredFiles?", "maxResults?"],
+            [
+                "query",
+                "isRegexp",
+                "includePattern?",
+                "includeIgnoredFiles?",
+                "maxResults?",
+            ],
         ),
     ],
     "terminal": [
-        BuiltinToolSpec.create("run_in_terminal", 1580, ["command", "explanation", "isBackground"]),
+        BuiltinToolSpec.create(
+            "run_in_terminal", 1580, ["command", "explanation", "isBackground"]
+        ),
         BuiltinToolSpec.create("get_terminal_output", 100, ["id"]),
         BuiltinToolSpec.create("terminal_last_command", 60, []),
         BuiltinToolSpec.create("terminal_selection", 55, []),
@@ -368,22 +394,34 @@ VSCODE_BUILTIN_TOOLS: dict[str, list[BuiltinToolSpec]] = {
     "notebooks": [
         BuiltinToolSpec.create("create_new_jupyter_notebook", 295, ["query"]),
         BuiltinToolSpec.create(
-            "edit_notebook_file", 780, ["filePath", "editType", "cellId", "language?", "newCode?"]
+            "edit_notebook_file",
+            780,
+            ["filePath", "editType", "cellId", "language?", "newCode?"],
         ),
         BuiltinToolSpec.create(
-            "run_notebook_cell", 480, ["filePath", "cellId", "continueOnError?", "reason?"]
+            "run_notebook_cell",
+            480,
+            ["filePath", "cellId", "continueOnError?", "reason?"],
         ),
-        BuiltinToolSpec.create("read_notebook_cell_output", 320, ["filePath", "cellId"]),
+        BuiltinToolSpec.create(
+            "read_notebook_cell_output", 320, ["filePath", "cellId"]
+        ),
         BuiltinToolSpec.create("copilot_getNotebookSummary", 420, ["filePath"]),
         BuiltinToolSpec.create("configure_notebook", 280, ["filePath"]),
-        BuiltinToolSpec.create("notebook_install_packages", 340, ["filePath", "packageList"]),
+        BuiltinToolSpec.create(
+            "notebook_install_packages", 340, ["filePath", "packageList"]
+        ),
         BuiltinToolSpec.create("notebook_list_packages", 280, ["filePath"]),
     ],
     "python": [
         BuiltinToolSpec.create("configure_python_environment", 260, ["resourcePath?"]),
-        BuiltinToolSpec.create("get_python_environment_details", 340, ["resourcePath?"]),
+        BuiltinToolSpec.create(
+            "get_python_environment_details", 340, ["resourcePath?"]
+        ),
         BuiltinToolSpec.create("get_python_executable_details", 520, ["resourcePath?"]),
-        BuiltinToolSpec.create("install_python_packages", 240, ["packageList", "resourcePath?"]),
+        BuiltinToolSpec.create(
+            "install_python_packages", 240, ["packageList", "resourcePath?"]
+        ),
     ],
     "workspace": [
         BuiltinToolSpec.create("create_new_workspace", 1580, ["query"]),
@@ -397,7 +435,9 @@ VSCODE_BUILTIN_TOOLS: dict[str, list[BuiltinToolSpec]] = {
     ],
     "vscode_specific": [
         BuiltinToolSpec.create("get_vscode_api", 1650, ["query"]),
-        BuiltinToolSpec.create("run_vscode_command", 180, ["commandId", "name", "args?"]),
+        BuiltinToolSpec.create(
+            "run_vscode_command", 180, ["commandId", "name", "args?"]
+        ),
         BuiltinToolSpec.create("install_extension", 160, ["id", "name"]),
         BuiltinToolSpec.create(
             "vscode_searchExtensions_internal", 520, ["category?", "keywords?", "ids?"]
@@ -588,7 +628,9 @@ class AnalysisContext:
     @property
     def token_aggregation(self) -> TokenAggregation:
         """Calculate token aggregation for this context."""
-        return TokenAggregation.from_tools(self.vscode_tools, self.servers, self.active_tools)
+        return TokenAggregation.from_tools(
+            self.vscode_tools, self.servers, self.active_tools
+        )
 
     @property
     def total_instruction_tokens(self) -> int:
@@ -632,7 +674,9 @@ def query_mcp_server(name: str, command: str, args: list[str]) -> MCPServerInfo:
         }
     )
 
-    tools_request = json.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2})
+    tools_request = json.dumps(
+        {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2}
+    )
 
     try:
         # Run the MCP server and send requests
@@ -864,10 +908,15 @@ def _extract_tool_from_tool_call(entry: dict) -> ToolInfo | None:
 
     tname = function.get("name") or tool.get("name")
     desc = function.get("description") or ""
-    params = function.get("parameters") or function.get("inputSchema") or {"properties": {}}
+    params = (
+        function.get("parameters") or function.get("inputSchema") or {"properties": {}}
+    )
 
     return ToolInfo(
-        name=tname or "unknown", description=desc, parameters=params, source="replay:toolCall"
+        name=tname or "unknown",
+        description=desc,
+        parameters=params,
+        source="replay:toolCall",
     )
 
 
@@ -947,7 +996,9 @@ def _extract_metadata_from_entry(entry: dict) -> dict[str, Any]:
     return result
 
 
-def _update_active_tools_map(active_tools_map: dict[str, ToolInfo], tool_info: ToolInfo) -> None:
+def _update_active_tools_map(
+    active_tools_map: dict[str, ToolInfo], tool_info: ToolInfo
+) -> None:
     """Update active tools map, keeping the longest description.
 
     Args:
@@ -1037,7 +1088,9 @@ def parse_chat_replay(path: Path) -> dict[str, Any]:
                     _update_active_tools_map(active_tools_map, tool_info)
 
             # Collect potential instruction/system content
-            message = entry.get("message") or entry.get("request") or entry.get("response")
+            message = (
+                entry.get("message") or entry.get("request") or entry.get("response")
+            )
             if isinstance(message, dict):
                 text = message.get("text") or message.get("content") or None
                 if isinstance(text, str) and text.strip():
@@ -1063,7 +1116,12 @@ def parse_chat_replay(path: Path) -> dict[str, Any]:
         if pm_model:
             models.setdefault(
                 pm_model,
-                {"count": 0, "prompt_tokens": 0, "tool_tokens_est": 0, "instruction_tokens_est": 0},
+                {
+                    "count": 0,
+                    "prompt_tokens": 0,
+                    "tool_tokens_est": 0,
+                    "instruction_tokens_est": 0,
+                },
             )
             models[pm_model]["count"] += 1
             models[pm_model]["prompt_tokens"] += prompt_tokens or 0
@@ -1071,7 +1129,9 @@ def parse_chat_replay(path: Path) -> dict[str, Any]:
             models[pm_model]["instruction_tokens_est"] += instruction_tokens_est
 
     # Convert active tools map to sorted list
-    active_tools = sorted(active_tools_map.values(), key=lambda t: t.estimated_tokens, reverse=True)
+    active_tools = sorted(
+        active_tools_map.values(), key=lambda t: t.estimated_tokens, reverse=True
+    )
 
     return {
         "total_prompts": len(per_prompt),
@@ -1084,7 +1144,9 @@ def parse_chat_replay(path: Path) -> dict[str, Any]:
 
 
 def calculate_buffer_usage(
-    total_tool_tokens: int, total_instruction_tokens: int = 0, model: str = DEFAULT_MODEL
+    total_tool_tokens: int,
+    total_instruction_tokens: int = 0,
+    model: str = DEFAULT_MODEL,
 ) -> dict[str, Any]:
     """Calculate buffer usage percentages.
 
@@ -1229,12 +1291,19 @@ def _print_instructions_section(
             rows.append([f"  {str(f.path)[:45]}", f.line_count, f.estimated_tokens, ""])
 
     rows.append(
-        ["── Instructions Total", len(instruction_files), total_instruction_tokens, "100.0%"]
+        [
+            "── Instructions Total",
+            len(instruction_files),
+            total_instruction_tokens,
+            "100.0%",
+        ]
     )
 
     print(
         format_table(
-            ["File / Category", "Lines", "Est. Tokens", "% of Instr"], rows, ["<", ">", ">", ">"]
+            ["File / Category", "Lines", "Est. Tokens", "% of Instr"],
+            rows,
+            ["<", ">", ">", ">"],
         )
     )
 
@@ -1312,10 +1381,14 @@ def _print_tools_section(
     )
 
     # Grand total
-    rows.append(["TOTAL", len(vscode_tools) + len(all_mcp_tools), total_tool_tokens, "100.0%"])
+    rows.append(
+        ["TOTAL", len(vscode_tools) + len(all_mcp_tools), total_tool_tokens, "100.0%"]
+    )
 
     print(
-        format_table(["Source", "Tools", "Est. Tokens", "% of Tools"], rows, ["<", ">", ">", ">"])
+        format_table(
+            ["Source", "Tools", "Est. Tokens", "% of Tools"], rows, ["<", ">", ">", ">"]
+        )
     )
     print()
 
@@ -1350,8 +1423,12 @@ def _print_buffer_usage_box(buffer_usage: dict[str, Any], model: str) -> None:
     total_limit = bu["total_context"]["limit"]
     total_pct = bu["total_context"]["percentage"]
 
-    instr_line = f"{instr_used:>6,} / {instr_limit:>6,} tokens ({instr_remaining:,} remaining)"
-    tools_line = f"{tools_used:>6,} / {tools_limit:>6,} tokens ({tools_remaining:,} remaining)"
+    instr_line = (
+        f"{instr_used:>6,} / {instr_limit:>6,} tokens ({instr_remaining:,} remaining)"
+    )
+    tools_line = (
+        f"{tools_used:>6,} / {tools_limit:>6,} tokens ({tools_remaining:,} remaining)"
+    )
     total_line = (
         f"TOTAL OVERHEAD: {total_used:>6,} / {total_limit:>6,} tokens │ "
         f"{total_pct:>5.1f}% of context"
@@ -1389,7 +1466,9 @@ def _print_replay_summary(replay_summary: dict[str, Any]) -> None:
     print("-" * 70)
 
     rows = []
-    for mname, mstats in sorted(replay_summary.get("models", {}).items(), key=lambda x: x[0]):
+    for mname, mstats in sorted(
+        replay_summary.get("models", {}).items(), key=lambda x: x[0]
+    ):
         count = mstats.get("count", 0)
         prompt_total = mstats.get("prompt_tokens", 0)
         tool_total = mstats.get("tool_tokens_est", 0)
@@ -1402,7 +1481,9 @@ def _print_replay_summary(replay_summary: dict[str, Any]) -> None:
         buffers_for_model = COPILOT_MODELS.get(mname, COPILOT_MODELS[DEFAULT_MODEL])
         tools_pct = safe_percentage(avg_tools, buffers_for_model.get("tools", 1))
         instr_pct = safe_percentage(avg_instr, buffers_for_model.get("instructions", 1))
-        total_pct = safe_percentage(avg_tools + avg_instr, buffers_for_model.get("context", 1))
+        total_pct = safe_percentage(
+            avg_tools + avg_instr, buffers_for_model.get("context", 1)
+        )
 
         rows.append(
             [
@@ -1437,7 +1518,9 @@ def _print_replay_summary(replay_summary: dict[str, Any]) -> None:
         print()
 
 
-def _print_model_comparison(total_tool_tokens: int, total_instruction_tokens: int) -> None:
+def _print_model_comparison(
+    total_tool_tokens: int, total_instruction_tokens: int
+) -> None:
     """Print the model comparison table.
 
     Args:
@@ -1448,7 +1531,8 @@ def _print_model_comparison(total_tool_tokens: int, total_instruction_tokens: in
     print("-" * 70)
     total_overhead = total_tool_tokens + total_instruction_tokens
     print(
-        f"Your overhead is FIXED at {total_overhead:,} tokens. " "Here's how it impacts each model:"
+        f"Your overhead is FIXED at {total_overhead:,} tokens. "
+        "Here's how it impacts each model:"
     )
     print()
 
@@ -1456,7 +1540,9 @@ def _print_model_comparison(total_tool_tokens: int, total_instruction_tokens: in
     for m, b in sorted(COPILOT_MODELS.items(), key=lambda x: x[1]["context"]):
         instr_pct = safe_percentage(total_instruction_tokens, b["instructions"])
         tools_pct = safe_percentage(total_tool_tokens, b["tools"])
-        total_pct = safe_percentage(total_tool_tokens + total_instruction_tokens, b["context"])
+        total_pct = safe_percentage(
+            total_tool_tokens + total_instruction_tokens, b["context"]
+        )
         rows.append(
             [
                 m,
@@ -1469,7 +1555,9 @@ def _print_model_comparison(total_tool_tokens: int, total_instruction_tokens: in
 
     print(
         format_table(
-            ["Model", "Context", "Instr %", "Tools %", "Total %"], rows, ["<", ">", ">", ">", ">"]
+            ["Model", "Context", "Instr %", "Tools %", "Total %"],
+            rows,
+            ["<", ">", ">", ">", ">"],
         )
     )
     print()
@@ -1478,7 +1566,9 @@ def _print_model_comparison(total_tool_tokens: int, total_instruction_tokens: in
     print()
 
 
-def _print_pruning_candidates(candidates: dict[str, list[dict]], show_prune: bool) -> None:
+def _print_pruning_candidates(
+    candidates: dict[str, list[dict]], show_prune: bool
+) -> None:
     """Print the pruning candidates section.
 
     Args:
@@ -1520,7 +1610,9 @@ def _print_pruning_candidates(candidates: dict[str, list[dict]], show_prune: boo
 
 
 def _print_verbose_tools(
-    vscode_tools: list[ToolInfo], all_mcp_tools: list[ToolInfo], active_tools: list[ToolInfo] | None
+    vscode_tools: list[ToolInfo],
+    all_mcp_tools: list[ToolInfo],
+    active_tools: list[ToolInfo] | None,
 ) -> None:
     """Print detailed tool list (verbose mode).
 
@@ -1539,7 +1631,11 @@ def _print_verbose_tools(
     for t in all_tools[:30]:  # Top 30
         rows.append([t.name[:40], t.source[:20], t.param_count, t.estimated_tokens])
 
-    print(format_table(["Tool Name", "Source", "Params", "Tokens"], rows, ["<", "<", ">", ">"]))
+    print(
+        format_table(
+            ["Tool Name", "Source", "Params", "Tokens"], rows, ["<", "<", ">", ">"]
+        )
+    )
     if len(all_tools) > 30:
         print(f"  ... and {len(all_tools) - 30} more tools")
 
@@ -1605,7 +1701,9 @@ def print_analysis(
     total_vscode_tokens = tokens.vscode
     total_mcp_tokens = tokens.mcp
     total_instruction_tokens = sum(f.estimated_tokens for f in instruction_files)
-    buffer_usage = calculate_buffer_usage(total_tool_tokens, total_instruction_tokens, model)
+    buffer_usage = calculate_buffer_usage(
+        total_tool_tokens, total_instruction_tokens, model
+    )
 
     # JSON output mode
     if as_json:
@@ -1628,7 +1726,11 @@ def print_analysis(
                     "tokens": s.total_tokens,
                     "error": s.error,
                     "tool_details": [
-                        {"name": t.name, "tokens": t.estimated_tokens, "params": t.param_count}
+                        {
+                            "name": t.name,
+                            "tokens": t.estimated_tokens,
+                            "params": t.param_count,
+                        }
                         for t in s.tools
                     ]
                     if verbose
@@ -1671,7 +1773,9 @@ def print_analysis(
     if compare_models:
         _print_model_comparison(total_tool_tokens, total_instruction_tokens)
 
-    candidates = identify_pruning_candidates(servers, vscode_tools, active_tools=active_tools)
+    candidates = identify_pruning_candidates(
+        servers, vscode_tools, active_tools=active_tools
+    )
     _print_pruning_candidates(candidates, show_prune)
 
     if verbose:
@@ -1709,7 +1813,9 @@ def identify_pruning_candidates(
     all_tools = aggregation.all_tools
 
     # High impact: Large tool schemas (> LARGE_TOOL_THRESHOLD_TOKENS)
-    large_tools = [t for t in all_tools if t.estimated_tokens > LARGE_TOOL_THRESHOLD_TOKENS]
+    large_tools = [
+        t for t in all_tools if t.estimated_tokens > LARGE_TOOL_THRESHOLD_TOKENS
+    ]
     for tool in sorted(large_tools, key=lambda t: t.estimated_tokens, reverse=True):
         action = _get_pruning_action(tool.name, tool.estimated_tokens)
         candidates["high_impact"].append(
@@ -1932,7 +2038,9 @@ def main() -> int:
         epilog=__doc__,
     )
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Show individual tools")
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Show individual tools"
+    )
     parser.add_argument(
         "--workspace",
         "-w",
@@ -1958,7 +2066,10 @@ def main() -> int:
         help="Path to Copilot chat replay JSON export (adds token usage stats)",
     )
     parser.add_argument(
-        "--prune", "-p", action="store_true", help="Show detailed pruning recommendations"
+        "--prune",
+        "-p",
+        action="store_true",
+        help="Show detailed pruning recommendations",
     )
     parser.add_argument(
         "--primary",

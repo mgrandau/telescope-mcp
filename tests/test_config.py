@@ -1,16 +1,16 @@
 """Tests for driver configuration and digital twin."""
 
 import pytest
+
 from telescope_mcp.drivers import (
-    DriverMode,
     DriverConfig,
     DriverFactory,
-    get_factory,
+    DriverMode,
     configure,
+    get_factory,
     use_digital_twin,
-    use_hardware,
 )
-from telescope_mcp.drivers.cameras import CameraInstance, DigitalTwinCameraDriver
+from telescope_mcp.drivers.cameras import DigitalTwinCameraDriver
 
 
 class TestDriverConfig:
@@ -25,10 +25,10 @@ class TestDriverConfig:
         """Configure should update the global factory."""
         use_digital_twin()
         assert get_factory().config.mode == DriverMode.DIGITAL_TWIN
-        
+
         configure(DriverConfig(mode=DriverMode.HARDWARE))
         assert get_factory().config.mode == DriverMode.HARDWARE
-        
+
         # Reset to digital twin
         use_digital_twin()
 
@@ -50,8 +50,8 @@ class TestDigitalTwinCameraDriver:
         camera = driver.open(0)
         assert camera is not None
         # Check that it implements CameraInstance protocol
-        assert hasattr(camera, 'get_info')
-        assert hasattr(camera, 'capture')
+        assert hasattr(camera, "get_info")
+        assert hasattr(camera, "capture")
 
     def test_open_invalid_camera(self):
         """Should raise error for invalid camera ID."""
@@ -83,7 +83,7 @@ class TestDigitalTwinCameraInstance:
         """Should set and retrieve control values."""
         driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
-        
+
         camera.set_control("ASI_GAIN", 75)
         result = camera.get_control("ASI_GAIN")
         assert result["value"] == 75
@@ -92,12 +92,12 @@ class TestDigitalTwinCameraInstance:
         """Should return JPEG bytes."""
         driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
-        
+
         jpeg = camera.capture(exposure_us=100000)
         assert isinstance(jpeg, bytes)
         assert len(jpeg) > 0
         # JPEG magic bytes
-        assert jpeg[:2] == b'\xff\xd8'
+        assert jpeg[:2] == b"\xff\xd8"
 
 
 class TestDriverFactory:
@@ -109,16 +109,18 @@ class TestDriverFactory:
         driver = factory.create_camera_driver()
         assert isinstance(driver, DigitalTwinCameraDriver)
 
-    def test_create_camera_driver_hardware_not_implemented(self):
-        """Should raise NotImplementedError for hardware mode (until implemented)."""
+    def test_create_camera_driver_hardware_mode(self):
+        """Should create ASI camera driver in hardware mode."""
+        from telescope_mcp.drivers.cameras import ASICameraDriver
+
         factory = DriverFactory(DriverConfig(mode=DriverMode.HARDWARE))
-        with pytest.raises(NotImplementedError):
-            factory.create_camera_driver()
+        driver = factory.create_camera_driver()
+        assert isinstance(driver, ASICameraDriver)
 
     def test_create_motor_controller_digital_twin(self):
         """Should create stub motor controller in digital twin mode."""
         from telescope_mcp.drivers.motors import StubMotorController
-        
+
         factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
         controller = factory.create_motor_controller()
         assert isinstance(controller, StubMotorController)
@@ -126,7 +128,7 @@ class TestDriverFactory:
     def test_create_position_sensor_digital_twin(self):
         """Should create stub position sensor in digital twin mode."""
         from telescope_mcp.drivers.sensors import StubPositionSensor
-        
+
         factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
         sensor = factory.create_position_sensor()
         assert isinstance(sensor, StubPositionSensor)

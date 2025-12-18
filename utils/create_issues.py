@@ -460,7 +460,9 @@ def invoke_with_retry(
 
             # Check for rate limit
             output = result.stderr + result.stdout
-            rate_limited = any(pattern in output.lower() for pattern in RATE_LIMIT_PATTERNS)
+            rate_limited = any(
+                pattern in output.lower() for pattern in RATE_LIMIT_PATTERNS
+            )
 
             if rate_limited:
                 msg = f"{operation}: Rate limited, waiting {delay_ms}ms "
@@ -495,7 +497,9 @@ def invoke_with_retry(
                     error=str(e),
                     attempt=attempt,
                 )
-            print_warning(f"{operation}: Attempt {attempt} failed, retrying in {delay_ms}ms...")
+            print_warning(
+                f"{operation}: Attempt {attempt} failed, retrying in {delay_ms}ms..."
+            )
             time.sleep(delay_ms / 1000)
             delay_ms *= 2
 
@@ -619,10 +623,13 @@ def create_label(label: Label, repo: str) -> OperationResult:
 
     # Check for auth errors
     if result.error and any(
-        x in result.error.lower() for x in ["authentication", "permission", "401", "403"]
+        x in result.error.lower()
+        for x in ["authentication", "permission", "401", "403"]
     ):
         print_error("Authentication/permission error")
-        raise PermissionError(f"Authentication error creating label '{label.name}': {result.error}")
+        raise PermissionError(
+            f"Authentication error creating label '{label.name}': {result.error}"
+        )
 
     print_error(f"Failed: {result.error}")
     return OperationResult(success=False, error=result.error)
@@ -706,11 +713,15 @@ def get_required_labels() -> list[Label]:
         Label("estimate: 8h", "Estimated effort: 8 hours (1 day)", "3d7fc2"),
         Label("estimate: 16h", "Estimated effort: 16 hours (2 days)", "2e6bb5"),
         Label("estimate: 40h", "Estimated effort: 40 hours (1 week)", "1f5aa8"),
-        Label("estimate: 80h", "Estimated effort: 80 hours (2 weeks / month+)", "0d4a9b"),
+        Label(
+            "estimate: 80h", "Estimated effort: 80 hours (2 weeks / month+)", "0d4a9b"
+        ),
     ]
 
 
-def get_missing_labels(existing_labels: list[dict], required_labels: list[Label]) -> list[Label]:
+def get_missing_labels(
+    existing_labels: list[dict], required_labels: list[Label]
+) -> list[Label]:
     """Find required labels not in repository → list[Label].
 
     Compares required label names against existing. Returns labels that need
@@ -799,7 +810,11 @@ def write_labels_for_ai(labels: list[dict]) -> None:
     categories = [lbl for lbl in labels if lbl["name"] in CATEGORY_LABELS]
     workflow = [lbl for lbl in labels if lbl["name"] in WORKFLOW_LABELS]
     estimates = [lbl for lbl in labels if lbl["name"].startswith("estimate:")]
-    other = [lbl for lbl in labels if lbl not in priorities + categories + workflow + estimates]
+    other = [
+        lbl
+        for lbl in labels
+        if lbl not in priorities + categories + workflow + estimates
+    ]
 
     print()
     print_color("=" * 60, Colors.GREEN)
@@ -851,14 +866,20 @@ def write_labels_for_ai(labels: list[dict]) -> None:
         print()
 
     print_color("USAGE FOR AI:", Colors.CYAN)
-    print_color("  When creating issues, select labels from above categories:", Colors.WHITE)
+    print_color(
+        "  When creating issues, select labels from above categories:", Colors.WHITE
+    )
     print_color("  1. One priority label (p1, p2, p3, p4)", Colors.WHITE)
-    print_color("  2. One or more category labels (security, performance, etc.)", Colors.WHITE)
+    print_color(
+        "  2. One or more category labels (security, performance, etc.)", Colors.WHITE
+    )
     print_color(
         "  3. One workflow status label (needs-triage, approved-fix, hold-future)",
         Colors.WHITE,
     )
-    print_color("  4. One estimate label (estimate: 0.5h through estimate: 80h)", Colors.WHITE)
+    print_color(
+        "  4. One estimate label (estimate: 0.5h through estimate: 80h)", Colors.WHITE
+    )
     print()
 
 
@@ -867,7 +888,9 @@ def write_labels_for_ai(labels: list[dict]) -> None:
 # ============================================================================
 
 
-def validate_input_safety(input_string: str, field_name: str, strict: bool = True) -> None:
+def validate_input_safety(
+    input_string: str, field_name: str, strict: bool = True
+) -> None:
     """Validate input for command injection and length limits.
 
     Strict mode (title/labels): Rejects shell metacharacters ;&|`$<>(){}[]"'.
@@ -897,15 +920,21 @@ def validate_input_safety(input_string: str, field_name: str, strict: bool = Tru
     if strict:
         # Strict validation: title and labels (passed as command args)
         if DANGEROUS_CHARS_REGEX.search(input_string):
-            raise ValueError(f"Security: {field_name} contains potentially dangerous characters")
+            raise ValueError(
+                f"Security: {field_name} contains potentially dangerous characters"
+            )
         if len(input_string) > MAX_TITLE_LENGTH:
-            raise ValueError(f"Validation: {field_name} exceeds max length ({MAX_TITLE_LENGTH})")
+            raise ValueError(
+                f"Validation: {field_name} exceeds max length ({MAX_TITLE_LENGTH})"
+            )
     else:
         # Relaxed validation: body fields (written to temp file)
         if "\x00" in input_string:
             raise ValueError(f"Security: {field_name} contains null bytes")
         if len(input_string) > MAX_BODY_LENGTH:
-            raise ValueError(f"Validation: {field_name} exceeds max length ({MAX_BODY_LENGTH})")
+            raise ValueError(
+                f"Validation: {field_name} exceeds max length ({MAX_BODY_LENGTH})"
+            )
 
 
 def validate_issue_required_fields(issue: dict, issue_number: int) -> ValidationResult:
@@ -1083,7 +1112,9 @@ def validate_issue_body_structure(issue: dict, issue_number: int) -> ValidationR
         missing_fields = [fld for fld in recommended_fields if fld not in body]
         if missing_fields:
             joined = ", ".join(missing_fields)
-            result.warnings.append(f"Issue #{issue_number}: Missing recommended fields: {joined}")
+            result.warnings.append(
+                f"Issue #{issue_number}: Missing recommended fields: {joined}"
+            )
 
     return result
 
@@ -1141,7 +1172,9 @@ def validate_issue(
 # ============================================================================
 
 
-def convert_to_issue_body(body: dict, estimate: str | None, priority: str | None) -> str:
+def convert_to_issue_body(
+    body: dict, estimate: str | None, priority: str | None
+) -> str:
     """Transform JSON body object to markdown w/ code_quality_metrics.py integration.
 
     Formats body fields into structured Markdown w/ headers. Adds [Est: Xh]
@@ -1268,7 +1301,9 @@ def create_github_issue(
         all_labels.append("needs-triage")
 
     # Create temporary file for body
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8"
+    ) as f:
         f.write(body)
         temp_file = f.name
 
@@ -1492,7 +1527,9 @@ def validate_all_issues(
     print_success("All issues validated successfully")
 
     if validate_only:
-        print_info("\nValidation complete. Use without --validate-only to create issues.")
+        print_info(
+            "\nValidation complete. Use without --validate-only to create issues."
+        )
         return issues, True
 
     return issues, False
@@ -1606,7 +1643,9 @@ def write_execution_summary(
 
     print_color("\nNext Steps:", Colors.YELLOW)
     print_color(f"  1. Review issues: https://github.com/{repo}/issues", Colors.WHITE)
-    print_color("  2. Run code_quality_metrics.py to see in Technical Debt Report", Colors.WHITE)
+    print_color(
+        "  2. Run code_quality_metrics.py to see in Technical Debt Report", Colors.WHITE
+    )
 
 
 # ============================================================================
@@ -1685,7 +1724,9 @@ def main() -> int:
 
     # Require issues file for create/validate modes
     if not args.list_labels and not args.create_labels and not args.issues_json_path:
-        print_error("--issues is required when not using --list-labels or --create-labels")
+        print_error(
+            "--issues is required when not using --list-labels or --create-labels"
+        )
         return 1
 
     if args.issues_json_path and not Path(args.issues_json_path).exists():
@@ -1726,7 +1767,9 @@ def main() -> int:
         creation_result = create_all_issues(issues, args.repository)
 
         # Phase 5: Display summary
-        write_execution_summary(creation_result, start_time, args.repository, len(issues))
+        write_execution_summary(
+            creation_result, start_time, args.repository, len(issues)
+        )
 
         return 0 if creation_result.fail_count == 0 else 1
 

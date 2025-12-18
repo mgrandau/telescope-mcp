@@ -8,7 +8,7 @@ let positionInterval;
 document.addEventListener('DOMContentLoaded', () => {
     updateStatus('connected', 'Connected');
     startPositionPolling();
-    
+
     // Speed slider
     const speedSlider = document.getElementById('speed');
     const speedValue = document.getElementById('speed-value');
@@ -79,9 +79,9 @@ async function stopMotors() {
 async function gotoPosition() {
     const alt = document.getElementById('goto-alt').value;
     const az = document.getElementById('goto-az').value;
-    
+
     updateStatus('connected', `Going to Alt:${alt}° Az:${az}°...`);
-    
+
     try {
         await fetch(`${API_BASE}/api/goto?altitude=${alt}&azimuth=${az}`, {
             method: 'POST'

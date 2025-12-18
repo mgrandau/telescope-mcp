@@ -4,8 +4,7 @@ import io
 import json
 import logging
 import threading
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +15,7 @@ from telescope_mcp.observability.logging import (
     SessionLogHandler,
     StructuredFormatter,
     StructuredLogger,
+    StructuredLogRecord,
     _format_value,
     _log_context,
     configure_logging,
@@ -24,16 +24,64 @@ from telescope_mcp.observability.logging import (
 from telescope_mcp.observability.stats import (
     CameraStats,
     CameraStatsCollector,
-    CaptureRecord,
     StatsSummary,
     _percentile,
-    get_camera_stats,
 )
-
 
 # =============================================================================
 # Structured Logging Tests
 # =============================================================================
+
+
+class TestStructuredLogRecord:
+    """Tests for StructuredLogRecord."""
+
+    def test_basic_creation(self):
+        """Can create record with structured data."""
+        record = StructuredLogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+            structured_data={"key": "value"},
+        )
+        assert record.structured_data == {"key": "value"}
+        assert record.name == "test"
+        assert record.levelno == logging.INFO
+
+    def test_without_structured_data(self):
+        """Record without structured_data has empty dict."""
+        record = StructuredLogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Test",
+            args=(),
+            exc_info=None,
+        )
+        assert record.structured_data == {}
+
+    def test_with_func_and_sinfo(self):
+        """Can create record with optional func and sinfo."""
+        record = StructuredLogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Test",
+            args=(),
+            exc_info=None,
+            func="my_function",
+            sinfo="stack info",
+            structured_data={"camera_id": 0},
+        )
+        assert record.funcName == "my_function"
+        assert record.stack_info == "stack info"
+        assert record.structured_data == {"camera_id": 0}
 
 
 class TestStructuredFormatter:
@@ -106,6 +154,41 @@ class TestStructuredFormatter:
         result = formatter.format(record)
         assert "key=value" not in result
 
+    def test_custom_format_string(self):
+        """Can use custom format string."""
+        formatter = StructuredFormatter(fmt="%(levelname)s: %(message)s")
+        record = logging.LogRecord(
+            name="test",
+            level=logging.WARNING,
+            pathname="test.py",
+            lineno=1,
+            msg="Custom",
+            args=(),
+            exc_info=None,
+        )
+        record.structured_data = {}
+        result = formatter.format(record)
+        assert result.startswith("WARNING: Custom")
+
+    def test_custom_date_format(self):
+        """Can use custom date format."""
+        formatter = StructuredFormatter(datefmt="%Y-%m-%d")
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Test",
+            args=(),
+            exc_info=None,
+        )
+        record.structured_data = {}
+        result = formatter.format(record)
+        # Should contain date in YYYY-MM-DD format
+        import re
+
+        assert re.search(r"\d{4}-\d{2}-\d{2}", result)
+
 
 class TestJSONFormatter:
     """Tests for JSONFormatter."""
@@ -164,6 +247,50 @@ class TestJSONFormatter:
         parsed = json.loads(result)
         # Should parse as ISO datetime
         datetime.fromisoformat(parsed["timestamp"])
+
+    def test_json_with_exception(self):
+        """JSON formatter includes exception info."""
+        formatter = JSONFormatter()
+        try:
+            raise ValueError("Test error")
+        except ValueError:
+            import sys
+
+            exc_info = sys.exc_info()
+            record = logging.LogRecord(
+                name="test",
+                level=logging.ERROR,
+                pathname="test.py",
+                lineno=1,
+                msg="Error occurred",
+                args=(),
+                exc_info=exc_info,
+            )
+            record.structured_data = {}
+
+            result = formatter.format(record)
+            parsed = json.loads(result)
+
+            assert "exception" in parsed
+            assert "ValueError" in parsed["exception"]
+            assert "Test error" in parsed["exception"]
+
+    def test_json_without_structured_data(self):
+        """JSON formatter works without structured data attribute."""
+        formatter = JSONFormatter()
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Test",
+            args=(),
+            exc_info=None,
+        )
+        # No structured_data attribute
+        result = formatter.format(record)
+        parsed = json.loads(result)
+        assert parsed["message"] == "Test"
 
 
 class TestFormatValue:
@@ -235,6 +362,13 @@ class TestLogContext:
             ctx = _log_context.get()
             assert ctx["camera_id"] == 0
 
+    def test_context_exit_without_token(self):
+        """Context handles exit when token is None."""
+        ctx = LogContext(key="value")
+        # Exit without entering (token is None)
+        ctx.__exit__(None, None, None)
+        # Should not raise
+
 
 class TestStructuredLogger:
     """Tests for StructuredLogger."""
@@ -245,14 +379,14 @@ class TestStructuredLogger:
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
         handler.setFormatter(StructuredFormatter())
-        
+
         logger = StructuredLogger("test_logger")
         logger.setLevel(logging.DEBUG)
         logger.addHandler(handler)
         logger.propagate = False
-        
+
         yield logger, stream
-        
+
         # Cleanup
         logger.handlers.clear()
 
@@ -287,6 +421,47 @@ class TestStructuredLogger:
         output = stream.getvalue()
         assert "camera_id=1" in output
 
+    def test_log_with_args_formatting(self, logger_and_stream):
+        """Logger supports % formatting."""
+        logger, stream = logger_and_stream
+        logger.info("Captured %d frames", 5)
+        output = stream.getvalue()
+        assert "Captured 5 frames" in output
+
+    def test_log_with_exc_info(self, logger_and_stream):
+        """Logger captures exception info."""
+        logger, stream = logger_and_stream
+        try:
+            raise RuntimeError("Test error")
+        except RuntimeError:
+            logger.error("Error occurred", exc_info=True)
+        output = stream.getvalue()
+        assert "Error occurred" in output
+        assert "RuntimeError" in output
+
+    def test_log_with_stack_info(self, logger_and_stream):
+        """Logger captures stack info."""
+        logger, stream = logger_and_stream
+        logger.info("With stack", stack_info=True)
+        output = stream.getvalue()
+        assert "With stack" in output
+
+    def test_log_with_extra_dict(self, logger_and_stream):
+        """Logger handles extra dict."""
+        logger, stream = logger_and_stream
+        logger.info("Test", extra={"custom": "value"}, camera_id=0)
+        output = stream.getvalue()
+        assert "camera_id=0" in output
+
+    def test_log_without_context(self, logger_and_stream):
+        """Logger works without LogContext."""
+        logger, stream = logger_and_stream
+        # Clear any context
+        _log_context.set({})
+        logger.info("No context", key="value")
+        output = stream.getvalue()
+        assert "key=value" in output
+
 
 class TestSessionLogHandler:
     """Tests for SessionLogHandler."""
@@ -295,7 +470,7 @@ class TestSessionLogHandler:
         """Handler forwards logs to session manager."""
         mock_manager = MagicMock()
         handler = SessionLogHandler(lambda: mock_manager)
-        
+
         record = logging.LogRecord(
             name="test.module",
             level=logging.INFO,
@@ -306,9 +481,9 @@ class TestSessionLogHandler:
             exc_info=None,
         )
         record.structured_data = {"key": "value"}
-        
+
         handler.emit(record)
-        
+
         mock_manager.log.assert_called_once()
         call_kwargs = mock_manager.log.call_args[1]
         assert call_kwargs["level"] == "INFO"
@@ -319,7 +494,7 @@ class TestSessionLogHandler:
     def test_handles_none_manager(self):
         """Handler handles None manager gracefully."""
         handler = SessionLogHandler(lambda: None)
-        
+
         record = logging.LogRecord(
             name="test",
             level=logging.INFO,
@@ -329,9 +504,37 @@ class TestSessionLogHandler:
             args=(),
             exc_info=None,
         )
-        
+
         # Should not raise
         handler.emit(record)
+
+    def test_handles_exception_in_emit(self):
+        """Handler catches exceptions during emit."""
+        mock_manager = MagicMock()
+        mock_manager.log.side_effect = RuntimeError("Session error")
+        handler = SessionLogHandler(lambda: mock_manager)
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Test",
+            args=(),
+            exc_info=None,
+        )
+        record.structured_data = {}
+
+        # Should not raise (calls handleError internally)
+        handler.emit(record)
+
+    def test_handler_with_custom_level(self):
+        """Handler respects custom level setting."""
+        mock_manager = MagicMock()
+        handler = SessionLogHandler(lambda: mock_manager, level=logging.WARNING)
+
+        # Level should be set
+        assert handler.level == logging.WARNING
 
 
 # =============================================================================
@@ -359,7 +562,7 @@ class TestStatsSummary:
             success_rate=0.9,
             avg_duration_ms=150.0,
             error_counts={"timeout": 1},
-            last_capture_time=datetime(2025, 12, 17, 20, 0, 0, tzinfo=timezone.utc),
+            last_capture_time=datetime(2025, 12, 17, 20, 0, 0, tzinfo=UTC),
         )
         result = summary.to_dict()
         assert result["camera_id"] == 0
@@ -388,7 +591,7 @@ class TestCameraStatsCollector:
         """Successful capture recorded correctly."""
         collector = CameraStatsCollector(camera_id=0)
         collector.record(duration_ms=150.0, success=True)
-        
+
         summary = collector.get_summary()
         assert summary.total_captures == 1
         assert summary.successful_captures == 1
@@ -398,12 +601,23 @@ class TestCameraStatsCollector:
         """Failed capture recorded with error type."""
         collector = CameraStatsCollector(camera_id=0)
         collector.record(duration_ms=0, success=False, error_type="timeout")
-        
+
         summary = collector.get_summary()
         assert summary.total_captures == 1
         assert summary.failed_captures == 1
         assert summary.success_rate == 0.0
         assert summary.error_counts["timeout"] == 1
+
+    def test_record_failure_without_error_type(self):
+        """Failed capture without error type."""
+        collector = CameraStatsCollector(camera_id=0)
+        collector.record(duration_ms=0, success=False, error_type=None)
+
+        summary = collector.get_summary()
+        assert summary.total_captures == 1
+        assert summary.failed_captures == 1
+        assert summary.success_rate == 0.0
+        assert summary.error_counts == {}  # No error type tracked
 
     def test_duration_statistics(self):
         """Duration stats calculated correctly."""
@@ -411,7 +625,7 @@ class TestCameraStatsCollector:
         collector.record(duration_ms=100.0, success=True)
         collector.record(duration_ms=200.0, success=True)
         collector.record(duration_ms=150.0, success=True)
-        
+
         summary = collector.get_summary()
         assert summary.min_duration_ms == 100.0
         assert summary.max_duration_ms == 200.0
@@ -423,7 +637,7 @@ class TestCameraStatsCollector:
         # Record 100 captures with durations 1-100
         for i in range(1, 101):
             collector.record(duration_ms=float(i), success=True)
-        
+
         summary = collector.get_summary()
         # P95 should be around 95
         assert 94 <= summary.p95_duration_ms <= 96
@@ -433,7 +647,7 @@ class TestCameraStatsCollector:
         collector = CameraStatsCollector(camera_id=0)
         collector.record(duration_ms=150.0, success=True)
         collector.reset()
-        
+
         summary = collector.get_summary()
         assert summary.total_captures == 0
 
@@ -442,11 +656,11 @@ class TestCameraStatsCollector:
         collector = CameraStatsCollector(camera_id=0, window_size=10)
         for i in range(20):
             collector.record(duration_ms=float(i), success=True)
-        
+
         # Should have recorded all 20
         summary = collector.get_summary()
         assert summary.total_captures == 20
-        
+
         # But duration stats from last 10 only (10-19)
         assert summary.min_duration_ms == 10.0
         assert summary.max_duration_ms == 19.0
@@ -454,17 +668,17 @@ class TestCameraStatsCollector:
     def test_thread_safety(self):
         """Collector is thread-safe."""
         collector = CameraStatsCollector(camera_id=0)
-        
+
         def record_captures():
             for _ in range(100):
                 collector.record(duration_ms=100.0, success=True)
-        
+
         threads = [threading.Thread(target=record_captures) for _ in range(10)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        
+
         summary = collector.get_summary()
         assert summary.total_captures == 1000
 
@@ -476,7 +690,7 @@ class TestCameraStats:
         """Recording creates collector for camera."""
         stats = CameraStats()
         stats.record_capture(camera_id=0, duration_ms=150.0, success=True)
-        
+
         summary = stats.get_summary(camera_id=0)
         assert summary.total_captures == 1
 
@@ -485,10 +699,10 @@ class TestCameraStats:
         stats = CameraStats()
         stats.record_capture(camera_id=0, duration_ms=100.0, success=True)
         stats.record_capture(camera_id=1, duration_ms=200.0, success=True)
-        
+
         summary0 = stats.get_summary(camera_id=0)
         summary1 = stats.get_summary(camera_id=1)
-        
+
         assert summary0.avg_duration_ms == 100.0
         assert summary1.avg_duration_ms == 200.0
 
@@ -497,7 +711,7 @@ class TestCameraStats:
         stats = CameraStats()
         stats.record_capture(camera_id=0, duration_ms=100.0, success=True)
         stats.record_capture(camera_id=1, duration_ms=200.0, success=True)
-        
+
         all_summaries = stats.get_all_summaries()
         assert 0 in all_summaries
         assert 1 in all_summaries
@@ -507,20 +721,31 @@ class TestCameraStats:
         stats = CameraStats()
         stats.record_capture(camera_id=0, duration_ms=100.0, success=True)
         stats.record_capture(camera_id=1, duration_ms=200.0, success=True)
-        
+
         stats.reset(camera_id=0)
-        
+
         assert stats.get_summary(camera_id=0).total_captures == 0
         assert stats.get_summary(camera_id=1).total_captures == 1
+
+    def test_reset_nonexistent_camera(self):
+        """Reset on non-existent camera is a no-op."""
+        stats = CameraStats()
+        stats.record_capture(camera_id=0, duration_ms=100.0, success=True)
+
+        # Reset camera that doesn't exist - should not raise
+        stats.reset(camera_id=99)
+
+        # Camera 0 should be unaffected
+        assert stats.get_summary(camera_id=0).total_captures == 1
 
     def test_reset_all_cameras(self):
         """Can reset all cameras."""
         stats = CameraStats()
         stats.record_capture(camera_id=0, duration_ms=100.0, success=True)
         stats.record_capture(camera_id=1, duration_ms=200.0, success=True)
-        
+
         stats.reset()
-        
+
         assert stats.get_summary(camera_id=0).total_captures == 0
         assert stats.get_summary(camera_id=1).total_captures == 0
 
@@ -528,7 +753,7 @@ class TestCameraStats:
         """to_dict exports all stats."""
         stats = CameraStats()
         stats.record_capture(camera_id=0, duration_ms=100.0, success=True)
-        
+
         result = stats.to_dict()
         assert "cameras" in result
         assert "0" in result["cameras"]
@@ -570,19 +795,188 @@ class TestPercentile:
         assert 94 <= result <= 96
 
 
-class TestGetCameraStats:
-    """Tests for get_camera_stats singleton."""
+# =============================================================================
+# Configuration Tests
+# =============================================================================
 
-    def test_returns_same_instance(self):
-        """Returns same instance on multiple calls."""
-        stats1 = get_camera_stats()
-        stats2 = get_camera_stats()
-        assert stats1 is stats2
 
-    def test_is_camera_stats(self):
-        """Returns CameraStats instance."""
-        stats = get_camera_stats()
-        assert isinstance(stats, CameraStats)
+class TestConfigureLogging:
+    """Tests for configure_logging function."""
+
+    def test_configure_with_defaults(self):
+        """Configure logging with default settings."""
+        from telescope_mcp.observability import logging as log_module
+
+        # Reset configured flag for testing
+        log_module._configured = False
+
+        stream = io.StringIO()
+        configure_logging(stream=stream)
+
+        # Should be marked as configured
+        assert log_module._configured
+
+        # Get a logger and test it works
+        logger = logging.getLogger("telescope_mcp.test")
+        logger.info("Test message")
+
+        output = stream.getvalue()
+        assert "Test message" in output
+
+    def test_configure_with_json_format(self):
+        """Configure with JSON formatter."""
+        from telescope_mcp.observability import logging as log_module
+
+        log_module._configured = False
+
+        stream = io.StringIO()
+        configure_logging(json_format=True, stream=stream)
+
+        logger = logging.getLogger("telescope_mcp.test_json")
+        logger.info("JSON test")
+
+        output = stream.getvalue()
+        parsed = json.loads(output)
+        assert parsed["message"] == "JSON test"
+
+    def test_configure_with_debug_level(self):
+        """Configure with DEBUG level."""
+        from telescope_mcp.observability import logging as log_module
+
+        log_module._configured = False
+
+        stream = io.StringIO()
+        configure_logging(level=logging.DEBUG, stream=stream)
+
+        logger = logging.getLogger("telescope_mcp.test_debug")
+        logger.debug("Debug message")
+
+        output = stream.getvalue()
+        assert "Debug message" in output
+
+    def test_configure_with_string_level(self):
+        """Configure with string level name."""
+        from telescope_mcp.observability import logging as log_module
+
+        log_module._configured = False
+
+        stream = io.StringIO()
+        configure_logging(level="WARNING", stream=stream)
+
+        logger = logging.getLogger("telescope_mcp.test_warning")
+        logger.info("Info message")
+        logger.warning("Warning message")
+
+        output = stream.getvalue()
+        assert "Info message" not in output
+        assert "Warning message" in output
+
+    def test_configure_without_structured(self):
+        """Configure without structured data in output."""
+        from telescope_mcp.observability import logging as log_module
+
+        log_module._configured = False
+
+        stream = io.StringIO()
+        configure_logging(include_structured=False, stream=stream)
+
+        logger = get_logger("telescope_mcp.test_nostruct")
+        logger.info("Message", key="value")
+
+        output = stream.getvalue()
+        assert "Message" in output
+        assert "key=value" not in output
+
+    def test_configure_idempotent(self):
+        """Calling configure_logging multiple times is safe."""
+        from telescope_mcp.observability import logging as log_module
+
+        log_module._configured = False
+
+        stream1 = io.StringIO()
+        configure_logging(stream=stream1)
+
+        stream2 = io.StringIO()
+        configure_logging(stream=stream2)  # Should have no effect
+
+        logger = logging.getLogger("telescope_mcp.test_idempotent")
+        logger.info("Test")
+
+        # Only stream1 should have output (first config wins)
+        assert "Test" in stream1.getvalue()
+        assert stream2.getvalue() == ""
+
+
+class TestGetLogger:
+    """Tests for get_logger function."""
+
+    def test_get_logger_returns_structured_logger(self):
+        """get_logger returns StructuredLogger instance."""
+        from telescope_mcp.observability import logging as log_module
+
+        log_module._configured = False
+
+        logger = get_logger("telescope_mcp.test_get")
+        assert isinstance(logger, StructuredLogger)
+
+    def test_get_logger_auto_configures(self):
+        """get_logger auto-configures if not configured."""
+        from telescope_mcp.observability import logging as log_module
+
+        log_module._configured = False
+
+        _logger = get_logger("telescope_mcp.test_auto")  # noqa: F841
+
+        # Should be configured now
+        assert log_module._configured
+
+    def test_get_logger_with_name(self):
+        """get_logger uses provided name."""
+        logger = get_logger("telescope_mcp.custom.module")
+        assert logger.name == "telescope_mcp.custom.module"
+
+    def test_get_logger_when_already_configured(self):
+        """get_logger works when already configured."""
+        from telescope_mcp.observability import logging as log_module
+
+        # Ensure configured
+        if not log_module._configured:
+            configure_logging()
+
+        logger = get_logger("telescope_mcp.test_already")
+        assert isinstance(logger, StructuredLogger)
+
+    def test_get_logger_double_check_locking(self):
+        """Test that double-checked locking works correctly.
+
+        The inner check (line 676) is defensive for race conditions.
+        We verify the overall behavior is correct.
+        """
+        import threading
+
+        from telescope_mcp.observability import logging as log_module
+
+        # Ensure we start configured
+        if not log_module._configured:
+            configure_logging()
+
+        # Multiple threads calling get_logger should all succeed
+        results = []
+
+        def get_logger_thread(n):
+            logger = get_logger(f"telescope_mcp.concurrent.{n}")
+            results.append(logger.name)
+
+        threads = [
+            threading.Thread(target=get_logger_thread, args=(i,)) for i in range(10)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(results) == 10
+        assert log_module._configured
 
 
 # =============================================================================
@@ -598,19 +992,19 @@ class TestLoggingIntegration:
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
         handler.setFormatter(JSONFormatter())
-        
+
         logger = StructuredLogger("integration_test")
         logger.setLevel(logging.INFO)
         logger.addHandler(handler)
         logger.propagate = False
-        
+
         try:
             with LogContext(session_id="test123"):
                 logger.info("Frame captured", camera_id=0, duration_ms=150.5)
-            
+
             output = stream.getvalue()
             parsed = json.loads(output)
-            
+
             assert parsed["message"] == "Frame captured"
             assert parsed["session_id"] == "test123"
             assert parsed["camera_id"] == 0
@@ -625,11 +1019,12 @@ class TestStatsIntegration:
     def test_realistic_capture_session(self):
         """Simulate realistic capture session."""
         stats = CameraStats()
-        
+
         # Simulate 100 captures with realistic timings
         import random
+
         random.seed(42)  # Reproducible
-        
+
         for _ in range(100):
             duration = random.gauss(150, 20)  # Mean 150ms, stddev 20ms
             success = random.random() > 0.05  # 95% success rate
@@ -640,9 +1035,9 @@ class TestStatsIntegration:
                 success=success,
                 error_type=error,
             )
-        
+
         summary = stats.get_summary(camera_id=0)
-        
+
         # Should have reasonable stats
         assert 90 <= summary.total_captures <= 100
         assert 0.90 <= summary.success_rate <= 1.0

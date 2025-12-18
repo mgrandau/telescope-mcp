@@ -119,7 +119,7 @@ class SessionManager:
     def __init__(self):
         self._active_session = None
         self._ensure_idle_session()
-    
+
     def _ensure_idle_session(self):
         """Create idle session if nothing else is active."""
         if self._active_session is None:
@@ -127,21 +127,21 @@ class SessionManager:
                 session_type="idle",
                 auto_rotate=True,  # New file every hour
             )
-    
+
     def start_session(self, session_type: str, **kwargs) -> Session:
         """Start a new session, closing any existing one."""
         if self._active_session:
             self._active_session.close()
-        
+
         self._active_session = Session(session_type=session_type, **kwargs)
         return self._active_session
-    
+
     def end_session(self) -> Path:
         """End current session, return to idle."""
         path = self._active_session.close()
         self._ensure_idle_session()
         return path
-    
+
     def log(self, level: str, message: str, **context):
         """Log to current session (always exists)."""
         self._active_session.log(level, message, **context)
@@ -159,7 +159,7 @@ class SessionManager:
          ▲                                          │
          │              end_session()               │
          └──────────────────────────────────────────┘
-         
+
     start_session("observation", target="M31")
          ┌──────────────────────────────────────────┐
          │                                          ▼
@@ -225,7 +225,7 @@ def build_catalog(data_dir: Path) -> pl.DataFrame:
 # Query: "Find all failed alignment sessions"
 catalog = pl.scan_parquet("catalog/*.parquet")
 failed = catalog.filter(
-    (pl.col("session_type") == "alignment") & 
+    (pl.col("session_type") == "alignment") &
     (pl.col("error_count") > 0)
 ).collect()
 
@@ -264,7 +264,7 @@ import duckdb
 result = duckdb.sql("""
     SELECT session_id, target, error_count, asdf_path
     FROM 'catalog/*.parquet'
-    WHERE session_type = 'observation' 
+    WHERE session_type = 'observation'
       AND target LIKE 'M%'
     ORDER BY start_time DESC
     LIMIT 10

@@ -164,7 +164,9 @@ def main(
 
     tests_dir = project_root / "tests"
     if not tests_dir.exists():
-        raise ValueError(f"Invalid project_root: {project_root} has no tests/ directory")
+        raise ValueError(
+            f"Invalid project_root: {project_root} has no tests/ directory"
+        )
 
     # Guard against duplicate sys.path entries
     src_path = str(project_root / "src")

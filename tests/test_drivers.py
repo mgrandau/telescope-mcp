@@ -17,8 +17,7 @@ from telescope_mcp.drivers.cameras.twin import (
     create_file_camera,
 )
 from telescope_mcp.drivers.motors import MotorType, StubMotorController
-from telescope_mcp.drivers.sensors import StubPositionSensor, TelescopePosition
-
+from telescope_mcp.drivers.sensors import StubPositionSensor
 
 # =============================================================================
 # Digital Twin Camera Driver Tests
@@ -105,9 +104,7 @@ class TestDigitalTwinCameraDriver:
 
     def test_init_custom_cameras(self):
         """Driver accepts custom camera definitions."""
-        custom = {
-            0: {"Name": b"Custom Camera", "MaxWidth": 640, "MaxHeight": 480}
-        }
+        custom = {0: {"Name": b"Custom Camera", "MaxWidth": 640, "MaxHeight": 480}}
         driver = DigitalTwinCameraDriver(cameras=custom)
         cameras = driver.get_connected_cameras()
         assert len(cameras) == 1
@@ -256,7 +253,9 @@ class TestDigitalTwinFileSource:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             # Create test image
             img = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(img, "TEST", (100, 240), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 3)
+            cv2.putText(
+                img, "TEST", (100, 240), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 3
+            )
             cv2.imwrite(f.name, img)
             yield Path(f.name)
         # Cleanup
@@ -292,7 +291,15 @@ class TestDigitalTwinDirectorySource:
             # Create multiple test images
             for i in range(3):
                 img = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(img, f"IMG{i}", (100, 240), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 3)
+                cv2.putText(
+                    img,
+                    f"IMG{i}",
+                    (100, 240),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    3,
+                    (255, 255, 255),
+                    3,
+                )
                 cv2.imwrite(str(tmppath / f"test_{i}.jpg"), img)
             yield tmppath
 

@@ -1,0 +1,88 @@
+# Pre-commit hooks for telescope-mcp
+# Install: pre-commit install
+# Run all: pre-commit run --all-files
+# Update hooks: pre-commit autoupdate
+
+default_language_version:
+  python: python3.13
+
+repos:
+  # =============================================================================
+  # Standard file checks
+  # =============================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-ast
+      - id: check-json
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # =============================================================================
+  # Ruff - Fast Python linter and formatter (replaces black, isort, flake8)
+  # =============================================================================
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      # Linter
+      - id: ruff
+        args: ['--fix', '--exit-non-zero-on-fix']
+        types_or: [python, pyi]
+        exclude: ^utils/
+      # Formatter
+      - id: ruff-format
+        types_or: [python, pyi]
+        exclude: ^utils/
+
+  # =============================================================================
+  # MyPy - Static type checking (uses pyproject.toml config)
+  # =============================================================================
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+      - id: mypy
+        args: ['--config-file=pyproject.toml']
+        additional_dependencies:
+          - numpy
+          - pytest
+          - types-requests
+          - fastapi
+        pass_filenames: false
+        entry: mypy src/
+
+  # =============================================================================
+  # Bandit - Security vulnerability scanner
+  # =============================================================================
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.2
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml', '-r', 'src/']
+        additional_dependencies: ['bandit[toml]']
+
+  # =============================================================================
+  # Pytest with coverage (runs on pre-push, not pre-commit)
+  # =============================================================================
+  - repo: local
+    hooks:
+      - id: pytest-cov
+        name: pytest with coverage
+        entry: pdm run pytest --cov=telescope_mcp --cov-report=term-missing --cov-fail-under=54
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+# =============================================================================
+# CI Integration Note:
+# Pre-push hook runs pytest with coverage before allowing push to GitHub.
+# Coverage threshold: 55% (TODO: increase to 70% as coverage improves)
+# =============================================================================

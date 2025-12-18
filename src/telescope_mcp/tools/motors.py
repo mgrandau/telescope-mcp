@@ -1,9 +1,7 @@
 """MCP Tools for motor control (altitude and azimuth)."""
 
-from typing import Any
-
 from mcp.server import Server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 from telescope_mcp.observability import get_logger
 
@@ -19,7 +17,9 @@ TOOLS = [
             "properties": {
                 "steps": {
                     "type": "integer",
-                    "description": "Number of steps to move (positive=up, negative=down)",
+                    "description": (
+                        "Number of steps to move (positive=up, negative=down)"
+                    ),
                 },
                 "speed": {
                     "type": "integer",
@@ -38,7 +38,10 @@ TOOLS = [
             "properties": {
                 "steps": {
                     "type": "integer",
-                    "description": "Number of steps to move (positive=clockwise, negative=counter-clockwise)",
+                    "description": (
+                        "Number of steps to move "
+                        "(positive=clockwise, negative=counter-clockwise)"
+                    ),
                 },
                 "speed": {
                     "type": "integer",
@@ -125,6 +128,7 @@ def register(server: Server) -> None:
 
 # Tool implementations - stubs for now
 
+
 async def move_altitude(steps: int, speed: int = 100) -> list[TextContent]:
     """Move the altitude (elevation) motor by a number of steps.
 
@@ -152,7 +156,12 @@ async def move_altitude(steps: int, speed: int = 100) -> list[TextContent]:
         >>> result = await move_altitude(500, speed=50)  # Slow upward move
     """
     # TODO: Implement with motor driver
-    return [TextContent(type="text", text=f"Move altitude {steps} steps at speed {speed} - not yet implemented")]
+    return [
+        TextContent(
+            type="text",
+            text=f"Move altitude {steps} steps at speed {speed} - not yet implemented",
+        )
+    ]
 
 
 async def move_azimuth(steps: int, speed: int = 100) -> list[TextContent]:
@@ -181,7 +190,12 @@ async def move_azimuth(steps: int, speed: int = 100) -> list[TextContent]:
         >>> result = await move_azimuth(-1000, speed=200)  # Fast CCW rotation
     """
     # TODO: Implement with motor driver
-    return [TextContent(type="text", text=f"Move azimuth {steps} steps at speed {speed} - not yet implemented")]
+    return [
+        TextContent(
+            type="text",
+            text=f"Move azimuth {steps} steps at speed {speed} - not yet implemented",
+        )
+    ]
 
 
 async def stop_motors() -> list[TextContent]:
@@ -241,7 +255,9 @@ async def get_motor_status(motor: str = "both") -> list[TextContent]:
         >>> result = await get_motor_status("altitude")
     """
     # TODO: Implement
-    return [TextContent(type="text", text=f"Motor status for {motor} - not yet implemented")]
+    return [
+        TextContent(type="text", text=f"Motor status for {motor} - not yet implemented")
+    ]
 
 
 async def home_motors(motor: str = "both") -> list[TextContent]:

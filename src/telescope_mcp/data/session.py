@@ -6,8 +6,7 @@ an ASDF file with complete provenance.
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -71,7 +70,7 @@ class Session:
         rotate_interval_hours: int = 1,
     ) -> None:
         """Initialize a new session.
-        
+
         Creates a new session with a unique ID based on timestamp and type.
         Session data is buffered in memory until close() writes ASDF.
 
@@ -83,7 +82,7 @@ class Session:
             location: Observer location dict with lat, lon, alt keys.
             auto_rotate: Whether to auto-rotate idle sessions.
             rotate_interval_hours: Hours between auto-rotations.
-        
+
         Example:
             session = Session(
                 SessionType.OBSERVATION,
@@ -101,7 +100,7 @@ class Session:
         self.rotate_interval_hours = rotate_interval_hours
 
         # Generate session identity
-        self.start_time = datetime.now(timezone.utc)
+        self.start_time = datetime.now(UTC)
         self.session_id = self._generate_session_id()
 
         # In-memory data buffers
@@ -134,16 +133,15 @@ class Session:
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID.
-        
+
         Creates an ID from session type, optional target, and timestamp.
         Format: '{type}_{target}_{YYYYMMDD_HHMMSS}' or '{type}_{YYYYMMDD_HHMMSS}'.
         Used for ASDF filename and identification.
-        
+
         Returns:
             Unique session ID string.
         """
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
-        prefix = self.session_type.value[:3]
 
         if self.target:
             # observation_m31_20251214_210000
@@ -170,12 +168,14 @@ class Session:
             message: Human-readable log message.
             source: Source component name for filtering.
             **context: Additional context as key-value pairs.
-        
+
         Raises:
             RuntimeError: If session is already closed.
-        
+
         Example:
-            session.log(LogLevel.INFO, "Exposure started", camera="main", exposure_us=500000)
+            session.log(
+                LogLevel.INFO, "Exposure started", camera="main", exposure_us=500000
+            )
         """
         if self._closed:
             raise RuntimeError("Cannot log to a closed session")
@@ -184,7 +184,7 @@ class Session:
             level = LogLevel(level.upper())
 
         log_entry = {
-            "time": datetime.now(timezone.utc).isoformat(),
+            "time": datetime.now(UTC).isoformat(),
             "level": level.value,
             "source": source,
             "message": message,
@@ -207,31 +207,33 @@ class Session:
 
     def add_event(self, event: str, **details: Any) -> None:
         """Record a significant event to the session.
-        
+
         Events mark important occurrences like tracking_lost, slew_complete,
         or cloud_detected. Timestamped and stored in ASDF for analysis.
 
         Args:
             event: Event name/type identifier.
             **details: Event-specific details as key-value pairs.
-        
+
         Returns:
             None.
-        
+
         Raises:
             RuntimeError: If session is already closed.
-        
+
         Example:
             session.add_event("tracking_lost", reason="clouds", duration_sec=30)
         """
         if self._closed:
             raise RuntimeError("Cannot add event to a closed session")
 
-        self._events.append({
-            "time": datetime.now(timezone.utc).isoformat(),
-            "event": event,
-            "details": details if details else None,
-        })
+        self._events.append(
+            {
+                "time": datetime.now(UTC).isoformat(),
+                "event": event,
+                "details": details if details else None,
+            }
+        )
         logger.info("Event: %s | %s", event, details)
 
     def add_frame(
@@ -243,7 +245,7 @@ class Session:
         settings: dict[str, Any] | None = None,
     ) -> None:
         """Add a captured frame to the session.
-        
+
         Frames are grouped by camera identifier and stored with their
         capture settings. Increments the frames_captured counter.
 
@@ -252,13 +254,13 @@ class Session:
             frame: Image data as numpy array (uint8 or uint16).
             camera_info: Camera metadata (model, sensor_size, etc.). Optional.
             settings: Capture settings (gain, exposure_us, etc.). Optional.
-        
+
         Returns:
             None.
-        
+
         Raises:
             RuntimeError: If session is already closed.
-        
+
         Example:
             session.add_frame(
                 "main",
@@ -290,20 +292,20 @@ class Session:
         **data: Any,
     ) -> None:
         """Add a telemetry data point.
-        
+
         Records time-series sensor data like mount position, temperature,
         or focus readings. Each entry is timestamped automatically.
 
         Args:
             telemetry_type: Type of telemetry (mount_position, temperature, etc.).
             **data: Telemetry values (e.g., ra=12.5, dec=45.2).
-        
+
         Returns:
             None.
-        
+
         Raises:
             RuntimeError: If session is already closed.
-        
+
         Example:
             session.add_telemetry("mount_position", ra=12.5, dec=45.2, alt=60.0)
         """
@@ -313,12 +315,12 @@ class Session:
         if telemetry_type not in self._telemetry:
             self._telemetry[telemetry_type] = []
 
-        entry = {"time": datetime.now(timezone.utc).isoformat(), **data}
+        entry = {"time": datetime.now(UTC).isoformat(), **data}
         self._telemetry[telemetry_type].append(entry)
 
     def add_calibration(self, calibration_type: str, data: Any) -> None:
         """Add calibration data to the session.
-        
+
         Stores calibration results like dark frames, flat fields, or
         plate solve results for later processing. Data is appended to
         the appropriate calibration list.
@@ -326,13 +328,13 @@ class Session:
         Args:
             calibration_type: Type (dark_frames, flat_frames, plate_solve_results).
             data: Calibration data (frame array or result dict).
-        
+
         Returns:
             None.
-        
+
         Raises:
             RuntimeError: If session is already closed.
-        
+
         Example:
             session.add_calibration("dark_frames", dark_array)
             session.add_calibration("plate_solve_results", {"ra": 12.5, "dec": 45.2})
@@ -350,15 +352,15 @@ class Session:
 
     def _build_asdf_tree(self) -> dict[str, Any]:
         """Build the ASDF tree structure from session data.
-        
+
         Assembles all session data (meta, cameras, telemetry, calibration,
         observability) into the hierarchical structure expected by ASDF.
         Sets end_time and calculates duration.
-        
+
         Returns:
             Dictionary representing the complete ASDF tree structure.
         """
-        self._end_time = datetime.now(timezone.utc)
+        self._end_time = datetime.now(UTC)
         duration_seconds = (self._end_time - self.start_time).total_seconds()
 
         return {
@@ -388,10 +390,10 @@ class Session:
 
     def _get_output_path(self) -> Path:
         """Get the output path for the ASDF file.
-        
+
         Organizes files by date: data_dir/YYYY/MM/DD/session_id.asdf.
         Creates directories if they don't exist.
-        
+
         Returns:
             Path where the ASDF file will be written.
         """
@@ -405,19 +407,19 @@ class Session:
 
     def close(self) -> Path:
         """Close the session and write ASDF file.
-        
+
         Logs a closing message, builds the ASDF tree from all accumulated
         data, and writes to disk. Session becomes read-only after close.
-        
+
         Args:
             None. Operates on session's internal state.
 
         Returns:
             Path to the written ASDF file.
-        
+
         Raises:
             RuntimeError: If session is already closed.
-        
+
         Example:
             path = session.close()
             print(f"Session saved to {path}")
@@ -442,33 +444,40 @@ class Session:
     @property
     def is_closed(self) -> bool:
         """Check if session is closed (written to disk, immutable).
-        
-        Returns True if session closed via close() method (written to ASDF file, cannot accept new
-        data). All add_* methods (add_frame, add_event, add_telemetry, add_calibration) raise
-        RuntimeError on closed sessions. False indicates active session accepting data.
-        
-        Business context: Essential for preventing data corruption in long-running telescope systems
-        where session objects may persist in memory after closing. Guards against accidental writes
-        to finalized session files (ASDF format doesn't support appending). Used in error handling
-        ("why did add_frame fail?"), workflow validation ("is this session still active?"), and
-        session lifecycle management (close old session before starting new one). Critical for
-        data integrity in multi-hour observations where hundreds of frames accumulated - accidentally
-        reopening closed session would corrupt ASDF file.
-        
-        Implementation details: Returns self._closed boolean set by close() method. Initially False
-        (set in __init__), becomes True after close() writes tree to ASDF and calls af.close().
-        Immutable state - once closed, stays closed (no reopen mechanism). Checked by all add_*
-        methods before modifying tree data structure. Zero-cost operation (simple attribute access).
-        
+
+        Returns True if session closed via close() method (written to ASDF
+        file, cannot accept new data). All add_* methods (add_frame,
+        add_event, add_telemetry, add_calibration) raise
+        RuntimeError on closed sessions. False indicates active session
+        accepting data.
+
+        Business context: Essential for preventing data corruption in
+        long-running telescope systems where session objects may persist in
+        memory after closing. Guards against accidental writes to finalized
+        session files (ASDF format doesn't support appending). Used in error
+        handling ("why did add_frame fail?"), workflow validation ("is this
+        session still active?"), and session lifecycle management (close old
+        session before starting new one). Critical for data integrity in
+        multi-hour observations where hundreds of frames accumulated -
+        accidentally reopening closed session would corrupt ASDF file.
+
+        Implementation details: Returns self._closed boolean set by close()
+        method. Initially False (set in __init__), becomes True after close()
+        writes tree to ASDF and calls af.close(). Immutable state - once
+        closed, stays closed (no reopen mechanism). Checked by all add_*
+        methods before modifying tree data structure. Zero-cost operation
+        (simple attribute access).
+
         Args:
             None. Property access pattern (not a method call).
-        
+
         Returns:
-            True if session closed (immutable, written to disk). False if active (accepting data).
-        
+            True if session closed (immutable, written to disk). False if
+            active (accepting data).
+
         Raises:
             None. Always returns boolean - never raises exceptions.
-        
+
         Example:
             >>> session = Session(SessionType.OBSERVATION, name="M31")
             >>> session.add_frame(frame_data, metadata)
@@ -485,46 +494,53 @@ class Session:
     @property
     def duration_seconds(self) -> float:
         """Get session duration in seconds (elapsed time since start).
-        
-        Returns elapsed time since session start (start_time). For active sessions, calculates
-        duration to current moment (datetime.now). For closed sessions, uses finalized end_time
-        from close() method. Useful for monitoring, logging, and session metadata.
-        
-        Business context: Critical metric for observation session monitoring and analysis. Long
-        sessions (>2 hours) may indicate successful deep-sky imaging campaigns or stuck workflows
-        needing intervention. Short sessions (<5 minutes) may indicate setup issues or failed
-        observations. Used in dashboards ("current session: 1h 23m running"), alerting ("session
-        exceeded 4 hour limit"), and post-observation analysis ("total observing time tonight: 6.5h").
-        Essential for calculating efficiency metrics (frames per hour, duty cycle, overhead time).
-        
-        Implementation details: Computes (end - start_time).total_seconds() where end is self._end_time
-        (if closed) or datetime.now(UTC) (if active). Uses UTC to avoid daylight saving issues during
-        overnight sessions. Returns float with subsecond precision (e.g., 3661.234 = 1h 1m 1.234s).
-        Active session duration continuously increases (call multiple times for progress tracking).
-        Closed session duration fixed (snapshot at close() time). Typical values: 300-14400 seconds
+
+        Returns elapsed time since session start (start_time). For active
+        sessions, calculates duration to current moment (datetime.now). For
+        closed sessions, uses finalized end_time from close() method. Useful
+        for monitoring, logging, and session metadata.
+
+        Business context: Critical metric for observation session monitoring
+        and analysis. Long sessions (>2 hours) may indicate successful
+        deep-sky imaging campaigns or stuck workflows needing intervention.
+        Short sessions (<5 minutes) may indicate setup issues or failed
+        observations. Used in dashboards ("current session: 1h 23m running"),
+        alerting ("session exceeded 4 hour limit"), and post-observation
+        analysis ("total observing time tonight: 6.5h"). Essential for
+        calculating efficiency metrics (frames per hour, duty cycle,
+        overhead time).
+
+        Implementation details: Computes (end - start_time).total_seconds()
+        where end is self._end_time (if closed) or datetime.now(UTC) (if
+        active). Uses UTC to avoid daylight saving issues during overnight
+        sessions. Returns float with subsecond precision (e.g., 3661.234 =
+        1h 1m 1.234s). Active session duration continuously increases (call
+        multiple times for progress tracking). Closed session duration fixed
+        (snapshot at close() time). Typical values: 300-14400 seconds
         (5min-4h) for astronomy sessions.
-        
+
         Args:
             None. Property access pattern (not a method call).
-        
+
         Returns:
-            Duration in seconds as float. Range typically 0.0 (just started) to 14400.0 (4 hours).
-            Sub-second precision available (e.g., 1234.567 seconds). Always non-negative.
-        
+            Duration in seconds as float. Range typically 0.0 (just started)
+            to 14400.0 (4 hours). Sub-second precision available (e.g.,
+            1234.567 seconds). Always non-negative.
+
         Raises:
             None. Always computes valid duration - never raises exceptions.
-        
+
         Example:
             >>> session = Session(SessionType.OBSERVATION, name="M31")
             >>> time.sleep(5)
             >>> print(f"Session running {session.duration_seconds:.1f}s")  # ~5.0s
             >>> session.add_frame(frame_data, metadata)  # Add more frames...
             >>> session.close()
-            >>> print(f"Session completed in {session.duration_seconds:.1f}s")  # Final duration
+            >>> print(f"Session completed in {session.duration_seconds:.1f}s")
             >>> # Format for human-readable display
             >>> hours, remainder = divmod(session.duration_seconds, 3600)
             >>> minutes, seconds = divmod(remainder, 60)
             >>> print(f"Duration: {int(hours)}h {int(minutes)}m {seconds:.1f}s")
         """
-        end = self._end_time or datetime.now(timezone.utc)
+        end = self._end_time or datetime.now(UTC)
         return (end - self.start_time).total_seconds()

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from telescope_mcp.tools import sessions
 from telescope_mcp.drivers import config
+from telescope_mcp.tools import sessions
 
 
 @pytest.fixture(autouse=True)
@@ -17,13 +17,13 @@ def reset_config(tmp_path: Path):
     # Reset globals
     config._factory = None
     config._session_manager = None
-    
+
     # Configure with temp data dir
     cfg = config.DriverConfig(data_dir=tmp_path)
     config.configure(cfg)
-    
+
     yield
-    
+
     # Cleanup: shutdown session manager
     if config._session_manager is not None:
         config._session_manager.shutdown()
@@ -39,7 +39,7 @@ class TestSessionTools:
         """Default session is idle."""
         result = await sessions._get_session_info()
         assert len(result) == 1
-        
+
         data = json.loads(result[0].text)
         assert data["session_type"] == "idle"
         assert data["is_idle"] is True
@@ -47,9 +47,11 @@ class TestSessionTools:
     @pytest.mark.asyncio
     async def test_start_observation_session(self) -> None:
         """Can start an observation session."""
-        result = await sessions._start_session("observation", target="M31", purpose=None)
+        result = await sessions._start_session(
+            "observation", target="M31", purpose=None
+        )
         assert len(result) == 1
-        
+
         data = json.loads(result[0].text)
         assert data["status"] == "started"
         assert data["session_type"] == "observation"
@@ -62,7 +64,7 @@ class TestSessionTools:
         result = await sessions._start_session(
             "alignment", target=None, purpose="ra_dec_calibration"
         )
-        
+
         data = json.loads(result[0].text)
         assert data["session_type"] == "alignment"
         assert data["purpose"] == "ra_dec_calibration"
@@ -71,14 +73,14 @@ class TestSessionTools:
     async def test_cannot_start_idle_session(self) -> None:
         """Cannot manually start an idle session."""
         result = await sessions._start_session("idle", target=None, purpose=None)
-        
+
         assert "Cannot manually start an idle session" in result[0].text
 
     @pytest.mark.asyncio
     async def test_invalid_session_type(self) -> None:
         """Invalid session type returns error."""
         result = await sessions._start_session("invalid", target=None, purpose=None)
-        
+
         assert "Invalid session type" in result[0].text
 
     @pytest.mark.asyncio
@@ -86,15 +88,15 @@ class TestSessionTools:
         """Ending a session returns to idle."""
         # Start observation
         await sessions._start_session("observation", target="M31", purpose=None)
-        
+
         # End it
         result = await sessions._end_session()
         data = json.loads(result[0].text)
-        
+
         assert data["status"] == "ended"
         assert data["session_type"] == "observation"
         assert data["file_path"].endswith(".asdf")
-        
+
         # Check we're back to idle
         info = await sessions._get_session_info()
         info_data = json.loads(info[0].text)
@@ -104,7 +106,7 @@ class TestSessionTools:
     async def test_end_idle_session_rejected(self) -> None:
         """Cannot end an idle session."""
         result = await sessions._end_session()
-        
+
         assert "No active session to end" in result[0].text
 
     @pytest.mark.asyncio
@@ -112,7 +114,7 @@ class TestSessionTools:
         """Can log to session."""
         result = await sessions._session_log("INFO", "Test message", "test")
         data = json.loads(result[0].text)
-        
+
         assert data["status"] == "logged"
         assert data["level"] == "INFO"
         assert data["message"] == "Test message"
@@ -122,7 +124,7 @@ class TestSessionTools:
         """Can record events."""
         result = await sessions._session_event("tracking_lost", {"reason": "wind"})
         data = json.loads(result[0].text)
-        
+
         assert data["status"] == "recorded"
         assert data["event"] == "tracking_lost"
         assert data["details"]["reason"] == "wind"
@@ -132,17 +134,17 @@ class TestSessionTools:
         """Can get data directory."""
         result = await sessions._get_data_dir()
         data = json.loads(result[0].text)
-        
+
         assert data["data_dir"] == str(tmp_path)
 
     @pytest.mark.asyncio
     async def test_set_data_dir(self, tmp_path: Path) -> None:
         """Can set data directory."""
         new_dir = tmp_path / "new_data"
-        
+
         result = await sessions._set_data_dir(str(new_dir))
         data = json.loads(result[0].text)
-        
+
         assert data["status"] == "updated"
         assert data["data_dir"] == str(new_dir)
 
@@ -151,28 +153,28 @@ class TestSessionTools:
         """Test complete session workflow."""
         # Log to idle
         await sessions._session_log("INFO", "Server started", "server")
-        
+
         # Start observation
         start_result = await sessions._start_session(
             "observation", target="M31", purpose=None
         )
         start_data = json.loads(start_result[0].text)
         assert start_data["status"] == "started"
-        
+
         # Log and record event
         await sessions._session_log("INFO", "Observing M31", "camera")
         await sessions._session_event("guiding_started", {"mode": "auto"})
-        
+
         # Check metrics
         info = await sessions._get_session_info()
         info_data = json.loads(info[0].text)
         assert info_data["metrics"]["log_entries"] >= 1
         assert info_data["metrics"]["events"] == 1
-        
+
         # End session
         end_result = await sessions._end_session()
         end_data = json.loads(end_result[0].text)
-        
+
         # Verify file was created
         file_path = Path(end_data["file_path"])
         assert file_path.exists()

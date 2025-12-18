@@ -1,9 +1,7 @@
 """MCP Tools for position sensing (altitude and azimuth)."""
 
-from typing import Any
-
 from mcp.server import Server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 from telescope_mcp.observability import get_logger
 
@@ -86,6 +84,7 @@ def register(server: Server) -> None:
 
 # Tool implementations - stubs for now
 
+
 async def get_position() -> list[TextContent]:
     """Get current telescope pointing position from sensors.
 
@@ -150,7 +149,12 @@ async def calibrate_position(altitude: float, azimuth: float) -> list[TextConten
         >>> result = await calibrate_position(altitude=89.5, azimuth=0)
     """
     # TODO: Implement
-    return [TextContent(type="text", text=f"Calibrate to alt={altitude}, az={azimuth} - not yet implemented")]
+    return [
+        TextContent(
+            type="text",
+            text=f"Calibrate to alt={altitude}, az={azimuth} - not yet implemented",
+        )
+    ]
 
 
 async def goto_position(altitude: float, azimuth: float) -> list[TextContent]:
@@ -184,4 +188,8 @@ async def goto_position(altitude: float, azimuth: float) -> list[TextContent]:
         >>> result = await goto_position(altitude=10, azimuth=180)
     """
     # TODO: Implement with motor + position feedback loop
-    return [TextContent(type="text", text=f"Goto alt={altitude}, az={azimuth} - not yet implemented")]
+    return [
+        TextContent(
+            type="text", text=f"Goto alt={altitude}, az={azimuth} - not yet implemented"
+        )
+    ]

@@ -10,18 +10,18 @@ Thread-safe for concurrent camera access.
 
 Example:
     stats = CameraStats()
-    
+
     # Record captures
     stats.record_capture(camera_id=0, duration_ms=150, success=True)
     stats.record_capture(camera_id=0, duration_ms=200, success=True)
-    stats.record_capture(camera_id=0, duration_ms=0, success=False, 
+    stats.record_capture(camera_id=0, duration_ms=0, success=False,
                          error_type="timeout")
-    
+
     # Get summary
     summary = stats.get_summary(camera_id=0)
     print(f"Success rate: {summary.success_rate:.1%}")
     print(f"Avg duration: {summary.avg_duration_ms:.1f}ms")
-    
+
     # Export for session storage
     data = stats.to_dict()
 """
@@ -32,14 +32,54 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+#: Default number of capture records to retain in rolling window.
+#: Provides ~10min history at typical capture rates. Increase for
+#: longer history or more accurate percentile calculations.
+DEFAULT_STATS_WINDOW_SIZE: int = 1000
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _utc_now() -> datetime:
+    """Return current UTC datetime.
+
+    Centralized timestamp creation for consistency across the module.
+    All timestamps in telescope-mcp statistics use UTC to avoid
+    timezone confusion in observation logs.
+
+    Args:
+        None.
+
+    Returns:
+        Current datetime with UTC timezone attached.
+
+    Example:
+        >>> ts = _utc_now()
+        >>> ts.tzinfo
+        datetime.timezone.utc
+    """
+    return datetime.now(UTC)
+
+
+# =============================================================================
+# Data Classes
+# =============================================================================
 
 
 @dataclass
 class StatsSummary:
     """Summary statistics for a camera.
-    
+
     Attributes:
         camera_id: Camera identifier
         total_captures: Total capture attempts
@@ -54,6 +94,7 @@ class StatsSummary:
         last_capture_time: Time of last capture
         uptime_seconds: Time since stats reset
     """
+
     camera_id: int
     total_captures: int = 0
     successful_captures: int = 0
@@ -66,7 +107,7 @@ class StatsSummary:
     error_counts: dict[str, int] = field(default_factory=dict)
     last_capture_time: datetime | None = None
     uptime_seconds: float = 0.0
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert statistics summary to a serializable dictionary.
 
@@ -118,8 +159,7 @@ class StatsSummary:
             "p95_duration_ms": self.p95_duration_ms,
             "error_counts": self.error_counts.copy(),
             "last_capture_time": (
-                self.last_capture_time.isoformat() 
-                if self.last_capture_time else None
+                self.last_capture_time.isoformat() if self.last_capture_time else None
             ),
             "uptime_seconds": self.uptime_seconds,
         }
@@ -128,6 +168,7 @@ class StatsSummary:
 @dataclass
 class CaptureRecord:
     """Single capture record for statistics."""
+
     timestamp: float  # monotonic time
     duration_ms: float
     success: bool
@@ -136,15 +177,15 @@ class CaptureRecord:
 
 class CameraStatsCollector:
     """Statistics collector for a single camera.
-    
+
     Maintains rolling window of recent captures and computes
     summary statistics on demand.
     """
-    
+
     def __init__(
         self,
         camera_id: int,
-        window_size: int = 1000,
+        window_size: int = DEFAULT_STATS_WINDOW_SIZE,
     ) -> None:
         """Initialize a statistics collector for a single camera.
 
@@ -185,7 +226,7 @@ class CameraStatsCollector:
         self._start_time = time.monotonic()
         self._last_capture_time: datetime | None = None
         self._lock = threading.Lock()
-    
+
     def record(
         self,
         duration_ms: float,
@@ -231,19 +272,18 @@ class CameraStatsCollector:
             success=success,
             error_type=error_type,
         )
-        
+
         with self._lock:
             self._records.append(record)
             self._total_captures += 1
-            self._last_capture_time = datetime.now(timezone.utc)
-            
             if success:
                 self._successful_captures += 1
             elif error_type:
                 self._error_counts[error_type] = (
                     self._error_counts.get(error_type, 0) + 1
                 )
-    
+            self._last_capture_time = _utc_now()
+
     def get_summary(self) -> StatsSummary:
         """Compute and return current statistics summary.
 
@@ -287,40 +327,46 @@ class CameraStatsCollector:
             >>> summary.success_rate
             1.0
         """
+        # Copy data under lock, compute statistics outside lock
+        # This minimizes lock hold time (O(n log n) sort happens unlocked)
         with self._lock:
             total = self._total_captures
             successful = self._successful_captures
-            failed = total - successful
-            
-            # Compute duration stats from recent records
+            error_counts = self._error_counts.copy()
+            last_capture_time = self._last_capture_time
+            start_time = self._start_time
+            camera_id = self.camera_id
+            # Copy durations from successful records
             durations = [
-                r.duration_ms for r in self._records 
-                if r.success and r.duration_ms > 0
+                r.duration_ms for r in self._records if r.success and r.duration_ms > 0
             ]
-            
-            if durations:
-                min_dur = min(durations)
-                max_dur = max(durations)
-                avg_dur = sum(durations) / len(durations)
-                p95_dur = _percentile(sorted(durations), 95)
-            else:
-                min_dur = max_dur = avg_dur = p95_dur = 0.0
-            
-            return StatsSummary(
-                camera_id=self.camera_id,
-                total_captures=total,
-                successful_captures=successful,
-                failed_captures=failed,
-                success_rate=successful / total if total > 0 else 0.0,
-                min_duration_ms=min_dur,
-                max_duration_ms=max_dur,
-                avg_duration_ms=avg_dur,
-                p95_duration_ms=p95_dur,
-                error_counts=self._error_counts.copy(),
-                last_capture_time=self._last_capture_time,
-                uptime_seconds=time.monotonic() - self._start_time,
-            )
-    
+
+        # Expensive computations outside the lock
+        failed = total - successful
+
+        if durations:
+            min_dur = min(durations)
+            max_dur = max(durations)
+            avg_dur = sum(durations) / len(durations)
+            p95_dur = _percentile(sorted(durations), 95)  # O(n log n)
+        else:
+            min_dur = max_dur = avg_dur = p95_dur = 0.0
+
+        return StatsSummary(
+            camera_id=camera_id,
+            total_captures=total,
+            successful_captures=successful,
+            failed_captures=failed,
+            success_rate=successful / total if total > 0 else 0.0,
+            min_duration_ms=min_dur,
+            max_duration_ms=max_dur,
+            avg_duration_ms=avg_dur,
+            p95_duration_ms=p95_dur,
+            error_counts=error_counts,
+            last_capture_time=last_capture_time,
+            uptime_seconds=time.monotonic() - start_time,
+        )
+
     def reset(self) -> None:
         """Reset all statistics to initial state.
 
@@ -360,34 +406,34 @@ class CameraStatsCollector:
 
 class CameraStats:
     """Statistics manager for multiple cameras.
-    
+
     Thread-safe container for per-camera statistics collectors.
-    
+
     Usage:
         stats = CameraStats()
-        
+
         # Record captures
         stats.record_capture(camera_id=0, duration_ms=150, success=True)
-        
+
         # Get per-camera summary
         summary = stats.get_summary(camera_id=0)
-        
+
         # Get all summaries
         all_stats = stats.get_all_summaries()
-        
+
         # Export for session
         data = stats.to_dict()
     """
-    
-    def __init__(self, window_size: int = 1000) -> None:
+
+    def __init__(self, window_size: int = DEFAULT_STATS_WINDOW_SIZE) -> None:
         """Initialize the multi-camera statistics manager.
 
         Creates a thread-safe container that lazily creates per-camera
         collectors on first access. All cameras share the same window
         size configuration.
 
-        This is the main entry point for statistics in telescope-mcp,
-        typically accessed via the get_camera_stats() singleton.
+        This is the main entry point for statistics in telescope-mcp.
+        Inject via dependency injection to camera classes.
 
         Args:
             window_size: Maximum capture records per camera for rolling
@@ -407,7 +453,7 @@ class CameraStats:
         self._window_size = window_size
         self._collectors: dict[int, CameraStatsCollector] = {}
         self._lock = threading.Lock()
-    
+
     def _get_collector(self, camera_id: int) -> CameraStatsCollector:
         """Get or create the statistics collector for a camera.
 
@@ -440,7 +486,7 @@ class CameraStats:
                     camera_id, self._window_size
                 )
             return self._collectors[camera_id]
-    
+
     def record_capture(
         self,
         camera_id: int,
@@ -478,13 +524,13 @@ class CameraStats:
             >>> stats = CameraStats()
             >>> stats.record_capture(camera_id=0, duration_ms=150, success=True)
             >>> stats.record_capture(
-            ...     camera_id=0, duration_ms=5000, 
+            ...     camera_id=0, duration_ms=5000,
             ...     success=False, error_type="timeout"
             ... )
         """
         collector = self._get_collector(camera_id)
         collector.record(duration_ms, success, error_type)
-    
+
     def get_summary(self, camera_id: int) -> StatsSummary:
         """Get statistics summary for a specific camera.
 
@@ -515,7 +561,7 @@ class CameraStats:
         """
         collector = self._get_collector(camera_id)
         return collector.get_summary()
-    
+
     def get_all_summaries(self) -> dict[int, StatsSummary]:
         """Get statistics summaries for all tracked cameras.
 
@@ -551,7 +597,7 @@ class CameraStats:
                 camera_id: collector.get_summary()
                 for camera_id, collector in self._collectors.items()
             }
-    
+
     def reset(self, camera_id: int | None = None) -> None:
         """Reset statistics for one or all cameras.
 
@@ -591,7 +637,7 @@ class CameraStats:
             else:
                 for collector in self._collectors.values():
                     collector.reset()
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Export all camera statistics for serialization.
 
@@ -633,7 +679,7 @@ class CameraStats:
                 str(camera_id): summary.to_dict()
                 for camera_id, summary in summaries.items()
             },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": _utc_now().isoformat(),
         }
 
 
@@ -659,7 +705,7 @@ def _percentile(sorted_data: list[float], p: float) -> float:
         For p=0 returns minimum, p=100 returns maximum.
 
     Raises:
-        None. Does not validate that data is sorted.
+        ValueError: If p is outside the range [0, 100].
 
     Example:
         >>> _percentile([1.0, 2.0, 3.0, 4.0, 5.0], 50)
@@ -669,63 +715,21 @@ def _percentile(sorted_data: list[float], p: float) -> float:
         >>> _percentile([], 50)
         0.0
     """
+    if not 0 <= p <= 100:
+        raise ValueError(f"Percentile must be between 0 and 100, got {p}")
+
     if not sorted_data:
         return 0.0
-    
+
+    # Calculate position in data: k ∈ [0, len-1]
     k = (len(sorted_data) - 1) * (p / 100)
-    f = int(k)
-    c = f + 1 if f + 1 < len(sorted_data) else f
-    
-    if f == c:
-        return sorted_data[f]
-    
-    return sorted_data[f] * (c - k) + sorted_data[c] * (k - f)
+    floor_idx = int(k)
+    ceil_idx = min(floor_idx + 1, len(sorted_data) - 1)
 
+    # No interpolation needed if k is exact integer or at boundary
+    if floor_idx == ceil_idx:
+        return sorted_data[floor_idx]
 
-# =============================================================================
-# Global Stats Instance
-# =============================================================================
-
-_global_stats: CameraStats | None = None
-_stats_lock = threading.Lock()
-
-
-def get_camera_stats() -> CameraStats:
-    """Get the global camera statistics singleton.
-
-    Returns a shared CameraStats instance for application-wide
-    statistics tracking. The instance is created on first call
-    and reused thereafter.
-
-    This is the recommended way to access camera statistics in
-    telescope-mcp, ensuring all components share the same data.
-    The singleton pattern avoids passing stats objects through
-    the call stack.
-
-    Thread-safe initialization using a module-level lock.
-
-    Args:
-        None.
-
-    Returns:
-        The global CameraStats instance. Always returns the same
-        object across multiple calls within a process.
-
-    Raises:
-        None.
-
-    Example:
-        >>> # In camera.py
-        >>> stats = get_camera_stats()
-        >>> stats.record_capture(camera_id=0, duration_ms=150, success=True)
-        >>>
-        >>> # In dashboard.py (same stats object)
-        >>> stats = get_camera_stats()
-        >>> summary = stats.get_summary(camera_id=0)
-    """
-    global _global_stats
-    
-    with _stats_lock:
-        if _global_stats is None:
-            _global_stats = CameraStats()
-        return _global_stats
+    # Linear interpolation: weight by fractional distance from floor
+    fraction = k - floor_idx  # Distance from floor to k (0.0 to 1.0)
+    return sorted_data[floor_idx] * (1 - fraction) + sorted_data[ceil_idx] * fraction

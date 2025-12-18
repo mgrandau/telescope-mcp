@@ -21,7 +21,10 @@ logger = get_logger(__name__)
 TOOLS = [
     Tool(
         name="start_session",
-        description="Start a new telescope session. Closes any existing session and creates a new one of the specified type.",
+        description=(
+            "Start a new telescope session. Closes any existing session "
+            "and creates a new one of the specified type."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -32,11 +35,17 @@ TOOLS = [
                 },
                 "target": {
                     "type": "string",
-                    "description": "Target object name (e.g., 'M31') - used for observation sessions",
+                    "description": (
+                        "Target object name (e.g., 'M31') - "
+                        "used for observation sessions"
+                    ),
                 },
                 "purpose": {
                     "type": "string",
-                    "description": "Purpose description - used for alignment/experiment sessions",
+                    "description": (
+                        "Purpose description - used for "
+                        "alignment/experiment sessions"
+                    ),
                 },
             },
             "required": ["session_type"],
@@ -44,7 +53,10 @@ TOOLS = [
     ),
     Tool(
         name="end_session",
-        description="End the current session and write the ASDF file. Returns to idle session automatically.",
+        description=(
+            "End the current session and write the ASDF file. "
+            "Returns to idle session automatically."
+        ),
         inputSchema={
             "type": "object",
             "properties": {},
@@ -87,7 +99,10 @@ TOOLS = [
     ),
     Tool(
         name="session_event",
-        description="Record a significant event in the current session (e.g., 'tracking_lost', 'cloud_detected')",
+        description=(
+            "Record a significant event in the current session "
+            "(e.g., 'tracking_lost', 'cloud_detected')"
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -106,7 +121,9 @@ TOOLS = [
     ),
     Tool(
         name="get_data_dir",
-        description="Get the current data directory path where session files are stored",
+        description=(
+            "Get the current data directory path where session files " "are stored"
+        ),
         inputSchema={
             "type": "object",
             "properties": {},
@@ -164,22 +181,24 @@ def register(server: Server) -> None:
     async def list_tools() -> list[Tool]:
         """Return available session tools (MCP tool discovery).
 
-        MCP handler providing session tool definitions to clients. Called during MCP handshake.
-        Returns TOOLS list defining session operations.
+        MCP handler providing session tool definitions to clients. Called
+        during MCP handshake. Returns TOOLS list defining session operations.
 
-        Business context: Enables AI agents to discover session management capabilities. Sessions
-        provide context for multi-frame captures, correlating frames with metadata. Critical for
-        scientific reproducibility and automated data organization.
-        
+        Business context: Enables AI agents to discover session management
+        capabilities. Sessions provide context for multi-frame captures,
+        correlating frames with metadata. Critical for scientific
+        reproducibility and automated data organization.
+
         Args:
             None.
 
         Returns:
-            List[Tool] defining session capabilities (start/end session, logging, events).
-        
+            List[Tool] defining session capabilities (start/end session,
+            logging, events).
+
         Raises:
             None. Always succeeds returning pre-built TOOLS list.
-        
+
         Example:
             >>> tools = await list_tools()
             >>> print([t.name for t in tools])  # [start_session, end_session, ...]
@@ -193,7 +212,7 @@ def register(server: Server) -> None:
         MCP handler that dispatches incoming tool calls based on name.
         Primary entry point for all session management operations from
         AI agents through the Model Context Protocol.
-        
+
         Business context: Enables AI agents to manage observation sessions,
         tracking all data capture, events, and metadata in structured ASDF
         files. Sessions provide context for multi-frame captures, enabling
@@ -211,10 +230,10 @@ def register(server: Server) -> None:
             List containing single TextContent with JSON result string or error
             message. Success responses contain structured JSON with session data,
             errors contain descriptive text.
-        
+
         Raises:
             None. All errors are caught and returned as TextContent with details.
-        
+
         Example:
             # AI agent starts an imaging session
             result = await call_tool(
@@ -294,26 +313,33 @@ async def _start_session(
     """
     try:
         manager = get_session_manager()
-        
+
         # Validate session type
         try:
             st = SessionType(session_type.lower())
         except ValueError:
             valid = [t.value for t in SessionType if t != SessionType.IDLE]
-            return [TextContent(
-                type="text",
-                text=f"Invalid session type: {session_type}. Valid types: {valid}"
-            )]
-        
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Invalid session type: {session_type}. Valid types: {valid}",
+                )
+            ]
+
         # Don't allow starting idle sessions manually
         if st == SessionType.IDLE:
-            return [TextContent(
-                type="text",
-                text="Cannot manually start an idle session. Use end_session() to return to idle."
-            )]
-        
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        "Cannot manually start an idle session. "
+                        "Use end_session() to return to idle."
+                    ),
+                )
+            ]
+
         session = manager.start_session(st, target=target, purpose=purpose)
-        
+
         result = {
             "status": "started",
             "session_id": session.session_id,
@@ -360,18 +386,19 @@ async def _end_session() -> list[TextContent]:
     """
     try:
         manager = get_session_manager()
-        
+
         session_id = manager.active_session_id
         session_type = manager.active_session_type
-        
+
         if session_type == SessionType.IDLE:
-            return [TextContent(
-                type="text",
-                text="No active session to end (currently in idle)"
-            )]
-        
+            return [
+                TextContent(
+                    type="text", text="No active session to end (currently in idle)"
+                )
+            ]
+
         path = manager.end_session()
-        
+
         result = {
             "status": "ended",
             "session_id": session_id,
@@ -416,10 +443,10 @@ async def _get_session_info() -> list[TextContent]:
     try:
         manager = get_session_manager()
         session = manager.active_session
-        
+
         if session is None:
             return [TextContent(type="text", text="No active session")]
-        
+
         result = {
             "session_id": session.session_id,
             "session_type": session.session_type.value,
@@ -474,18 +501,20 @@ async def _session_log(level: str, message: str, source: str) -> list[TextConten
     """
     try:
         manager = get_session_manager()
-        
+
         try:
             log_level = LogLevel(level.upper())
         except ValueError:
-            valid = [l.value for l in LogLevel]
-            return [TextContent(
-                type="text",
-                text=f"Invalid log level: {level}. Valid levels: {valid}"
-            )]
-        
+            valid = [level_item.value for level_item in LogLevel]
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Invalid log level: {level}. Valid levels: {valid}",
+                )
+            ]
+
         manager.log(log_level, message, source=source)
-        
+
         result = {
             "status": "logged",
             "level": log_level.value,
@@ -534,7 +563,7 @@ async def _session_event(event: str, details: dict[str, Any]) -> list[TextConten
     try:
         manager = get_session_manager()
         manager.add_event(event, **details)
-        
+
         result = {
             "status": "recorded",
             "event": event,
@@ -576,7 +605,7 @@ async def _get_data_dir() -> list[TextContent]:
     try:
         factory = get_factory()
         data_dir = factory.config.data_dir
-        
+
         result = {
             "data_dir": str(data_dir),
             "exists": data_dir.exists(),
@@ -618,16 +647,20 @@ async def _set_data_dir(path: str) -> list[TextContent]:
     """
     try:
         from pathlib import Path
+
         from telescope_mcp.drivers.config import set_data_dir
-        
+
         new_path = Path(path)
         set_data_dir(new_path)
-        
+
         result = {
             "status": "updated",
             "data_dir": str(new_path),
             "exists": new_path.exists(),
-            "note": "Session manager has been reset. A new idle session will start on next operation.",
+            "note": (
+                "Session manager has been reset. "
+                "A new idle session will start on next operation."
+            ),
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:

@@ -9,13 +9,13 @@ Use drivers.config to switch modes:
     config.use_digital_twin()  # or config.use_hardware()
 """
 
-from telescope_mcp.drivers import asi_sdk, motors, sensors, config
+from telescope_mcp.drivers import asi_sdk, config, motors, sensors
 from telescope_mcp.drivers.config import (
-    DriverMode,
     DriverConfig,
     DriverFactory,
-    get_factory,
+    DriverMode,
     configure,
+    get_factory,
     use_digital_twin,
     use_hardware,
 )

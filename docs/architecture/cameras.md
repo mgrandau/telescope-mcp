@@ -38,23 +38,23 @@ The telescope system uses two ZWO ASI cameras with different purposes:
 graph TB
     subgraph "Physical Setup"
         SKY[🌌 Sky]
-        
+
         subgraph "Finder Scope"
             LENS[150° All-Sky Lens]
             ASI120[ASI120MC-S<br/>1280×960<br/>421.875 arcsec/px]
         end
-        
+
         subgraph "Main Telescope"
             OTA[1600mm OTA]
             ASI482[ASI482MC<br/>1920×1080<br/>0.748 arcsec/px]
         end
     end
-    
+
     SKY --> LENS
     SKY --> OTA
     LENS --> ASI120
     OTA --> ASI482
-    
+
     style ASI120 fill:#9cf,stroke:#333,stroke-width:2px,color:#000
     style ASI482 fill:#f9c,stroke:#333,stroke-width:2px,color:#000
 ```
@@ -95,7 +95,7 @@ graph TB
         HW[ASI Camera USB]
         IMG[Image Files<br/>directory/file]
     end
-    
+
     subgraph "Observability"
         LOG[StructuredLogger]
         STATS[CameraStats]
@@ -107,7 +107,7 @@ graph TB
     CAM -->|driver injection| TWIN
     ASI --> HW
     TWIN --> IMG
-    
+
     TC -.-> LOG
     CAM -.-> LOG
     TWIN -.-> LOG
@@ -130,7 +130,7 @@ The main `Camera` class with its injectable dependencies and data types:
 %%{init: {'theme': 'dark'}}%%
 classDiagram
     direction LR
-    
+
     class Camera {
         +config: CameraConfig
         +is_connected: bool
@@ -144,7 +144,7 @@ classDiagram
         +stream(options?, max_fps?) Iterator
         +stop_stream() None
     }
-    
+
     class CameraConfig {
         <<dataclass>>
         +camera_id: int
@@ -152,7 +152,7 @@ classDiagram
         +default_gain: int
         +default_exposure_us: int
     }
-    
+
     class CaptureOptions {
         <<dataclass>>
         +exposure_us: int?
@@ -160,7 +160,7 @@ classDiagram
         +apply_overlay: bool
         +format: str
     }
-    
+
     class CaptureResult {
         <<dataclass>>
         +image_data: bytes
@@ -169,14 +169,14 @@ classDiagram
         +gain: int
         +has_overlay: bool
     }
-    
+
     class StreamFrame {
         <<dataclass>>
         +image_data: bytes
         +timestamp: datetime
         +sequence_number: int
     }
-    
+
     Camera --> CameraConfig : configured by
     Camera --> CaptureOptions : accepts
     Camera --> CaptureResult : returns
@@ -191,7 +191,7 @@ Protocols that can be injected for testing and customization:
 %%{init: {'theme': 'dark'}}%%
 classDiagram
     direction TB
-    
+
     class Camera {
         -_driver: CameraDriver
         -_renderer: OverlayRenderer
@@ -199,55 +199,55 @@ classDiagram
         -_hooks: CameraHooks
         -_recovery: RecoveryStrategy
     }
-    
+
     class CameraDriver {
         <<protocol>>
         +get_connected_cameras() dict
         +open(camera_id) CameraInstance
     }
-    
+
     class OverlayRenderer {
         <<protocol>>
         +render(image, config, info) bytes
     }
-    
+
     class Clock {
         <<protocol>>
         +monotonic() float
         +sleep(seconds) None
     }
-    
+
     class RecoveryStrategy {
         <<protocol>>
         +attempt_recovery(camera_id) bool
     }
-    
+
     class CameraHooks {
         <<dataclass>>
         +on_connect: Callable?
         +on_capture: Callable?
         +on_error: Callable?
     }
-    
+
     class NullRenderer {
         +render() bytes
     }
-    
+
     class SystemClock {
         +monotonic() float
         +sleep() None
     }
-    
+
     class NullRecoveryStrategy {
         +attempt_recovery() bool
     }
-    
+
     Camera --> CameraDriver : injects
     Camera --> OverlayRenderer : injects
     Camera --> Clock : injects
     Camera --> RecoveryStrategy : injects
     Camera --> CameraHooks : has
-    
+
     NullRenderer ..|> OverlayRenderer : implements
     SystemClock ..|> Clock : implements
     NullRecoveryStrategy ..|> RecoveryStrategy : implements
@@ -261,13 +261,13 @@ Real hardware driver and digital twin for development:
 %%{init: {'theme': 'dark'}}%%
 classDiagram
     direction TB
-    
+
     class CameraDriver {
         <<protocol>>
         +get_connected_cameras() dict
         +open(camera_id) CameraInstance
     }
-    
+
     class CameraInstance {
         <<protocol>>
         +get_info() dict
@@ -276,26 +276,26 @@ classDiagram
         +capture(exposure_us) bytes
         +close() None
     }
-    
+
     class DigitalTwinCameraDriver {
         -_config: DigitalTwinConfig
         +get_connected_cameras() dict
         +open(camera_id) CameraInstance
     }
-    
+
     class DigitalTwinConfig {
         <<dataclass>>
         +image_source: ImageSource
         +image_path: Path?
         +cycle_images: bool
     }
-    
+
     class ASICameraDriver {
         <<future>>
         +get_connected_cameras() dict
         +open(camera_id) CameraInstance
     }
-    
+
     CameraDriver --> CameraInstance : creates
     DigitalTwinCameraDriver ..|> CameraDriver : implements
     DigitalTwinCameraDriver --> DigitalTwinConfig : configured by
@@ -313,7 +313,7 @@ Centralized camera discovery and singleton management:
 %%{init: {'theme': 'dark'}}%%
 classDiagram
     direction LR
-    
+
     class CameraRegistry {
         -_driver: CameraDriver
         -_cameras: dict~int, Camera~
@@ -326,14 +326,14 @@ classDiagram
         +camera_ids: list~int~
         +discovered_ids: list~int~
     }
-    
+
     class RecoveryStrategy {
         -_registry: CameraRegistry
         +attempt_recovery(camera_id) bool
     }
-    
+
     note for CameraRegistry "Context manager support\\nwith CameraRegistry(driver) as reg:"
-    
+
     CameraRegistry --> Camera : creates/manages
     CameraRegistry --> CameraDriver : uses
     CameraRegistry --> CameraInfo : caches
@@ -396,29 +396,29 @@ classDiagram
 ```python
 class Camera:
     """Logical camera device with injected driver."""
-    
+
     def __init__(self, driver: CameraDriver, camera_id: int):
         self._driver = driver
         self._camera_id = camera_id
         self._instance: CameraInstance | None = None
         self._settings = CameraSettings()
-    
+
     def connect(self) -> None:
         """Connect to camera via driver."""
         self._instance = self._driver.open(self._camera_id)
-    
+
     def capture(self, exposure_us: int | None = None) -> CaptureResult:
         """Capture a frame, return structured result."""
         # Use provided exposure or current setting
         exp = exposure_us or self._settings.exposure_us
-        
+
         # Log to session
-        get_session_manager().log("DEBUG", f"Capturing frame", 
+        get_session_manager().log("DEBUG", f"Capturing frame",
             camera_id=self._camera_id, exposure_us=exp)
-        
+
         # Delegate to driver
         jpeg_bytes = self._instance.capture(exp)
-        
+
         return CaptureResult(
             image_data=jpeg_bytes,
             settings=self._settings.copy(),
@@ -491,23 +491,23 @@ sequenceDiagram
 
     Note over Tools: Application startup
     Tools->>Registry: init_registry(driver)
-    
+
     Note over Tools: list_cameras tool called
     Tools->>Registry: discover()
     Registry->>Driver: get_connected_cameras()
     Driver-->>Registry: {0: info, 1: info}
     Registry-->>Tools: dict[int, CameraInfo]
-    
+
     Note over Tools: capture_frame tool called
     Tools->>Registry: get(camera_id=0)
     Registry->>Camera: Camera(driver, config, recovery=strategy)
     Registry-->>Tools: Camera (singleton)
-    
+
     Tools->>Camera: connect()
     Camera->>Driver: open(0)
     Driver->>HW: Initialize camera
     Driver-->>Camera: CameraInstance
-    
+
     Tools->>Camera: capture()
     Camera->>Driver: capture(exposure_us)
     Driver->>HW: Capture frame
@@ -556,29 +556,29 @@ graph TB
         DEVICES[devices/camera.py<br/>devices/registry.py]
         DRIVERS[drivers/cameras/twin.py<br/>drivers/cameras/asi.py]
     end
-    
+
     subgraph "Observability Module"
         LOGGER[StructuredLogger]
         CONTEXT[LogContext]
         STATS[CameraStats]
     end
-    
+
     subgraph "Output"
         CONSOLE[Console<br/>Human-readable]
         JSON[JSON Logs<br/>Machine-parseable]
         SESSION[Session ASDF<br/>Persistent storage]
     end
-    
+
     TOOLS --> LOGGER
     DEVICES --> LOGGER
     DRIVERS --> LOGGER
-    
+
     DEVICES --> STATS
-    
+
     LOGGER --> CONSOLE
     LOGGER --> JSON
     LOGGER --> SESSION
-    
+
     style LOGGER fill:#9cf,stroke:#333,stroke-width:2px,color:#000
     style STATS fill:#f9c,stroke:#333,stroke-width:2px,color:#000
 ```
@@ -591,7 +591,7 @@ from telescope_mcp.observability import get_logger
 logger = get_logger(__name__)
 
 # Structured logging with keyword arguments
-logger.info("Frame captured", 
+logger.info("Frame captured",
     camera_id=0,
     exposure_us=100000,
     gain=50,
@@ -684,7 +684,7 @@ delay = (176_000_000 / 2) - (312_000 / 2)
 %%{init: {'theme': 'dark'}}%%
 classDiagram
     direction LR
-    
+
     class CameraController {
         -_cameras: dict~str, Camera~
         -_clock: Clock
@@ -696,9 +696,9 @@ classDiagram
         +calculate_sync_timing(primary_us, secondary_us) int
         +sync_capture(config) SyncCaptureResult
     }
-    
+
     note for CameraController "Manages 2+ cameras\nCurrent setup: finder + main"
-    
+
     class SyncCaptureConfig {
         <<dataclass>>
         +primary: str
@@ -708,7 +708,7 @@ classDiagram
         +primary_gain: int?
         +secondary_gain: int?
     }
-    
+
     class SyncCaptureResult {
         <<dataclass>>
         +primary_frame: CaptureResult
@@ -720,13 +720,13 @@ classDiagram
         +timing_error_us: int
         +timing_error_ms: float
     }
-    
+
     class Clock {
         <<protocol>>
         +monotonic() float
         +sleep(seconds) None
     }
-    
+
     CameraController --> Camera : manages
     CameraController --> Clock : uses
     CameraController --> SyncCaptureConfig : accepts
@@ -778,10 +778,10 @@ class FakeClock:
     def __init__(self):
         self._time = 0.0
         self._sleeps = []
-    
+
     def monotonic(self) -> float:
         return self._time
-    
+
     def sleep(self, seconds: float) -> None:
         self._sleeps.append(seconds)
         self._time += seconds
@@ -818,7 +818,7 @@ class CameraRegistry:
         self._driver = driver
         self._cameras: dict[int, Camera] = {}
         self._discovery_cache: dict[int, CameraInfo] | None = None
-    
+
     def get(self, camera_id: int) -> Camera:
         """Get or create a Camera singleton for this camera_id."""
         if camera_id not in self._cameras:
@@ -829,7 +829,7 @@ class CameraRegistry:
                 recovery=RecoveryStrategy(self),  # Inject recovery
             )
         return self._cameras[camera_id]
-    
+
     def clear(self) -> None:
         """Disconnect all cameras and clear registry."""
         for camera in self._cameras.values():
@@ -892,13 +892,13 @@ class CameraRegistry:
     def __init__(self, driver: CameraDriver):
         self._driver = driver
         self._discovery_cache: dict[int, CameraInfo] | None = None
-    
+
     def discover(self, refresh: bool = False) -> dict[int, CameraInfo]:
         """Discover connected cameras with caching.
-        
+
         Args:
             refresh: Force re-discovery (ignore cache)
-        
+
         Returns:
             Dict mapping camera_id to CameraInfo
         """
@@ -924,7 +924,7 @@ def list_cameras() -> list[dict]:
     cameras = registry.discover()
     return [asdict(info) for info in cameras.values()]
 
-@tool  
+@tool
 def capture_frame(camera_id: int, exposure_us: int) -> dict:
     """Capture a frame from specified camera."""
     registry = get_registry()
@@ -962,7 +962,7 @@ class RecoveryStrategy(Protocol):
 class RegistryRecoveryStrategy:
     def __init__(self, registry: CameraRegistry):
         self._registry = registry
-    
+
     def attempt_recovery(self, camera_id: int) -> bool:
         cameras = self._registry.discover(refresh=True)
         return camera_id in cameras
@@ -971,15 +971,15 @@ class RegistryRecoveryStrategy:
 class Camera:
     def __init__(self, ..., recovery: RecoveryStrategy | None = None):
         self._recovery = recovery or NullRecoveryStrategy()
-    
+
     def _recover_and_capture(self, exposure_us: int, ...) -> CaptureResult:
         """Attempt to recover from camera disconnect."""
         self._instance = None
-        
+
         # Use injected strategy (no circular import!)
         if not self._recovery.attempt_recovery(self._config.camera_id):
             raise CameraDisconnectedError(...)
-        
+
         # Reconnect and retry
         self.connect()
         return self._instance.capture(exposure_us)

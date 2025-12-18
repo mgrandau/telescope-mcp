@@ -22,7 +22,7 @@ This document outlines the steps needed to port functionality from `telescope-co
 - [x] Implement `_list_cameras()` in `tools/cameras.py`
 - [x] Implement `_get_camera_info()` in `tools/cameras.py`
 - [x] Implement `_capture_frame()` - return base64 JPEG
-- [x] Implement `_set_camera_control()` 
+- [x] Implement `_set_camera_control()`
 - [x] Implement `_get_camera_control()`
 - [ ] Add new tool: `start_video_capture` (streaming support)
 - [ ] Add new tool: `stop_video_capture`
@@ -84,7 +84,7 @@ This document outlines the steps needed to port functionality from `telescope-co
 - [ ] Implement `move_altitude()` in `tools/motors.py`
 - [ ] Implement `move_azimuth()` in `tools/motors.py`
 - [ ] Implement `stop_motors()` - emergency stop
-- [ ] Implement `get_motor_status()` 
+- [ ] Implement `get_motor_status()`
 - [ ] Implement `home_motors()`
 - [ ] Add new tool: `set_motor_speed` (default speed config)
 - [ ] Add new tool: `get_motor_limits` (report physical limits)
@@ -211,7 +211,7 @@ sensors = ["smbus2"]  # For I2C sensors
 ## Priority Order
 
 1. **PyASI Camera Driver** - Core functionality, most complex
-2. **Motor Control** - Essential for telescope operation  
+2. **Motor Control** - Essential for telescope operation
 3. **Position Sensing** - Required for goto functionality
 4. **Alignment/Goto** - Advanced features
 5. **Web Dashboard** - Nice to have UI improvements

@@ -12,22 +12,32 @@ Design Principles:
 - Thread-safe context management
 - Optional JSON output for production
 
+Security Note:
+    When logging user-provided or untrusted data, always use structured
+    keyword arguments rather than including them in the message string:
+
+    # SAFE - structured data is properly escaped
+    logger.info("User action", user_id=untrusted_id, action=untrusted_action)
+
+    # UNSAFE - could inject fake log entries with CRLF
+    logger.info(f"User {untrusted_id} performed {untrusted_action}")
+
 Example:
     # Get a logger (like standard logging)
     logger = get_logger(__name__)
-    
+
     # Simple logging works as expected
     logger.info("Server started")
-    
+
     # Structured logging with keyword arguments
     logger.info("Camera connected", camera_id=0, name="ZWO ASI120")
-    
+
     # Context manager for operation tracking
     with LogContext(request_id="abc123", camera_id=0):
         logger.info("Starting capture")  # Automatically includes context
         do_capture()
         logger.info("Capture complete", duration_ms=150)
-    
+
     # JSON output for production
     configure_logging(json_format=True)
 """
@@ -41,8 +51,8 @@ import sys
 import threading
 from collections.abc import MutableMapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, ClassVar
+from datetime import UTC, datetime
+from typing import Any, cast
 
 # Context variable for structured logging context
 _log_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
@@ -54,15 +64,16 @@ _log_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
 # Structured Log Record
 # =============================================================================
 
+
 class StructuredLogRecord(logging.LogRecord):
     """LogRecord with structured data support.
-    
+
     Extends standard LogRecord to include structured key-value data
     that can be formatted as JSON or human-readable text.
     """
-    
+
     structured_data: dict[str, Any]
-    
+
     def __init__(
         self,
         name: str,
@@ -119,17 +130,18 @@ class StructuredLogRecord(logging.LogRecord):
 # Structured Logger
 # =============================================================================
 
+
 class StructuredLogger(logging.Logger):
     """Logger with structured data support.
-    
+
     Extends standard Logger to accept keyword arguments that become
     structured data in the log record.
-    
+
     Usage:
         logger = StructuredLogger("my.module")
         logger.info("User logged in", user_id=123, ip="192.168.1.1")
     """
-    
+
     def _log(
         self,
         level: int,
@@ -177,12 +189,12 @@ class StructuredLogger(logging.Logger):
         # Merge context + kwargs into structured_data
         context = _log_context.get()
         structured_data = {**context, **kwargs}
-        
+
         # Put structured_data in extra for the formatter
         if extra is None:
             extra = {}
         extra["structured_data"] = structured_data
-        
+
         super()._log(
             level,
             msg,
@@ -198,12 +210,13 @@ class StructuredLogger(logging.Logger):
 # Formatters
 # =============================================================================
 
+
 class StructuredFormatter(logging.Formatter):
     """Human-readable formatter with structured data.
-    
+
     Format: timestamp - name - level - message | key=value key=value
     """
-    
+
     def __init__(
         self,
         fmt: str | None = None,
@@ -249,7 +262,7 @@ class StructuredFormatter(logging.Formatter):
             fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         super().__init__(fmt, datefmt)
         self.include_structured = include_structured
-    
+
     def format(self, record: logging.LogRecord) -> str:
         """Format a log record as human-readable text with structured data.
 
@@ -284,15 +297,15 @@ class StructuredFormatter(logging.Formatter):
             '2025-01-15 10:30:00 - test - INFO - Message | camera_id=0'
         """
         base = super().format(record)
-        
+
         if not self.include_structured:
             return base
-        
+
         # Get structured data from record
         structured = getattr(record, "structured_data", {})
         if not structured:
             return base
-        
+
         # Format as key=value pairs
         pairs = " ".join(f"{k}={_format_value(v)}" for k, v in structured.items())
         return f"{base} | {pairs}"
@@ -300,7 +313,7 @@ class StructuredFormatter(logging.Formatter):
 
 class JSONFormatter(logging.Formatter):
     """JSON formatter for log aggregation systems.
-    
+
     Outputs each log record as a single JSON line with:
     - timestamp (ISO format)
     - level
@@ -308,7 +321,7 @@ class JSONFormatter(logging.Formatter):
     - message
     - All structured data as top-level keys
     """
-    
+
     def format(self, record: logging.LogRecord) -> str:
         """Format a log record as a single-line JSON object.
 
@@ -348,22 +361,20 @@ class JSONFormatter(logging.Formatter):
         """
         # Base fields
         log_dict: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(
-                record.created, tz=timezone.utc
-            ).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
         }
-        
+
         # Add structured data
         structured = getattr(record, "structured_data", {})
         log_dict.update(structured)
-        
+
         # Add exception info if present
         if record.exc_info:
             log_dict["exception"] = self.formatException(record.exc_info)
-        
+
         return json.dumps(log_dict, default=str)
 
 
@@ -375,6 +386,7 @@ def _format_value(value: Any) -> str:
     is unambiguous and parseable while remaining human-readable.
 
     Formatting rules:
+    - None: returns 'null' (JSON-compatible)
     - Strings: returned as-is, unless containing spaces (then quoted)
     - Dicts/lists: JSON-serialized for structure preservation
     - Other types: converted via str()
@@ -385,17 +397,19 @@ def _format_value(value: Any) -> str:
 
     Returns:
         String representation suitable for log output. Examples:
+        - None → 'null'
         - 'hello' → 'hello'
         - 'hello world' → '"hello world"'
         - {'key': 1} → '{"key": 1}'
         - [1, 2, 3] → '[1, 2, 3]'
         - 42 → '42'
-        - None → 'None'
 
     Raises:
         None. Non-serializable objects fall back to str() representation.
 
     Example:
+        >>> _format_value(None)
+        'null'
         >>> _format_value("simple")
         'simple'
         >>> _format_value("has spaces")
@@ -403,12 +417,14 @@ def _format_value(value: Any) -> str:
         >>> _format_value({"camera": 0})
         '{"camera": 0}'
     """
+    if value is None:
+        return "null"
     if isinstance(value, str):
         # Quote strings with spaces
         if " " in value:
             return f'"{value}"'
         return value
-    if isinstance(value, (dict, list)):
+    if isinstance(value, dict | list):
         return json.dumps(value, default=str)
     return str(value)
 
@@ -417,25 +433,27 @@ def _format_value(value: Any) -> str:
 # Context Management
 # =============================================================================
 
+
 @dataclass
 class LogContext:
     """Context manager for structured logging context.
-    
+
     Adds key-value pairs to all log messages within the context.
     Thread-safe and supports nesting.
-    
+
     Usage:
         with LogContext(request_id="abc", camera_id=0):
             logger.info("Processing")  # Includes request_id and camera_id
-            
+
             with LogContext(step="capture"):
                 logger.info("Capturing")  # Includes all three
     """
-    
+
+    _kwargs: dict[str, Any] = field(default_factory=dict, init=False, repr=True)
     _token: contextvars.Token[dict[str, Any]] | None = field(
         default=None, init=False, repr=False
     )
-    
+
     def __init__(self, **kwargs: Any) -> None:
         """Initialize a logging context with key-value pairs.
 
@@ -463,8 +481,7 @@ class LogContext:
             ...     logger.info("Starting")  # includes camera_id, operation
         """
         self._kwargs = kwargs
-        self._token = None
-    
+
     def __enter__(self) -> LogContext:
         """Enter the context and activate structured logging values.
 
@@ -494,7 +511,7 @@ class LogContext:
         new_context = {**current, **self._kwargs}
         self._token = _log_context.set(new_context)
         return self
-    
+
     def __exit__(self, *args: Any) -> None:
         """Exit the context and restore the previous logging context.
 
@@ -535,6 +552,7 @@ def configure_logging(
     json_format: bool = False,
     stream: Any = None,
     include_structured: bool = True,
+    force: bool = False,
 ) -> None:
     """Configure the telescope-mcp structured logging system.
 
@@ -543,8 +561,8 @@ def configure_logging(
     'telescope_mcp' logger. Should be called once at application startup.
 
     This function is idempotent: subsequent calls after the first have
-    no effect. The configuration is protected by a threading lock for
-    safe concurrent initialization.
+    no effect unless force=True. The configuration is protected by a
+    threading lock for safe concurrent initialization.
 
     The logging system provides structured data support via keyword
     arguments to log methods, enabling rich queryable logs for
@@ -561,6 +579,8 @@ def configure_logging(
         include_structured: If True (default) and json_format=False, append
             structured data as ' | key=value' to log messages. Ignored when
             json_format=True (structured data always included in JSON).
+        force: If True, reconfigure logging even if already configured.
+            Use for testing or runtime reconfiguration. Default: False.
 
     Returns:
         None.
@@ -578,38 +598,96 @@ def configure_logging(
         >>> # Testing setup (capture to StringIO)
         >>> import io
         >>> buffer = io.StringIO()
-        >>> configure_logging(stream=buffer, level=logging.DEBUG)
+        >>> configure_logging(stream=buffer, level=logging.DEBUG, force=True)
     """
     global _configured
-    
+
     with _config_lock:
-        if _configured:
-            return
-        
-        # Set our custom logger class as default
-        logging.setLoggerClass(StructuredLogger)
-        
-        # Create handler
-        if stream is None:
-            stream = sys.stderr
-        handler = logging.StreamHandler(stream)
-        
-        # Select formatter
-        if json_format:
-            formatter = JSONFormatter()
-        else:
-            formatter = StructuredFormatter(include_structured=include_structured)
-        handler.setFormatter(formatter)
-        
-        # Configure root logger for telescope_mcp
-        root = logging.getLogger("telescope_mcp")
-        root.setLevel(level)
-        root.addHandler(handler)
-        
-        # Prevent propagation to root logger (avoid duplicate logs)
-        root.propagate = False
-        
-        _configured = True
+        if force:
+            _reset_logging_impl()
+        _configure_logging_impl(level, json_format, stream, include_structured)
+
+
+def _configure_logging_impl(
+    level: int | str = logging.INFO,
+    json_format: bool = False,
+    stream: Any = None,
+    include_structured: bool = True,
+) -> None:
+    """Internal implementation of configure_logging (assumes lock is held)."""
+    global _configured
+
+    if _configured:
+        return
+
+    # Set our custom logger class as default
+    logging.setLoggerClass(StructuredLogger)
+
+    # Create handler
+    if stream is None:
+        stream = sys.stderr
+    handler = logging.StreamHandler(stream)
+
+    # Select formatter
+    formatter: logging.Formatter
+    if json_format:
+        formatter = JSONFormatter()
+    else:
+        formatter = StructuredFormatter(include_structured=include_structured)
+    handler.setFormatter(formatter)
+
+    # Configure root logger for telescope_mcp
+    root = logging.getLogger("telescope_mcp")
+    root.setLevel(level)
+    root.addHandler(handler)
+
+    # Prevent propagation to root logger (avoid duplicate logs)
+    root.propagate = False
+
+    _configured = True
+
+
+def _reset_logging_impl() -> None:
+    """Internal implementation of reset_logging (assumes lock is held)."""
+    global _configured
+
+    # Remove all handlers from telescope_mcp logger
+    root = logging.getLogger("telescope_mcp")
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()
+
+    _configured = False
+
+
+def reset_logging() -> None:
+    """Reset the logging system to unconfigured state (for testing).
+
+    Removes all handlers from the telescope_mcp logger and marks the
+    system as unconfigured. The next call to configure_logging() or
+    get_logger() will reinitialize the logging system.
+
+    Warning:
+        This is primarily for testing. Production code should not need
+        to reset logging configuration.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        None. Thread-safe.
+
+    Example:
+        >>> # In test teardown
+        >>> reset_logging()
+        >>> # Now can reconfigure with different settings
+        >>> configure_logging(level=logging.DEBUG, json_format=True)
+    """
+    with _config_lock:
+        _reset_logging_impl()
 
 
 def get_logger(name: str) -> StructuredLogger:
@@ -648,36 +726,64 @@ def get_logger(name: str) -> StructuredLogger:
         # Output: 2025-01-15 10:30:00 - telescope_mcp.devices.camera - INFO
         #         - Camera initialized | camera_id=0 model=ASI120
     """
-    # Ensure logging is configured with defaults if not already
+    # Double-checked locking pattern for thread-safe lazy initialization
     if not _configured:
-        configure_logging()
-    
-    # Get logger (will be StructuredLogger due to setLoggerClass)
+        with _config_lock:
+            if not _configured:  # pragma: no branch
+                _configure_logging_impl()
+
+    # Get logger (will be StructuredLogger due to setLoggerClass in configure)
     logger = logging.getLogger(name)
-    
-    # Cast for type checker (it's actually a StructuredLogger)
-    return logger  # type: ignore[return-value]
+
+    # Explicit cast: logging.getLogger returns Logger, but setLoggerClass()
+    # ensures it's actually a StructuredLogger. Cast documents this intent.
+    return cast(StructuredLogger, logger)
 
 
 # =============================================================================
 # Session Integration
 # =============================================================================
 
+# Protocol for session manager (avoids circular import)
+from collections.abc import Callable  # noqa: E402
+from typing import Protocol, runtime_checkable  # noqa: E402
+
+
+@runtime_checkable
+class SessionManagerProtocol(Protocol):
+    """Protocol for session manager log method."""
+
+    def log(
+        self,
+        level: str,
+        message: str,
+        source: str,
+        **kwargs: Any,
+    ) -> None:
+        """Log a message to the session."""
+        ...  # pragma: no cover
+
+
 class SessionLogHandler(logging.Handler):
     """Handler that forwards logs to the active session.
-    
+
     Enables dual-write: logs go to both console and session storage.
-    
+    Includes recursion guard to prevent infinite loops if session
+    manager logging triggers additional log events.
+
     Usage:
         from telescope_mcp.drivers.config import get_session_manager
-        
+
         handler = SessionLogHandler(get_session_manager)
         logging.getLogger("telescope_mcp").addHandler(handler)
     """
-    
+
+    # Thread-local recursion guard to prevent infinite loops
+    _local = threading.local()
+
     def __init__(
         self,
-        session_manager_getter: Any,  # Callable[[], SessionManager]
+        session_manager_getter: Callable[[], SessionManagerProtocol | None],
         level: int = logging.NOTSET,
     ) -> None:
         """Initialize the session log handler with a manager accessor.
@@ -715,7 +821,7 @@ class SessionLogHandler(logging.Handler):
         """
         super().__init__(level)
         self._get_manager = session_manager_getter
-    
+
     def emit(self, record: logging.LogRecord) -> None:
         """Forward a log record to the active observation session.
 
@@ -726,6 +832,9 @@ class SessionLogHandler(logging.Handler):
         The handler extracts structured data from the record and passes
         it to the session manager's log() method. If no session is active
         (manager returns None), the record is silently skipped.
+
+        Includes a recursion guard to prevent infinite loops when the
+        session manager's log() method triggers additional log events.
 
         Following Python logging best practices, exceptions during emit
         are caught and passed to handleError() rather than propagated,
@@ -749,14 +858,20 @@ class SessionLogHandler(logging.Handler):
             >>> logging.getLogger("telescope_mcp").addHandler(handler)
             >>> # Now all telescope_mcp logs are also saved to sessions
         """
+        # Recursion guard: skip if we're already emitting in this thread
+        if getattr(self._local, "emitting", False):
+            return
+
         try:
+            self._local.emitting = True
+
             manager = self._get_manager()
             if manager is None:
                 return
-            
+
             # Get structured data
             structured = getattr(record, "structured_data", {})
-            
+
             # Forward to session
             manager.log(
                 level=record.levelname,
@@ -767,3 +882,5 @@ class SessionLogHandler(logging.Handler):
         except Exception:
             # Don't raise exceptions in logging
             self.handleError(record)
+        finally:
+            self._local.emitting = False

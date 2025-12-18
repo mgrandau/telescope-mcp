@@ -12,8 +12,7 @@ from typing import Any
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
-from telescope_mcp.devices import CameraRegistry, CaptureOptions, get_registry
-from telescope_mcp.drivers.config import get_factory
+from telescope_mcp.devices import CaptureOptions, get_registry
 from telescope_mcp.observability import get_logger
 
 logger = get_logger(__name__)
@@ -80,7 +79,10 @@ TOOLS = [
                 },
                 "control": {
                     "type": "string",
-                    "description": "Control name (ASI_GAIN, ASI_EXPOSURE, ASI_WB_R, ASI_WB_B, etc.)",
+                    "description": (
+                        "Control name (ASI_GAIN, ASI_EXPOSURE, "
+                        "ASI_WB_R, ASI_WB_B, etc.)"
+                    ),
                 },
                 "value": {
                     "type": "integer",
@@ -145,22 +147,24 @@ def register(server: Server) -> None:
     async def list_tools() -> list[Tool]:
         """Return available camera tools (MCP tool discovery).
 
-        MCP handler providing tool definitions to clients. Called during MCP handshake when clients
-        request available tools. Returns TOOLS list defining camera operations.
+        MCP handler providing tool definitions to clients. Called during MCP
+        handshake when clients request available tools. Returns TOOLS list
+        defining camera operations.
 
-        Business context: Enables AI agents to discover camera control capabilities at runtime.
-        Critical for AI-powered telescope automation where LLMs orchestrate imaging workflows.
-        Provides schema-driven interface enabling type-safe AI tool calls.
-        
+        Business context: Enables AI agents to discover camera control
+        capabilities at runtime. Critical for AI-powered telescope automation
+        where LLMs orchestrate imaging workflows. Provides schema-driven
+        interface enabling type-safe AI tool calls.
+
         Args:
             None.
 
         Returns:
             List[Tool] defining camera capabilities (list_cameras, capture_frame, etc.).
-        
+
         Raises:
             None. Always succeeds returning pre-built TOOLS list.
-        
+
         Example:
             >>> tools = await list_tools()
             >>> print([t.name for t in tools])  # [list_cameras, capture_frame, ...]
@@ -175,7 +179,7 @@ def register(server: Server) -> None:
         Extracts arguments and calls the corresponding _* function.
         This is the primary entry point for all camera-related MCP tool
         invocations from AI agents or external clients.
-        
+
         Business context: Enables AI agents (Claude, GPT) to control telescope
         cameras through the Model Context Protocol. Provides a uniform interface
         for camera discovery, configuration, and capture across different camera
@@ -192,10 +196,10 @@ def register(server: Server) -> None:
             List containing single TextContent with JSON result string or error
             message. Success responses have structured JSON, errors have
             descriptive text.
-        
+
         Raises:
             None. Errors are caught and returned as TextContent with error details.
-        
+
         Example:
             # MCP client invocation from AI agent
             result = await call_tool(
@@ -263,10 +267,10 @@ async def _list_cameras() -> list[TextContent]:
     try:
         registry = get_registry()
         cameras = registry.discover()
-        
+
         if not cameras:
             return [TextContent(type="text", text="No cameras connected")]
-        
+
         result = {
             "count": len(cameras),
             "cameras": [
@@ -277,7 +281,7 @@ async def _list_cameras() -> list[TextContent]:
                     "max_height": info.max_height,
                 }
                 for cam_id, info in cameras.items()
-            ]
+            ],
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
@@ -315,10 +319,12 @@ async def _get_camera_info(camera_id: int) -> list[TextContent]:
     try:
         registry = get_registry()
         camera = registry.get(camera_id, auto_connect=True)
-        
-        # Get info from camera
-        info_dict = asdict(camera.info)
-        
+
+        # Get info from camera (guaranteed non-None after successful get)
+        camera_info = camera.info
+        assert camera_info is not None
+        info_dict = asdict(camera_info)
+
         result = {
             "camera_id": camera_id,
             "info": info_dict,
@@ -330,7 +336,9 @@ async def _get_camera_info(camera_id: int) -> list[TextContent]:
         return [TextContent(type="text", text=f"Error getting camera info: {e}")]
 
 
-async def _capture_frame(camera_id: int, exposure_us: int, gain: int) -> list[TextContent]:
+async def _capture_frame(
+    camera_id: int, exposure_us: int, gain: int
+) -> list[TextContent]:
     """Capture a single frame from a camera and return as base64 JPEG.
 
     Takes a single exposure with the specified settings and returns
@@ -365,16 +373,18 @@ async def _capture_frame(camera_id: int, exposure_us: int, gain: int) -> list[Te
     try:
         registry = get_registry()
         camera = registry.get(camera_id, auto_connect=True)
-        
+
         # Capture with specified settings
-        capture_result = camera.capture(CaptureOptions(
-            exposure_us=exposure_us,
-            gain=gain,
-        ))
-        
+        capture_result = camera.capture(
+            CaptureOptions(
+                exposure_us=exposure_us,
+                gain=gain,
+            )
+        )
+
         # Encode image as base64
-        b64_image = base64.b64encode(capture_result.image_data).decode('utf-8')
-        
+        b64_image = base64.b64encode(capture_result.image_data).decode("utf-8")
+
         result = {
             "camera_id": camera_id,
             "exposure_us": capture_result.exposure_us,
@@ -388,7 +398,9 @@ async def _capture_frame(camera_id: int, exposure_us: int, gain: int) -> list[Te
         return [TextContent(type="text", text=f"Error capturing frame: {e}")]
 
 
-async def _set_camera_control(camera_id: int, control: str, value: int) -> list[TextContent]:
+async def _set_camera_control(
+    camera_id: int, control: str, value: int
+) -> list[TextContent]:
     """Set a camera control parameter to a specified value.
 
     Adjusts camera hardware settings like gain, exposure, white balance.
@@ -422,17 +434,17 @@ async def _set_camera_control(camera_id: int, control: str, value: int) -> list[
     try:
         registry = get_registry()
         camera = registry.get(camera_id, auto_connect=True)
-        
+
         # Remove ASI_ prefix if provided for backwards compatibility
         control_name = control.replace("ASI_", "")
-        
+
         # Set control via camera instance
         if not camera._instance:
             return [TextContent(type="text", text="Camera not connected")]
-        
+
         result_dict = camera._instance.set_control(control_name, value)
         result_dict["camera_id"] = camera_id
-        
+
         return [TextContent(type="text", text=json.dumps(result_dict, indent=2))]
     except Exception as e:
         logger.error(f"Error setting {control} on camera {camera_id}: {e}")
@@ -471,17 +483,17 @@ async def _get_camera_control(camera_id: int, control: str) -> list[TextContent]
     try:
         registry = get_registry()
         camera = registry.get(camera_id, auto_connect=True)
-        
+
         # Remove ASI_ prefix if provided for backwards compatibility
         control_name = control.replace("ASI_", "")
-        
+
         # Get control via camera instance
         if not camera._instance:
             return [TextContent(type="text", text="Camera not connected")]
-        
+
         result_dict = camera._instance.get_control(control_name)
         result_dict["camera_id"] = camera_id
-        
+
         return [TextContent(type="text", text=json.dumps(result_dict, indent=2))]
     except Exception as e:
         logger.error(f"Error getting {control} from camera {camera_id}: {e}")
