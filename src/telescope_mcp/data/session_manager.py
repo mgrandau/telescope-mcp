@@ -336,20 +336,46 @@ class SessionManager:
 
     @property
     def active_session(self) -> Session | None:
-        """Get the currently active session.
+        """Get currently active session (direct access to session methods).
         
-        Returns the Session object for direct access to session methods.
-        May be an idle session if no observation is in progress.
+        Returns Session object for direct method access (add_frame, add_event, add_telemetry,
+        close). May be idle session (SessionType.IDLE) if no observation in progress. None only
+        after shutdown() called.
+        
+        Business context: Provides direct access to session for advanced use cases requiring methods
+        not exposed through SessionManager facade. Used when needing session metadata (session_id,
+        start_time, duration_seconds), low-level add_* methods with custom error handling, or
+        session introspection for debugging. Most applications should use SessionManager.add_frame()
+        etc. instead (simpler, auto-creates session). Essential for testing, diagnostics, and
+        integrations requiring full Session API.
+        
+        Implementation details: Returns self._active_session which is Session instance or None.
+        Initially None, becomes Session after first start_session() or lazy-created idle session
+        by _ensure_idle_session(). Stays same Session instance until close_session() called (then
+        becomes None) or new start_session() (replaces with new Session). None only after explicit
+        shutdown() - normal operation always has Session (idle if no observation). Zero-cost
+        attribute access.
         
         Args:
-            None. Property access.
+            None. Property access pattern (not a method call).
         
         Returns:
-            Active Session instance, or None if shutdown.
+            Active Session instance (may be idle session with SessionType.IDLE), or None if
+            shutdown() called and manager no longer operational.
         
         Raises:
-            None. Returns None when no session active.
-        """
+            None. Always returns Session or None - never raises exceptions.
+        
+        Example:
+            >>> manager = SessionManager()
+            >>> session = manager.active_session  # May be None initially
+            >>> manager.start_session(SessionType.OBSERVATION, "M31")
+            >>> session = manager.active_session  # Now a Session object
+            >>> print(f"Session {session.session_id} running {session.duration_seconds:.1f}s")
+            >>> # Direct access to session methods
+            >>> session.add_metadata("observer", "John Doe")
+            >>> # Or use manager facade (preferred)
+            >>> manager.add_metadata("telescope", "SCT 8\"")
         return self._active_session
 
     @property
@@ -388,20 +414,49 @@ class SessionManager:
 
     @property
     def active_session_id(self) -> str | None:
-        """Get the ID of the currently active session.
+        """Get ID of currently active session (filename-safe unique identifier).
         
-        Session IDs are unique identifiers in the format
-        'YYYYMMDD_HHMMSS_type' used for file naming.
+        Returns session ID string in format 'YYYYMMDD_HHMMSS_type' (e.g., '20251218_203045_observation').
+        Used for file naming (ASDF files written to data_dir/session_id.asdf), logging correlation,
+        UI display. None if no session active (rare - manager auto-creates idle sessions).
+        
+        Business context: Essential for correlating data across systems in telescope operations.
+        Session ID appears in log files ("processing frame for session 20251218_203045_observation"),
+        file paths (data/20251218_203045_observation.asdf), UI displays ("Current Session: 20251218_203045"),
+        and external integrations (sending session ID to platesolving service). Enables finding all
+        artifacts from specific observation session (ASDF file, logs, backup images, calibration
+        frames). Time-based format provides natural chronological sorting and human-readable context
+        ("that was December 18, 2025 at 8:30pm"). Unique across all sessions preventing file collisions.
+        
+        Implementation details: Delegates to self._active_session.session_id if session exists, else
+        None. Session ID generated during Session.__init__() using datetime.now().strftime() and
+        session_type.value. Format: '%Y%m%d_%H%M%S_{type}' (e.g., 20251218_203045_observation). Type
+        suffix enables filtering ("all observation sessions today: 20251218_*_observation.asdf").
+        IDs unique to 1-second resolution (sufficient for manual operations, potential collision for
+        automated rapid session creation). Read-only - cannot modify after creation.
         
         Args:
-            None. Property access.
+            None. Property access pattern (not a method call).
         
         Returns:
-            Session ID string, or None if no session is active.
+            Session ID string like '20251218_203045_observation', or None if no active session
+            (only after shutdown). String length typically 25-35 characters depending on type name.
         
         Raises:
-            None. Returns None when no session active.
-        """
+            None. Always returns string or None - never raises exceptions.
+        
+        Example:
+            >>> manager = SessionManager()
+            >>> manager.start_session(SessionType.OBSERVATION, "M31")
+            >>> session_id = manager.active_session_id
+            >>> print(f"Session ID: {session_id}")  # 20251218_203045_observation
+            >>> # Use in logging
+            >>> logger.info(f"Capture completed", session_id=session_id, frame=42)
+            >>> # Use in file paths
+            >>> backup_path = f"/backup/{session_id}_frame_{i:04d}.fits"
+            >>> # Parse timestamp from ID
+            >>> timestamp_str = session_id.split('_')[0] + session_id.split('_')[1]  # 20251218203045
+            >>> dt = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
         if self._active_session:
             return self._active_session.session_id
         return None

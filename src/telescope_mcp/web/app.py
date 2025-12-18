@@ -230,21 +230,47 @@ def create_app() -> FastAPI:
     # Routes
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request) -> HTMLResponse:
-        """Render the main telescope control dashboard page.
+        """Render main telescope control dashboard (web UI entry point).
 
-        Serves the HTML dashboard with camera streams, motor controls,
-        and position display. The page uses JavaScript to interact
-        with the REST API endpoints for real-time control.
+        Serves HTML dashboard with embedded camera streams (MJPEG), motor controls (altitude/azimuth),
+        position display (alt/az readout), and camera settings (exposure/gain). Page uses JavaScript
+        to interact with REST API endpoints (/api/cameras, /api/motor/*, /api/position) for real-time
+        control without page refreshes.
+
+        Business context: Primary operator interface for telescope control during observation sessions.
+        Enables remote telescope operation from observatory control room or over internet (VPN).
+        Critical for unattended observatories where physical access difficult. Combines live camera
+        preview (alignment verification, target centering) with motion control (goto, tracking
+        corrections) in single interface. Used during setup (camera alignment, focus), acquisition
+        (target centering, platesolving), and guiding (drift monitoring). Alternative to desktop
+        control software - platform-independent (works on tablets, laptops, phones).
+
+        Implementation details: Renders dashboard.html Jinja2 template with title context. Template
+        contains MJPEG <img> tags pointing to /stream/finder and /stream/main, AJAX controls calling
+        /api/* endpoints, WebSocket connections for position updates (if enabled). FastAPI handles
+        async rendering. Static assets (CSS, JS) served from /static mount. Template not found raises
+        TemplateNotFound (500 error). Request object required by Jinja2 for URL generation.
 
         Args:
-            request: FastAPI Request object (required for templates).
+            request: FastAPI Request object providing URL context, headers, session. Required by
+                Jinja2Templates.TemplateResponse for generating absolute URLs in template.
 
         Returns:
-            HTMLResponse with rendered dashboard.html template.
+            HTMLResponse with rendered dashboard.html containing complete telescope control interface.
+            Content-Type: text/html. Status 200 on success.
 
         Raises:
-            None. Template errors would raise TemplateNotFound.
-        """
+            None explicitly. TemplateNotFound (500) if dashboard.html missing from templates directory.
+
+        Example:
+            >>> # Access dashboard at http://localhost:8000/
+            >>> # Browser displays:
+            >>> # - Finder camera stream (top left)
+            >>> # - Main camera stream (top right)
+            >>> # - Motor controls (center)
+            >>> # - Position readout (bottom)
+            >>> # Click altitude control → AJAX POST /api/motor/altitude
+            >>> # Stream auto-refreshes at configured FPS
         return templates.TemplateResponse(
             "dashboard.html",
             {"request": request, "title": "Telescope Control"},
@@ -405,23 +431,50 @@ def create_app() -> FastAPI:
 
     @app.get("/api/cameras")
     async def api_list_cameras() -> JSONResponse:
-        """List all connected ASI cameras with basic information.
+        """List all connected ASI cameras with basic info (discovery endpoint).
 
-        Returns camera count and names for all detected ZWO ASI cameras.
-        Initializes the SDK if not already done. Use camera IDs from this
-        list for stream and control endpoints.
+        Returns camera count and names for all detected ZWO ASI cameras via SDK enumeration.
+        Initializes SDK lazily if not already done (_init_sdk). Use camera IDs from response
+        for subsequent /stream/{camera_id} and /api/camera/{camera_id}/* endpoints. Discovery
+        endpoint for dashboard initialization and camera availability checks.
+
+        Business context: Essential for dynamic camera configuration in multi-camera systems.
+        Dashboard JavaScript calls this on page load to populate camera selectors, enable/disable
+        stream buttons based on availability. Enables hot-plug detection (refresh to see newly
+        connected cameras). Critical for diagnostic workflows ("which cameras are connected?",
+        "why is stream endpoint 404?"). Used by setup scripts to verify expected cameras present
+        before starting observations (e.g., both finder and main camera must be available).
+
+        Implementation details: Calls _init_sdk() (loads libASICamera2.so, calls ASIGetNumOfConnectedCameras),
+        then asi.get_num_cameras() and asi.list_cameras() for enumeration. Returns JSON with count
+        and array of {id, name} objects. IDs are 0-based sequential matching SDK enumeration order
+        (typically USB port order). Empty array if no cameras (not an error). SDK errors (library
+        load failure, USB access denied) return {"error": str} with 500 status. No caching - always
+        queries hardware (enables hot-plug detection but adds ~50-200ms latency).
 
         Args:
-            None.
+            None. Query parameters not needed for simple enumeration.
 
         Returns:
-            JSONResponse with structure:
-            {"count": int, "cameras": [{"id": int, "name": str}, ...]}
-            Returns {"error": str} with status 500 on SDK errors.
+            JSONResponse with camera list: {"count": int, "cameras": [{"id": int, "name": str}, ...]}.
+            Example: {"count": 2, "cameras": [{"id": 0, "name": "ZWO ASI120MC"}, {"id": 1, "name": "ZWO ASI290MM"}]}.
+            Error response: {"error": "SDK initialization failed: libASICamera2.so not found"} with
+            status 500 if SDK errors occur.
 
         Raises:
-            None. Errors returned as JSON with appropriate status code.
-        """
+            None explicitly. All exceptions caught and returned as JSON {"error": str} with 500 status.
+
+        Example:
+            >>> # JavaScript dashboard code
+            >>> fetch('/api/cameras')
+            ...     .then(r => r.json())
+            ...     .then(data => {
+            ...         console.log(`Found ${data.count} cameras`);
+            ...         data.cameras.forEach(cam => {
+            ...             addStreamButton(cam.id, cam.name);
+            ...         });
+            ...     });
+            >>> # Response: {"count": 2, "cameras": [{"id": 0, "name": "ZWO ASI120MC"}, {"id": 1, "name": "ZWO ASI290MM"}]}
         _init_sdk()
         try:
             num_cameras = asi.get_num_cameras()
@@ -533,47 +586,100 @@ def create_app() -> FastAPI:
 
     @app.post("/api/motor/stop")
     async def api_stop_motors() -> dict:
-        """Emergency stop all telescope motors immediately.
+        """Emergency stop all telescope motors (safety endpoint).
 
-        Halts all motor movement for safety. Use when unexpected movement
-        occurs or before manual intervention. Should be called before
-        any maintenance operations.
+        Immediately halts all motor movement (altitude, azimuth, focuser, rotator) for safety.
+        Use when unexpected movement occurs, runaway goto detected, or before manual intervention.
+        Must be called before any hands-on maintenance operations (adjusting cables, swapping
+        cameras, cleaning optics). Big red "STOP" button in dashboard UI.
 
-        Note: Not yet implemented - returns placeholder response.
+        Business context: Critical safety feature for robotic telescope operation. Prevents damage
+        from runaway motors (software bugs, encoder glitches, limit switch failures). Essential
+        for remote operation where operator can't physically reach emergency stop. Enables safe
+        transition from automated to manual control (stop motors, then adjust by hand). Used in
+        error recovery workflows (unexpected behavior → stop → diagnose → restart). Required by
+        observatory safety protocols (operators must have immediate stop capability).
+
+        Implementation details: When implemented, will call motor controller stop_all() method
+        sending stop commands to all connected motor drivers (stepper controllers, focuser USB
+        interfaces). Should be idempotent (safe to call when already stopped). Must complete
+        within 100ms (low latency critical for emergency use). Stops motion immediately without
+        deceleration ramps (may cause vibration but safety trumps smoothness). Currently returns
+        placeholder {"status": "stopped"} - TODO: integrate motor controller.
 
         Args:
-            None.
+            None. No parameters needed - unconditional immediate stop.
 
         Returns:
-            Dict confirming stop: {"status": "stopped"}
+            Dict confirming motors stopped: {"status": "stopped"}. When implemented, may include
+            additional fields: {"status": "stopped", "stopped_motors": ["altitude", "azimuth"],
+            "timestamp": "2025-12-18T12:34:56Z"}.
 
         Raises:
-            None. TODO: May raise if motors fail to stop when implemented.
-        """
+            None currently (placeholder). TODO: Will raise HTTPException(503) if motor controller
+            unavailable or motors fail to acknowledge stop command within timeout.
+
+        Example:
+            >>> # JavaScript dashboard emergency stop button
+            >>> document.getElementById('stop-btn').onclick = async () => {
+            ...     const response = await fetch('/api/motor/stop', {method: 'POST'});
+            ...     const data = await response.json();
+            ...     if (data.status === 'stopped') {
+            ...         alert('Motors stopped!');
+            ...         disableMotorControls();  // Prevent further movement
+            ...     }
+            ... };
         # TODO: Implement
         return {"status": "stopped"}
 
     @app.get("/api/position")
     async def api_get_position() -> dict:
-        """Get current telescope pointing position.
+        """Get current telescope pointing position (encoder readout).
 
-        Returns altitude (elevation) and azimuth angles representing
-        where the telescope is currently pointed. Values are in degrees.
+        Returns altitude (elevation) and azimuth angles from motor encoders representing current
+        telescope pointing direction. Values in degrees using alt-az coordinate system. Dashboard
+        polls this endpoint (e.g., 1Hz) to update position display for operator awareness.
 
-        Note: Not yet implemented - returns placeholder values.
+        Business context: Essential for operator situational awareness during telescope operation.
+        Shows "where are we pointing?" in real-time, critical for verifying goto accuracy ("did
+        telescope reach target coordinates?"), monitoring tracking ("is telescope drifting?"),
+        and safety ("are we pointed too low, risk hitting pier/horizon?"). Used by platesolving
+        workflows to compare actual pointing (encoder readout) vs solved pointing (image analysis)
+        for alignment model refinement. Enables creation of pointing logs for post-observation
+        analysis (where did we observe throughout night?). Diagnostic tool for encoder issues
+        ("why is readout stuck/jumping?").
+
+        Implementation details: When implemented, will query motor controller get_position() reading
+        encoder values from altitude/azimuth motors, converting encoder counts to degrees. Altitude:
+        0° (horizon) to 90° (zenith), may support negative for below-horizon if mount allows.
+        Azimuth: 0° (north) to 360° clockwise (east=90°, south=180°, west=270°). Currently returns
+        placeholder {"altitude": 45.0, "azimuth": 180.0} - TODO: integrate encoder drivers. Resolution
+        typically 0.01° (36 arcseconds) or better. Update rate ~10Hz max (encoder query latency).
 
         Args:
-            None.
+            None. Position is current instantaneous state, no parameters needed.
 
         Returns:
-            Dict with position angles in degrees:
-            {"altitude": float, "azimuth": float}
-            Altitude: 0 (horizon) to 90 (zenith)
-            Azimuth: 0 (north) to 360, clockwise
+            Dict with telescope pointing in alt-az degrees:
+            {"altitude": float, "azimuth": float}.
+            Example: {"altitude": 67.5, "azimuth": 123.4} = pointing 67.5° above horizon, azimuth 123.4°.
+            When implemented, may include: {"altitude": 67.5, "azimuth": 123.4, "tracking": true,
+            "timestamp": "2025-12-18T12:34:56.789Z", "encoder_counts": {"alt": 123456, "az": 789012}}.
 
         Raises:
-            None. TODO: Will raise on encoder errors when implemented.
-        """
+            None currently (placeholder). TODO: Will raise HTTPException(503) if motor controller
+            unavailable or encoders return invalid data (disconnected, out of range).
+
+        Example:
+            >>> # JavaScript dashboard polling for position display
+            >>> setInterval(async () => {
+            ...     const response = await fetch('/api/position');
+            ...     const pos = await response.json();
+            ...     document.getElementById('alt-display').innerText = 
+            ...         `Alt: ${pos.altitude.toFixed(2)}°`;
+            ...     document.getElementById('az-display').innerText = 
+            ...         `Az: ${pos.azimuth.toFixed(2)}°`;
+            ... }, 1000);  // Update every second
         # TODO: Implement
         return {"altitude": 45.0, "azimuth": 180.0}
 
@@ -700,44 +806,66 @@ async def _generate_camera_stream(
     gain: Optional[int] = None,
     fps: int = DEFAULT_FPS,
 ) -> AsyncGenerator[bytes, None]:
-    """Generate MJPEG video stream from a camera.
+    """Generate continuous MJPEG video stream from camera (async generator).
 
-    Async generator that continuously captures frames from the specified
-    camera and yields them as MJPEG-formatted chunks. Uses the ASI SDK's
-    video capture mode for efficient streaming.
+    Async generator continuously capturing frames from specified camera, yielding MJPEG-formatted
+    chunks. Uses ASI SDK video capture mode (start_video_capture) for efficient streaming without
+    re-initialization per frame. Auto-stretches each frame (histogram normalization) for visibility
+    of dim astronomical objects. Error frames displayed in-stream (red text on black) rather than
+    breaking connection. Handles full capture lifecycle: configuration, video start, frame loop,
+    cleanup on generator close.
 
-    The stream automatically applies auto-stretch to each frame for
-    better visibility of dim astronomical objects. Error frames are
-    displayed in-stream rather than breaking the connection.
+    Business context: Core streaming engine for web dashboard live preview enabling real-time
+    telescope alignment, focus adjustment, target acquisition. Critical for remote operation -
+    operators see what telescope sees without physical presence. Finder camera streams used for
+    goto verification ("did telescope point correctly?"), guiding feedback (drift monitoring),
+    field identification. Main camera streams used for focus tuning (star size), framing verification,
+    exposure preview ("will 5min exposure work?"). Auto-stretch essential - raw astronomical frames
+    mostly black (faint stars invisible without processing). MJPEG format enables simple HTML
+    <img src="/stream"> integration without WebRTC complexity.
 
-    This generator handles the full capture lifecycle including camera
-    configuration, video start/stop, and cleanup on generator close.
+    Implementation details: AsyncGenerator yields MJPEG multipart chunks (--frame boundary, JPEG
+    data). Frame loop: capture_video_frame() → numpy reshape → auto-stretch (normalize to 0-255) →
+    imencode JPEG → yield. Frame rate controlled by sleep(1/fps) minus capture time. Camera
+    configured once at start (gain, exposure, bandwidth, RAW8 format). Video mode faster than
+    repeated start_exposure/stop_exposure. Cleanup on generator close (finally block) stops video,
+    updates _camera_streaming flag. Error handling: camera not found → single error frame → return;
+    capture errors → error frame with exception text → continue (don't break stream).
 
     Args:
-        camera_id: Camera index (0=finder, 1=main). If camera not found,
-            yields a single error frame and returns.
-        exposure_us: Exposure time in microseconds. If None, uses stored
-            camera settings or DEFAULT_EXPOSURE_US (100000).
-        gain: Gain value (0-100 typical range). If None, uses stored
-            settings or DEFAULT_GAIN (50).
-        fps: Target frames per second. Controls yield rate, not exposure.
-            Default 15. Higher values may exceed camera capabilities.
+        camera_id: Camera index (0=finder, 1=main). Must match ASI SDK camera enumeration order.
+            If camera not found, yields single error frame then returns (HTTP 200 with error image).
+        exposure_us: Exposure time in microseconds (controls brightness). None uses stored settings
+            from _camera_settings dict or DEFAULT_EXPOSURE_US (100000 = 0.1s). Typical range:
+            finder 10000-100000 (10-100ms), main 100000-10000000 (0.1-10s).
+        gain: Gain value (amplification). None uses stored settings or DEFAULT_GAIN (50). Range
+            0-600 (camera-dependent). Higher gain = brighter but more noise.
+        fps: Target frames per second (yield rate). Default 15. Actual FPS limited by exposure time
+            (can't exceed 1000000/exposure_us). Higher FPS reduces latency but increases bandwidth.
 
     Yields:
-        Bytes in MJPEG multipart format:
+        Bytes in MJPEG multipart format suitable for StreamingResponse:
         b"--frame\r\nContent-Type: image/jpeg\r\n\r\n<jpeg_data>\r\n"
+        Each yield is one complete frame. Browser buffers and displays as video.
+
+    Returns:
+        AsyncGenerator yielding frame bytes until client disconnects or _camera_streaming[camera_id]
+        set to False. Generator cleanup (finally) stops video capture.
 
     Raises:
-        None. Errors are rendered as text on error frames.
+        None explicitly. Errors rendered as frames (cv2.putText exception message on black image).
+        Generator continues after capture errors to maintain stream stability.
 
     Example:
+        >>> # FastAPI endpoint
         >>> @app.get("/stream/0")
-        >>> async def stream():
+        >>> async def finder_stream():
         ...     return StreamingResponse(
-        ...         _generate_camera_stream(0, exposure_us=50000),
+        ...         _generate_camera_stream(0, exposure_us=50000, gain=80, fps=15),
         ...         media_type="multipart/x-mixed-replace; boundary=frame"
         ...     )
-    """
+        >>> # Browser: <img src="http://localhost:8000/stream/0">
+        >>> # Displays live video until page closed or stream stopped
     camera = _get_camera(camera_id)
     if camera is None:
         # Yield error frame

@@ -143,13 +143,27 @@ def register(server: Server) -> None:
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        """Return the list of available camera tools.
+        """Return available camera tools (MCP tool discovery).
 
-        MCP handler that provides tool definitions to clients. Called
-        when clients request available tools for discovery.
+        MCP handler providing tool definitions to clients. Called during MCP handshake when clients
+        request available tools. Returns TOOLS list defining camera operations.
+
+        Business context: Enables AI agents to discover camera control capabilities at runtime.
+        Critical for AI-powered telescope automation where LLMs orchestrate imaging workflows.
+        Provides schema-driven interface enabling type-safe AI tool calls.
+        
+        Args:
+            None.
 
         Returns:
-            List of Tool objects defining camera capabilities.
+            List[Tool] defining camera capabilities (list_cameras, capture_frame, etc.).
+        
+        Raises:
+            None. Always succeeds returning pre-built TOOLS list.
+        
+        Example:
+            >>> tools = await list_tools()
+            >>> print([t.name for t in tools])  # [list_cameras, capture_frame, ...]
         """
         return TOOLS
 

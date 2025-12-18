@@ -59,9 +59,24 @@ class ASICameraInstance:
         Queries camera properties and controls from the hardware.
         Should not be called directly - use ASICameraDriver.open().
         
+        Business context: Wraps hardware camera with clean protocol interface. Abstracts ASI SDK
+        details enabling higher layers (devices/camera.py) to work hardware-agnostically. Enables
+        testing by substituting DigitalTwinCameraInstance.
+        
         Args:
             camera_id: Camera ID (0-indexed).
             camera: Opened zwoasi.Camera instance.
+        
+        Returns:
+            None. Instance ready for capture, control operations.
+        
+        Raises:
+            ASI_ERROR: If camera property or control query fails.
+        
+        Example:
+            # Normally via driver:
+            >>> driver = ASICameraDriver()
+            >>> camera = driver.open(0)  # Creates ASICameraInstance internally
         """
         self._camera_id = camera_id
         self._camera = camera
@@ -358,11 +373,33 @@ class ASICameraDriver:
     """
     
     def __init__(self):
-        """Create ASI camera driver.
+        """Create ASI camera driver for ZWO hardware.
         
-        The ASI SDK is initialized lazily on first camera operation,
-        not during construction. This allows driver creation even
-        when no cameras are connected.
+        SDK initialized lazily on first camera operation (not during construction). Allows
+        driver creation when cameras disconnected, enabling graceful handling of missing hardware.
+        
+        Business context: Lazy initialization enables application startup even when cameras
+        offline (network issues, power off, USB disconnected). Application can show UI, handle
+        MCP requests, provide diagnostics. When cameras reconnected, operations succeed. Critical
+        for robust production systems where hardware may be temporarily unavailable.
+        
+        Implementation details: Sets _sdk_initialized=False. Actual SDK loading (_ensure_sdk_initialized)
+        happens on first get_connected_cameras() or open() call. SDK loads libASICamera2.so via ctypes,
+        initializes USB context. Construction never fails - SDK errors surface during operations.
+        
+        Args:
+            None. No configuration needed - SDK path auto-detected by get_sdk_library_path().
+        
+        Returns:
+            None. Driver ready for lazy SDK init on first use.
+        
+        Raises:
+            None. Construction always succeeds. SDK errors (library not found, USB issues) occur
+            during first camera operation.
+        
+        Example:
+            >>> driver = ASICameraDriver()  # Succeeds even without cameras
+            >>> cameras = driver.get_connected_cameras()  # SDK init happens here
         """
         self._sdk_initialized = False
     
@@ -370,8 +407,21 @@ class ASICameraDriver:
         """Initialize ASI SDK if not already done.
         
         Loads the ASI SDK library from the bundled location and
-        initializes it. Called automatically before camera operations.
+        initializes it. Called automatically before camera operations.        
+        Business context: Lazy init pattern enables graceful handling of missing cameras. Application
+        starts even when hardware offline. First camera operation triggers SDK load, failing cleanly
+        with diagnostics if library missing. Production systems stay responsive during hardware issues.
         
+        Args:
+            None. Uses internal _sdk_initialized flag.
+        
+        Returns:
+            None. Sets _sdk_initialized=True on success.
+        
+        Example:
+            # Called internally:
+            >>> driver = ASICameraDriver()
+            >>> cameras = driver.get_connected_cameras()  # Triggers _ensure_sdk_initialized        
         Raises:
             RuntimeError: If SDK initialization fails.
         """

@@ -257,44 +257,180 @@ class CameraInstance(Protocol):
         ...
 
     def close(self) -> None:
-        """Close the camera and release resources."""
+        """Close camera connection and release hardware resources (USB handles, memory).
+        
+        Closes camera connection releasing exclusive USB handles, driver allocations, memory buffers.
+        After calling, instance unusable. Must call before opening again or from another process.
+        Idempotent - safe to call multiple times.
+        
+        Business context: Critical for proper resource management in long-running telescope systems.
+        USB cameras hold exclusive device handles - failing to close prevents other applications from
+        accessing camera until system reboot. Essential for camera hot-swapping, graceful shutdown,
+        and freeing USB bandwidth in multi-camera systems.
+        
+        Args:
+            None.
+        
+        Returns:
+            None. Side effects: USB device closed, internal state cleared.
+        
+        Raises:
+            None. Should catch all exceptions for reliable cleanup.
+        
+        Example:
+            >>> instance = driver.open(0)
+            >>> instance.capture(100_000)
+            >>> instance.close()  # Release USB handle
+        """
         ...
 
 
 class CameraDriver(Protocol):
-    """Protocol for camera drivers (real or simulated).
+    """Protocol for camera drivers enabling hardware abstraction and testing.
     
-    Defines the interface for camera discovery and connection.
-    Implemented by ASICameraDriver (real hardware) and
-    DigitalTwinCameraDriver (simulation).
+    Defines the interface for camera discovery and connection, abstracting
+    differences between real hardware (ASI SDK) and simulation (digital twin).
+    This protocol enables dependency injection for testability and supports
+    running the same application code against real cameras or simulated ones.
     
-    Drivers can return either:
+    Business context: Critical abstraction layer enabling development and testing
+    without physical hardware. Allows CI/CD pipelines to run full integration tests
+    with simulated cameras, supports offline development when cameras unavailable,
+    and enables demonstrations without hardware setup. The protocol pattern ensures
+    application code (Camera, CameraController, tools) works identically with both
+    ASI hardware and digital twins.
+    
+    Implemented by:
+    - ASICameraDriver: Real ZWO ASI cameras via SDK
+    - DigitalTwinCameraDriver: Simulated cameras for testing
+    
+    Factory pattern: Use DriverFactory.create_camera_driver() to obtain the
+    appropriate driver based on configuration (hardware vs simulation mode).
+    
+    Implementation details: Drivers should be stateless - all camera-specific
+    state lives in CameraInstance. get_connected_cameras() may cache results
+    briefly to avoid repeated hardware scans. open() should validate camera_id
+    and raise appropriate exceptions for invalid IDs.
+    
+    Return format flexibility: Drivers can return either raw dicts (legacy) or
+    structured CameraInfo objects (preferred). CameraRegistry converts raw dicts
+    to CameraInfo for consistency.
     - dict[int, dict]: Raw info dicts (legacy, converted by registry)
     - dict[int, CameraInfo]: Structured info (preferred)
+    
+    Raises:
+        None at protocol level. Implementations raise:
+        - RuntimeError: Hardware initialization failures
+        - ValueError: Invalid camera IDs
+        - OSError: USB/driver access issues
+    
+    Example:
+        >>> # Factory pattern for driver selection
+        >>> from telescope_mcp.drivers.config import use_hardware, get_factory
+        >>> use_hardware()  # or use_digital_twin()
+        >>> factory = get_factory()
+        >>> driver = factory.create_camera_driver()
+        >>> 
+        >>> # Discovery and connection
+        >>> cameras = driver.get_connected_cameras()
+        >>> print(f"Found {len(cameras)} cameras")
+        >>> instance = driver.open(0)
+        >>> info = instance.get_info()
+        >>> print(f"Opened {info['name']}")
     """
 
     def get_connected_cameras(self) -> dict:
-        """Discover and list connected cameras.
+        """Discover and list connected cameras with their capabilities.
         
-        Scans for available cameras and returns their basic information.
-        The exact return format depends on the driver implementation.
+        Scans for available cameras and returns their basic information without
+        opening connections. For ASI drivers, this queries USB devices. For digital
+        twins, this returns configured simulated cameras. Results may be cached
+        briefly to avoid repeated hardware scans.
+        
+        Business context: Entry point for camera discovery in multi-camera systems.
+        Enables UI camera selection menus, automatic camera detection on startup,
+        and validation that expected cameras are connected before observation sessions.
+        Used by CameraRegistry.discover() to populate the camera registry.
+        
+        Implementation details: ASI driver calls asi.get_num_cameras() and
+        asi.list_cameras() to enumerate USB devices. Digital twin returns cameras
+        from configuration. Consider caching results for 1-5 seconds to avoid
+        excessive USB scanning when called repeatedly during discovery.
+        
+        The exact return format depends on the driver implementation:
+        - Legacy: dict[int, dict] with raw camera properties
+        - Preferred: dict[int, CameraInfo] with structured info
+        
+        Registry automatically converts legacy format to CameraInfo.
         
         Returns:
-            Dict mapping camera_id to camera info (dict or CameraInfo).
+            Dict mapping camera_id (int) to camera info. Camera IDs are 0-based
+            indices used for all subsequent operations. Empty dict if no cameras
+            found. Keys are always integers starting from 0.
+        
+        Raises:
+            RuntimeError: If driver initialization failed or SDK unavailable.
+            OSError: If USB access denied or driver not loaded.
+        
+        Example:
+            >>> driver = ASICameraDriver()
+            >>> cameras = driver.get_connected_cameras()
+            >>> for cam_id, info in cameras.items():
+            ...     if isinstance(info, dict):
+            ...         print(f"Camera {cam_id}: {info['name']}")
+            ...     else:
+            ...         print(f"Camera {cam_id}: {info.name}")
+            Camera 0: ZWO ASI183MM Pro
+            Camera 1: ZWO ASI120MM Mini
         """
         ...
 
     def open(self, camera_id: int) -> CameraInstance:
-        """Open a camera for capture operations.
+        """Open a camera for capture and control operations.
         
-        Establishes connection to the specified camera and returns
-        an instance for control and capture.
+        Establishes exclusive connection to the specified camera, making it
+        unavailable to other processes. Returns a CameraInstance for capture
+        and control. Camera ID must be from get_connected_cameras() results.
+        
+        Business context: Required before any camera operations (capture, control
+        changes, info queries). Opens USB connection to hardware or initializes
+        simulation state. Connection is exclusive - attempting to open same camera
+        twice (even from same process) will fail. Essential for resource management
+        in multi-camera systems where cameras must be explicitly acquired/released.
+        
+        Implementation details: ASI driver calls ASIOpenCamera() and initializes
+        camera controls. Digital twin creates simulation state. Connection should
+        be closed via instance.close() when done to release hardware. Consider
+        using cameras as context managers to ensure cleanup.
         
         Args:
-            camera_id: ID of camera to open (from get_connected_cameras).
+            camera_id: Camera ID from get_connected_cameras(), typically 0-based
+                index. Must be valid and camera must not already be open.
             
         Returns:
-            CameraInstance for capture and control operations.
+            CameraInstance for capture and control operations. Instance remains
+            valid until close() is called or process exits.
+            
+        Raises:
+            ValueError: If camera_id invalid or not in get_connected_cameras().
+            RuntimeError: If camera already open or hardware failure during open.
+            OSError: If USB access denied or device disconnected.
+        
+        Example:
+            >>> driver = ASICameraDriver()
+            >>> cameras = driver.get_connected_cameras()
+            >>> if 0 in cameras:
+            ...     instance = driver.open(0)
+            ...     try:
+            ...         info = instance.get_info()
+            ...         print(f"Opened {info['name']}")
+            ...         data = instance.capture(exposure_us=100_000)
+            ...     finally:
+            ...         instance.close()
+            >>> 
+            >>> # Context manager pattern (if supported)
+            >>> with driver.open(0) as instance:
+            ...     data = instance.capture(exposure_us=100_000)
         """
         ...
 

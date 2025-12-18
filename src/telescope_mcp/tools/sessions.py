@@ -162,12 +162,27 @@ def register(server: Server) -> None:
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        """Return the list of available session tools.
+        """Return available session tools (MCP tool discovery).
 
-        MCP handler that provides tool definitions to clients.
+        MCP handler providing session tool definitions to clients. Called during MCP handshake.
+        Returns TOOLS list defining session operations.
+
+        Business context: Enables AI agents to discover session management capabilities. Sessions
+        provide context for multi-frame captures, correlating frames with metadata. Critical for
+        scientific reproducibility and automated data organization.
+        
+        Args:
+            None.
 
         Returns:
-            List of Tool objects defining session capabilities.
+            List[Tool] defining session capabilities (start/end session, logging, events).
+        
+        Raises:
+            None. Always succeeds returning pre-built TOOLS list.
+        
+        Example:
+            >>> tools = await list_tools()
+            >>> print([t.name for t in tools])  # [start_session, end_session, ...]
         """
         return TOOLS
 

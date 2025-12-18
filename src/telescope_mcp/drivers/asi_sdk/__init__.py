@@ -34,13 +34,33 @@ _ARCH_MAP = {
 
 
 def get_sdk_library_path() -> str:
-    """Get the path to the ASI Camera 2 shared library for the current architecture.
+    """Get ASI Camera SDK library path for current architecture (multi-arch support).
+    
+    Detects system architecture (platform.machine()), maps to SDK lib directory (x64, x86,
+    armv7, etc.), validates library file exists, returns full path to libASICamera2.so.{version}.
+    Used by ASI driver to load correct binary for current system.
+    
+    Business context: Essential for multi-platform telescope deployments (x86 desktop control PCs,
+    ARM embedded systems like Raspberry Pi for observatory computers). ZWO ships separate binaries
+    for each architecture - loading wrong binary causes SIGILL crashes or exec format errors.
+    Enables same Python codebase running on diverse hardware (x64 Windows laptop for development,
+    armv7 RPi for field deployment, x86 observatory control PC). Critical for pre-built packages
+    working without manual architecture configuration.
+    
+    Implementation details: Uses platform.machine() returning x86_64, i686, armv7l, etc.
+    Maps via _ARCH_MAP dict to SDK subdirectory names (x64, x86, armv7). Constructs path.
+    Validates file exists (catches incomplete SDK installations). Raises RuntimeError with helpful
+    message on unsupported arch or missing library.
     
     Returns:
-        Full path to libASICamera2.so.{version}
+        Absolute path string to architecture-appropriate SDK library.
         
     Raises:
-        RuntimeError: If the current architecture is not supported
+        RuntimeError: If architecture unsupported or library file missing.
+    
+    Example:
+        >>> lib_path = get_sdk_library_path()
+        >>> asi_lib = ctypes.CDLL(lib_path)
     """
     machine = platform.machine()
     arch_dir = _ARCH_MAP.get(machine)

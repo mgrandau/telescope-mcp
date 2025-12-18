@@ -170,7 +170,34 @@ class StubMotorController:
     """
 
     def __init__(self) -> None:
-        """Initialize stub controller with motors at position 0."""
+        """Initialize stub motor controller for testing.
+        
+        Creates simulated motor controller with altitude and azimuth motors at position 0.
+        No hardware communication. Position tracking purely mathematical for testing control logic.
+        
+        Business context: Enables development of telescope control systems without stepper motors,
+        motor drivers, or power supplies. UI developers test motor controls, goto algorithms validate
+        pointing calculations, CI/CD tests tracking logic. Critical for rapid iteration without
+        hardware dependencies.
+        
+        Implementation details: Initializes _positions dict mapping MotorType.ALTITUDE/AZIMUTH to
+        int position counters (starts 0). move() adds steps to counters instantly. No limits, no
+        delays, no actual motion. Used by DriverFactory in DIGITAL_TWIN mode.
+        
+        Args:
+            None.
+        
+        Returns:
+            None. Controller ready for simulated move() calls.
+        
+        Raises:
+            None. Stub never fails.
+        
+        Example:
+            >>> controller = StubMotorController()
+            >>> controller.move(MotorType.ALTITUDE, 1000, speed=50)  # Instant position change
+            >>> print(controller.get_position(MotorType.ALTITUDE))  # 1000
+        """
         self._positions = {
             MotorType.ALTITUDE: 0,
             MotorType.AZIMUTH: 0,

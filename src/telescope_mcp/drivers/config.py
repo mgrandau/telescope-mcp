@@ -32,8 +32,22 @@ def _default_data_dir() -> Path:
     Returns ~/.telescope-mcp/data as the default location for
     storing ASDF session files.
     
+    Business context: Provides consistent storage location across installations without
+    configuration. Enables finding session data without environment variables. Used as
+    default for DriverConfig.data_dir field.
+    
+    Args:
+        None.
+    
     Returns:
-        Path to the default data directory.
+        Path to ~/.telescope-mcp/data directory.
+    
+    Raises:
+        None. Path may not exist (created on first session write).
+    
+    Example:
+        >>> data_dir = _default_data_dir()
+        >>> print(data_dir)  # /home/user/.telescope-mcp/data
     """
     return Path.home() / ".telescope-mcp" / "data"
 
@@ -73,26 +87,64 @@ class DriverFactory:
     """
     
     def __init__(self, config: DriverConfig | None = None):
-        """Initialize driver factory with configuration.
+        """Initialize driver factory with hardware/simulation configuration.
+        
+        Creates factory for producing camera, motor, sensor drivers based on mode. Default config
+        uses digital twin simulation enabling immediate development without hardware setup.
+        
+        Business context: Central configuration point determining whether application uses real
+        hardware or simulation throughout. Developers set once at startup, all code automatically
+        uses appropriate drivers. Critical for CI/CD, offline development, demos without hardware.
+        
+        Implementation details: Stores config reference for create_* methods. Uses config.mode
+        (HARDWARE/DIGITAL_TWIN) to determine driver types. Config includes data directory, camera
+        IDs, motor ports, sensor addresses. Lazy evaluation - drivers created on demand by create_*.
         
         Args:
-            config: Driver configuration specifying mode and settings.
-                Defaults to DriverConfig() (digital twin mode).
+            config: DriverConfig with mode (default DIGITAL_TWIN), data_dir, camera IDs, hardware
+                ports/addresses. None defaults to DriverConfig() with all defaults.
+        
+        Returns:
+            None. Stores config for later driver creation.
+        
+        Raises:
+            None. Construction always succeeds - errors occur during driver creation.
+        
+        Example:
+            >>> factory = DriverFactory()  # Digital twin mode
+            >>> camera_driver = factory.create_camera_driver()  # Gets DigitalTwinCameraDriver
+            >>> # Or hardware mode:
+            >>> config = DriverConfig(mode=DriverMode.HARDWARE)
+            >>> factory = DriverFactory(config)
+            >>> camera_driver = factory.create_camera_driver()  # Gets ASICameraDriver
         """
         self.config = config or DriverConfig()
     
     def create_camera_driver(self) -> CameraDriver:
-        """Create camera driver based on config mode.
+        """Create camera driver for hardware or simulation based on configuration mode.
         
-        In HARDWARE mode, returns ASICameraDriver for real ZWO cameras.
-        In DIGITAL_TWIN mode, returns DigitalTwinCameraDriver with
-        synthetic or file-based images.
+        Factory method returning ASICameraDriver (real ZWO ASI cameras) in HARDWARE mode
+        or DigitalTwinCameraDriver (simulation) in DIGITAL_TWIN mode. The mode is set via
+        self.config.mode during construction or via configure(). This abstraction enables
+        identical code to work with both real and simulated cameras.
+        
+        Business context: Central abstraction enabling development without physical hardware.
+        Developers write code once and run against simulated cameras (fast, reliable) or
+        real cameras (actual data) by changing configuration. Critical for CI/CD running
+        tests with digital twins at high speed. Enables demonstrations without hardware.
+        Used by Camera class to obtain drivers transparently.
         
         Returns:
-            CameraDriver instance appropriate for the configured mode.
+            CameraDriver - ASICameraDriver in HARDWARE mode (ZWO SDK), DigitalTwinCameraDriver
+            in DIGITAL_TWIN mode. Both implement get_connected_cameras() and open(camera_id).
         
         Raises:
-            ImportError: If required driver modules are not available.
+            ImportError: If zwoasi module unavailable in HARDWARE mode (SDK not installed).
+        
+        Example:
+            >>> factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
+            >>> driver = factory.create_camera_driver()
+            >>> cameras = driver.get_connected_cameras()  # Simulated cameras
         """
         if self.config.mode == DriverMode.HARDWARE:
             return ASICameraDriver()
@@ -110,17 +162,28 @@ class DriverFactory:
             return DigitalTwinCameraDriver(twin_config)
     
     def create_motor_controller(self) -> MotorController:
-        """Create motor controller based on config mode.
+        """Create motor controller for telescope altitude/azimuth motors.
         
-        In HARDWARE mode, would return real motor driver (not yet implemented).
-        In DIGITAL_TWIN mode, returns StubMotorController that simulates
-        motor movements without actual hardware.
+        Factory method returning motor controller. HARDWARE mode raises NotImplementedError
+        (not yet implemented). DIGITAL_TWIN mode returns StubMotorController simulating
+        movements with realistic timing but no hardware interaction.
+        
+        Business context: Enables development of telescope control logic (goto, tracking)
+        without physical mount hardware. Digital twin allows testing pointing algorithms,
+        slewing patterns in CI/CD. Future hardware mode will integrate stepper motors via
+        serial/USB. Critical for teams with limited hardware access.
         
         Returns:
-            MotorController instance appropriate for the configured mode.
+            MotorController - StubMotorController in DIGITAL_TWIN mode with move_altitude(),
+            move_azimuth(), stop() methods.
         
         Raises:
-            NotImplementedError: In HARDWARE mode (real motors not yet implemented).
+            NotImplementedError: In HARDWARE mode (real motor driver not implemented yet).
+        
+        Example:
+            >>> factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
+            >>> motors = factory.create_motor_controller()
+            >>> motors.move_altitude(steps=1000, speed=50)  # Simulated
         """
         if self.config.mode == DriverMode.HARDWARE:
             # TODO: Import and return real motor driver
@@ -129,17 +192,28 @@ class DriverFactory:
             return StubMotorController()
     
     def create_position_sensor(self) -> PositionSensor:
-        """Create position sensor based on config mode.
+        """Create position sensor for telescope encoder readings.
         
-        In HARDWARE mode, would return real sensor driver (not yet implemented).
-        In DIGITAL_TWIN mode, returns StubPositionSensor that provides
-        simulated position readings.
+        Factory method returning position sensor. HARDWARE mode raises NotImplementedError
+        (not yet implemented). DIGITAL_TWIN mode returns StubPositionSensor providing
+        simulated angles consistent with motor commands.
+        
+        Business context: Enables closed-loop position control and pointing verification
+        without physical encoders. Digital twin allows testing pointing accuracy, goto
+        convergence in CI/CD. Future hardware mode will integrate absolute encoders (I2C,
+        SPI). Essential for accurate pointing where open-loop suffers from backlash.
         
         Returns:
-            PositionSensor instance appropriate for the configured mode.
+            PositionSensor - StubPositionSensor in DIGITAL_TWIN mode with get_altitude(),
+            get_azimuth() returning angles in degrees.
         
         Raises:
-            NotImplementedError: In HARDWARE mode (real sensors not yet implemented).
+            NotImplementedError: In HARDWARE mode (real sensor driver not implemented yet).
+        
+        Example:
+            >>> factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
+            >>> sensor = factory.create_position_sensor()
+            >>> print(f"Alt={sensor.get_altitude():.2f}°, Az={sensor.get_azimuth():.2f}°")
         """
         if self.config.mode == DriverMode.HARDWARE:
             # TODO: Import and return real sensor driver
@@ -156,16 +230,28 @@ _session_manager: "SessionManager | None" = None
 
 
 def get_factory() -> DriverFactory:
-    """Get the global driver factory singleton.
+    """Get the global driver factory singleton for consistent driver access.
     
-    Creates a default DriverFactory on first access. Use configure()
-    to change the configuration.
+    Returns the global DriverFactory instance, creating with default config (DIGITAL_TWIN
+    mode) on first access. Use configure(), use_hardware(), use_digital_twin() to change
+    configuration. Singleton ensures all components use consistent driver configuration.
+    
+    Business context: Central access point for driver creation. By using singleton,
+    configuration changes propagate to all components without passing factory references.
+    Simplifies startup where initial config is set once then all components call
+    get_factory(). Essential for tools layer needing drivers without managing config.
     
     Returns:
-        The global DriverFactory instance.
+        DriverFactory singleton. First call creates with DriverConfig() defaults.
+        After configure(), returns configured factory.
     
     Raises:
-        None. Always returns a valid factory.
+        None. Always returns valid DriverFactory.
+    
+    Example:
+        >>> factory = get_factory()  # Default digital twin
+        >>> use_hardware()
+        >>> factory = get_factory()  # Same ref, hardware mode
     """
     global _factory
     if _factory is None:
@@ -174,16 +260,29 @@ def get_factory() -> DriverFactory:
 
 
 def get_session_manager() -> "SessionManager":
-    """Get the global session manager singleton.
+    """Get the global session manager singleton for ASDF data storage.
     
-    Creates the session manager on first access using the current config.
-    Session manager handles ASDF file storage for telescope data.
+    Returns the global SessionManager instance, creating on first access using current
+    factory config (data_dir, location). Handles ASDF file storage for observations:
+    frames, telemetry, calibration, events. Singleton ensures consistent session state.
+    
+    Business context: Central data storage interface for all observation data. By using
+    singleton, all components write to same session files without explicit coordination.
+    Enables atomic observation sessions where multiple data sources contribute to unified
+    ASDF files. Essential for data provenance - all session data bundled with consistent
+    metadata.
     
     Returns:
-        The global SessionManager instance.
+        SessionManager singleton with start_session(), log(), add_frame(), add_event(),
+        end_session() methods. Data stored in config.data_dir.
     
     Raises:
-        None. Creates manager on first access if needed.
+        None. Creates on first access. Session operations may raise on disk/permission issues.
+    
+    Example:
+        >>> set_location(lat=40.7, lon=-74.0, alt=10)
+        >>> mgr = get_session_manager()
+        >>> mgr.start_session(name="M42", session_type="science")
     """
     global _session_manager
     if _session_manager is None:
@@ -197,17 +296,31 @@ def get_session_manager() -> "SessionManager":
 
 
 def configure(config: DriverConfig) -> None:
-    """Configure the global driver factory and session manager.
+    """Configure global factory and session manager with new settings.
     
-    Replaces the global factory with one using the new config.
-    If a session manager exists, shuts it down first so a new one
-    will be created with the updated configuration.
+    Replaces global factory singleton with new instance using provided configuration.
+    Shuts down existing session manager gracefully first so new one uses updated config
+    on next access. Enables runtime switching between hardware/digital twin or changing
+    data storage locations.
+    
+    Business context: Primary mechanism for application-level configuration. Enables
+    switching development (digital twin) to production (hardware) at startup based on
+    flags. Allows changing data directories for campaigns/disks. Used by tests to ensure
+    clean state. Essential for deployment flexibility.
     
     Args:
-        config: New driver configuration to apply.
+        config: DriverConfig with mode (HARDWARE/DIGITAL_TWIN), data_dir (Path), location
+            (dict), camera_ids (int), stub_image_path (Path|None), motor/sensor settings.
+    
+    Returns:
+        None. Global singletons updated.
     
     Raises:
-        None. Safely handles existing session manager shutdown.
+        None. Handles session shutdown safely. Validation is caller's responsibility.
+    
+    Example:
+        >>> mode = DriverMode.HARDWARE if os.getenv("USE_HW") else DriverMode.DIGITAL_TWIN
+        >>> configure(DriverConfig(mode=mode, data_dir=Path("/data/obs")))
     """
     global _factory, _session_manager
     
@@ -220,40 +333,83 @@ def configure(config: DriverConfig) -> None:
 
 
 def use_digital_twin() -> None:
-    """Switch to digital twin mode.
+    """Switch to digital twin mode for simulated hardware operation.
     
-    Convenience function to configure for simulated hardware.
-    Useful for development and testing without physical devices.
+    Convenience function calling configure(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
+    to set all drivers to simulation. Useful for development, testing, demonstrations,
+    CI/CD without physical devices. Keeps other config (data_dir, location) at defaults.
+    
+    Business context: Enables offline development where developers test telescope code
+    without hardware access. Critical for CI/CD in cloud with no USB devices. Allows
+    demonstrations without hauling equipment. Used by tests for repeatable fast execution.
+    Essential for teams with limited hardware access.
+    
+    Returns:
+        None. Global factory reconfigured for digital twin mode.
     
     Raises:
-        None. Always succeeds.
+        None. Always succeeds as digital twin has no hardware dependencies.
+    
+    Example:
+        >>> use_digital_twin()  # All drivers now simulated
+        >>> driver = get_factory().create_camera_driver()  # DigitalTwinCameraDriver
     """
     configure(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
 
 
 def use_hardware() -> None:
-    """Switch to hardware mode.
+    """Switch to hardware mode for real telescope equipment operation.
     
-    Convenience function to configure for real hardware drivers.
-    Requires physical ASI cameras and other hardware to be connected.
+    Convenience function calling configure(DriverConfig(mode=DriverMode.HARDWARE)) to
+    set camera drivers to real ZWO ASI hardware. Motors/sensors raise NotImplementedError.
+    Requires physical ASI cameras connected via USB. Keeps other config at defaults.
+    
+    Business context: Essential for production telescope operation where real data
+    acquisition is the goal. Used when transitioning from development (digital twin) to
+    observation sessions. Enables final hardware validation after simulation testing.
+    Critical for automated workflows that dry-run in simulation then switch to hardware.
+    
+    Returns:
+        None. Global factory reconfigured for hardware mode.
     
     Raises:
-        None. Always succeeds, but camera operations will fail if no hardware.
+        None. Config succeeds even without hardware. Driver operations fail if unavailable.
+    
+    Example:
+        >>> use_hardware()  # Switch to real cameras
+        >>> driver = get_factory().create_camera_driver()  # ASICameraDriver
     """
     configure(DriverConfig(mode=DriverMode.HARDWARE))
 
 
 def set_data_dir(data_dir: Path | str) -> None:
-    """Set the data directory for session storage.
+    """Set the data directory for ASDF session file storage.
     
-    Updates the configuration and resets the session manager so
-    new sessions use the updated directory.
+    Updates factory config data_dir and resets session manager so new sessions use
+    updated directory. Existing sessions closed first. Directory created by SessionManager
+    on first session if doesn't exist.
     
-    Raises:
-        None. Directory will be created if it doesn't exist.
+    Business context: Enables organizing observation data by campaign/target/date without
+    manual path management. Allows switching storage based on disk space (observatories
+    have multiple drives). Essential for automated workflows creating dated directories.
+    Used by CLI tools accepting custom directories via flags. Critical for multi-user
+    systems with separate data directories.
     
     Args:
-        data_dir: Path to directory for ASDF session files.
+        data_dir: Path to directory for ASDF sessions. String or Path. Examples:
+            "/mnt/observatory/data", "~/telescope-data", "./observations/m42"
+    
+    Returns:
+        None. Factory config updated, session manager reset.
+    
+    Raises:
+        None. Directory creation happens when SessionManager starts session. If not
+        writable, session start raises PermissionError.
+    
+    Example:
+        >>> set_data_dir("/mnt/obs/ngc6888")
+        >>> mgr = get_session_manager()
+        >>> mgr.start_session("ngc6888_001", "science")
     """
     factory = get_factory()
     factory.config.data_dir = Path(data_dir)

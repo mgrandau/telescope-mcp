@@ -441,37 +441,88 @@ class Session:
 
     @property
     def is_closed(self) -> bool:
-        """Check if session is closed.
+        """Check if session is closed (written to disk, immutable).
         
-        A closed session has been written to disk and cannot accept
-        new data. All add_* methods will raise RuntimeError.
+        Returns True if session closed via close() method (written to ASDF file, cannot accept new
+        data). All add_* methods (add_frame, add_event, add_telemetry, add_calibration) raise
+        RuntimeError on closed sessions. False indicates active session accepting data.
+        
+        Business context: Essential for preventing data corruption in long-running telescope systems
+        where session objects may persist in memory after closing. Guards against accidental writes
+        to finalized session files (ASDF format doesn't support appending). Used in error handling
+        ("why did add_frame fail?"), workflow validation ("is this session still active?"), and
+        session lifecycle management (close old session before starting new one). Critical for
+        data integrity in multi-hour observations where hundreds of frames accumulated - accidentally
+        reopening closed session would corrupt ASDF file.
+        
+        Implementation details: Returns self._closed boolean set by close() method. Initially False
+        (set in __init__), becomes True after close() writes tree to ASDF and calls af.close().
+        Immutable state - once closed, stays closed (no reopen mechanism). Checked by all add_*
+        methods before modifying tree data structure. Zero-cost operation (simple attribute access).
         
         Args:
-            None. Property access.
+            None. Property access pattern (not a method call).
         
         Returns:
-            True if session is closed, False if still active.
+            True if session closed (immutable, written to disk). False if active (accepting data).
         
         Raises:
-            None. Always returns a boolean.
-        """
+            None. Always returns boolean - never raises exceptions.
+        
+        Example:
+            >>> session = Session(SessionType.OBSERVATION, name="M31")
+            >>> session.add_frame(frame_data, metadata)
+            >>> assert session.is_closed == False  # Still active
+            >>> session.close()
+            >>> assert session.is_closed == True  # Now immutable
+            >>> try:
+            ...     session.add_frame(more_data, metadata)  # Fails
+            ... except RuntimeError as e:
+            ...     print(f"Cannot add to closed session: {e}")
         return self._closed
 
     @property
     def duration_seconds(self) -> float:
-        """Get session duration in seconds.
+        """Get session duration in seconds (elapsed time since start).
         
-        Returns elapsed time since session start. For active sessions,
-        uses current time; for closed sessions, uses end_time.
+        Returns elapsed time since session start (start_time). For active sessions, calculates
+        duration to current moment (datetime.now). For closed sessions, uses finalized end_time
+        from close() method. Useful for monitoring, logging, and session metadata.
+        
+        Business context: Critical metric for observation session monitoring and analysis. Long
+        sessions (>2 hours) may indicate successful deep-sky imaging campaigns or stuck workflows
+        needing intervention. Short sessions (<5 minutes) may indicate setup issues or failed
+        observations. Used in dashboards ("current session: 1h 23m running"), alerting ("session
+        exceeded 4 hour limit"), and post-observation analysis ("total observing time tonight: 6.5h").
+        Essential for calculating efficiency metrics (frames per hour, duty cycle, overhead time).
+        
+        Implementation details: Computes (end - start_time).total_seconds() where end is self._end_time
+        (if closed) or datetime.now(UTC) (if active). Uses UTC to avoid daylight saving issues during
+        overnight sessions. Returns float with subsecond precision (e.g., 3661.234 = 1h 1m 1.234s).
+        Active session duration continuously increases (call multiple times for progress tracking).
+        Closed session duration fixed (snapshot at close() time). Typical values: 300-14400 seconds
+        (5min-4h) for astronomy sessions.
         
         Args:
-            None. Property access.
+            None. Property access pattern (not a method call).
         
         Returns:
-            Duration in seconds as float.
+            Duration in seconds as float. Range typically 0.0 (just started) to 14400.0 (4 hours).
+            Sub-second precision available (e.g., 1234.567 seconds). Always non-negative.
         
         Raises:
-            None. Always computes a valid duration.
-        """
+            None. Always computes valid duration - never raises exceptions.
+        
+        Example:
+            >>> session = Session(SessionType.OBSERVATION, name="M31")
+            >>> time.sleep(5)
+            >>> print(f"Session running {session.duration_seconds:.1f}s")  # ~5.0s
+            >>> session.add_frame(frame_data, metadata)  # Add more frames...
+            >>> session.close()
+            >>> print(f"Session completed in {session.duration_seconds:.1f}s")  # Final duration
+            >>> # Format for human-readable display
+            >>> hours, remainder = divmod(session.duration_seconds, 3600)
+            >>> minutes, seconds = divmod(remainder, 60)
+            >>> print(f"Duration: {int(hours)}h {int(minutes)}m {seconds:.1f}s")
         end = self._end_time or datetime.now(timezone.utc)
         return (end - self.start_time).total_seconds()

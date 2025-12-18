@@ -96,7 +96,35 @@ class StubPositionSensor:
     """
 
     def __init__(self) -> None:
-        """Initialize with default position (45° alt, 180° az)."""
+        """Initialize stub position sensor with default telescope pointing.
+        
+        Creates simulated encoder sensor returning fixed position (45° altitude, 180° azimuth)
+        until calibrated. No hardware communication. Position fixed until calibrate() called.
+        
+        Business context: Enables development of position-aware telescope features without physical
+        encoders or IMU sensors. Developers test goto accuracy calculations, plate solving integration,
+        position displays in UI. CI/CD validates positioning logic with predictable values. Critical
+        for development environments lacking sensor hardware.
+        
+        Implementation details: Initializes _position as TelescopePosition(45.0, 180.0). read() returns
+        this value. calibrate() updates stored position. No drift, noise, or hardware errors. Used
+        by DriverFactory in DIGITAL_TWIN mode.
+        
+        Args:
+            None.
+        
+        Returns:
+            None. Sensor ready for read() calls.
+        
+        Raises:
+            None. Stub never fails.
+        
+        Example:
+            >>> sensor = StubPositionSensor()
+            >>> pos = sensor.read()  # TelescopePosition(altitude=45.0, azimuth=180.0)
+            >>> sensor.calibrate(TelescopePosition(67.5, 123.4))
+            >>> pos = sensor.read()  # TelescopePosition(altitude=67.5, azimuth=123.4)
+        """
         self._position = TelescopePosition(altitude=45.0, azimuth=180.0)
 
     def read(self) -> TelescopePosition:

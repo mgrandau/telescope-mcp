@@ -69,9 +69,23 @@ def _run_dashboard(host: str, port: int) -> None:
     
     Creates and runs a FastAPI/Uvicorn server for the web dashboard.
     
+    Business context: Enables simultaneous human (web UI) and AI (MCP) control of telescope.
+    Dashboard provides camera streams, manual controls, session monitoring while MCP handles
+    AI agent requests. Critical for hybrid workflows and troubleshooting.
+    
     Args:
-        host: Host address to bind to.
-        port: Port to listen on.
+        host: Host address to bind to (127.0.0.1 or 0.0.0.0).
+        port: Port to listen on (typically 8080).
+    
+    Returns:
+        None. Blocks running server until shutdown.
+    
+    Raises:
+        OSError: If port already in use or binding fails.
+    
+    Example:
+        >>> thread = Thread(target=_run_dashboard, args=("127.0.0.1", 8080), daemon=True)
+        >>> thread.start()
     """
     app = create_app()
     config = uvicorn.Config(

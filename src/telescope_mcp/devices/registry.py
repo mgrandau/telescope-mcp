@@ -67,25 +67,46 @@ class RecoveryStrategy:
         self._registry = registry
     
     def attempt_recovery(self, camera_id: int) -> bool:
-        """Attempt to recover a disconnected camera.
+        """USB bus rescan for recovering disconnected cameras.
         
-        Forces registry re-discovery to scan USB bus for cameras,
-        then checks if the target camera is now available.
+        Forces registry re-discovery to scan USB bus for cameras (driver.get_connected_cameras()),
+        then checks if target camera reappeared. Used by Camera class when capture operations
+        fail due to USB disconnects. Does not perform hardware resets - relies on natural
+        re-enumeration after transient USB issues.
+        
+        Business context: USB cameras can temporarily disappear from enumeration due to power
+        glitches, cable issues, or driver hangs, then reappear seconds later once hardware
+        stabilizes. Registry-based recovery leverages existing discovery mechanism for re-scanning,
+        detecting cameras that recovered naturally. Lighter-weight than USB hardware resets (which
+        affect all devices on same controller). Critical for long-running observatory sessions where
+        brief USB issues shouldn't terminate multi-hour observations.
+        
+        Implementation details: Calls self._registry.discover(refresh=True) forcing cache invalidation
+        and driver re-query. Driver scans USB bus (e.g., libusb device enumeration), returns currently
+        available cameras. Returns True if camera_id in discovery results. Takes 100-500ms (USB
+        enumeration latency). No hardware reset performed - detection-only. Camera.connect() must
+        be called after successful recovery to re-open device.
         
         Args:
-            camera_id: ID of the camera to recover (0-indexed).
+            camera_id: 0-based camera ID to check for (matches device index from driver discovery).
+                ID 0 typically main imaging camera, 1 guide camera in dual-camera setups.
             
         Returns:
-            True if camera is available after recovery attempt,
-            False if camera was not found during re-discovery.
+            True if camera_id found in post-rescan discovery (available for reconnection).
+            False if camera not found or driver raised exceptions during discovery.
         
         Raises:
-            None. Handles all driver errors by returning False.
+            None. Catches all exceptions during discover() and returns False. Camera interprets
+            False as "recovery failed" and raises CameraDisconnectedError.
         
-        Note:
-            This triggers a USB rescan which may take 100-500ms.
-            The camera instance will need to call connect() again.
-        """
+        Example:
+            >>> strategy = RecoveryStrategy(registry)
+            >>> # Camera 0 disconnected during capture
+            >>> if strategy.attempt_recovery(0):
+            ...     print("Camera reappeared, reconnecting...")
+            ...     camera.connect()  # Reconnect after successful recovery
+            ... else:
+            ...     print("Camera still unavailable")
         cameras = self._registry.discover(refresh=True)
         return camera_id in cameras
 
@@ -94,17 +115,47 @@ class NullRecoveryStrategy:
     """No-op recovery strategy (for testing or when recovery not desired)."""
     
     def attempt_recovery(self, camera_id: int) -> bool:
-        """Return False without attempting recovery.
+        """No-op recovery returning False immediately (Null Object pattern).
+        
+        Returns False without attempting any recovery actions (USB rescanning, hardware resets,
+        driver operations). Used when recovery not desired or unavailable. Implements Null Object
+        pattern eliminating null checks in Camera class.
+        
+        Business context: Provides safe default preventing unexpected recovery attempts that might
+        affect system stability or other USB devices. Users opt-in to recovery by injecting
+        RecoveryStrategy. Useful in environments where USB resets dangerous (production systems,
+        shared USB controllers, mission-critical hardware) or when camera disconnects should fail
+        fast rather than attempt recovery. Enables explicit control over recovery behavior through
+        dependency injection.
+        
+        Implementation details: Always returns False immediately with no side effects. No USB
+        operations, no driver calls, no delays. Camera class interprets False as "recovery not
+        possible" and raises CameraDisconnectedError with original error chained. Pattern eliminates
+        `if recovery is None` checks throughout Camera code - can always call attempt_recovery()
+        safely. For testing or when recovery undesired.
         
         Args:
-            camera_id: ID of camera to recover (ignored).
-        
+            camera_id: Camera ID to recover (0-based). Ignored completely - no operations performed
+                regardless of value. Parameter exists for protocol compliance.
+            
         Returns:
-            Always False, indicating no recovery was attempted.
+            Always False indicating recovery was not attempted and camera unavailable. Camera will
+            raise CameraDisconnectedError immediately.
         
         Raises:
-            None. Never raises exceptions.
-        """
+            None. This implementation never raises exceptions under any circumstances.
+        
+        Example:
+            >>> # Use NullRecoveryStrategy when recovery not desired
+            >>> camera = Camera(
+            ...     driver=driver,
+            ...     config=config,
+            ...     recovery=NullRecoveryStrategy()  # Fail fast, no recovery
+            ... )
+            >>> try:
+            ...     camera.capture()  # If fails, immediate exception
+            ... except CameraDisconnectedError:
+            ...     print("Camera disconnected, no recovery attempted")
         return False
 
 
@@ -355,45 +406,133 @@ class CameraRegistry:
     
     @property
     def camera_ids(self) -> list[int]:
-        """List of camera IDs with active instances in registry.
+        """List of camera IDs with active Camera instances in registry.
         
-        Returns IDs for cameras that have been created via get().
+        Returns IDs for cameras created via get(). Represents currently managed cameras, not
+        necessarily connected or discovered cameras. Subset of discovered_ids (cameras must be
+        discovered before get() creates instances).
+        
+        Business context: Essential for multi-camera telescope systems (main imager + guide camera)
+        to enumerate active cameras for status displays, health checks, or coordinated operations.
+        Differs from discovered_ids - this shows cameras application is actively using (created
+        Camera instances), while discovered_ids shows what hardware is available. Useful for UI
+        dashboards showing "cameras in use" vs "cameras available", resource cleanup loops
+        (disconnect all active cameras), and debugging instance leaks.
+        
+        Implementation details: Returns list(self._cameras.keys()) where _cameras is dict[int, Camera]
+        of singleton instances. Order not guaranteed (dict iteration order). Empty list if no
+        cameras created yet via get(). Camera remains in list even if disconnected - only removed
+        by explicit remove() or clear() calls. IDs typically 0-based sequential (0, 1, 2) matching
+        USB device enumeration order.
         
         Returns:
-            List of integer camera IDs currently in the registry.
+            List of integer camera IDs (0-based) for Camera instances currently in registry.
+            Empty list if no cameras created yet. Not sorted - use sorted(registry.camera_ids)
+            for ordered display.
         
         Raises:
-            None. Returns empty list if no cameras registered.
-        """
+            None. Always succeeds, returns empty list if no cameras.
+        
+        Example:
+            >>> registry = CameraRegistry(driver)
+            >>> registry.discover()  # Found cameras 0, 1
+            >>> registry.get(0)  # Create Camera instance for ID 0
+            >>> print(registry.camera_ids)  # [0]
+            >>> print(registry.discovered_ids)  # [0, 1]
+            >>> # Only camera 0 has active instance
+            >>> for cam_id in registry.camera_ids:
+            ...     camera = registry.get(cam_id)
+            ...     print(f"Camera {cam_id}: connected={camera.is_connected}")
         return list(self._cameras.keys())
     
     @property
     def discovered_ids(self) -> list[int]:
-        """List of camera IDs from last discovery scan.
+        """List of camera IDs from last discovery scan (available hardware).
         
-        Returns IDs found during discover() call. Empty list if
-        discover() has not been called yet.
+        Returns IDs found during discover() call (hardware currently connected to USB bus).
+        Empty list if discover() not yet called. Superset of camera_ids - shows what hardware
+        exists, not what's actively managed by registry.
+        
+        Business context: Critical for multi-camera systems to verify expected hardware present
+        before operations. Enables "expected vs actual" health checks (e.g., main+guide cameras
+        should show IDs [0,1]). Essential for diagnostics when cameras missing - user can compare
+        discovered_ids to expected configuration. Used in setup/configuration flows to present
+        available cameras for user selection. Helps identify USB enumeration issues (camera present
+        but not discovered) vs hardware issues (camera missing entirely).
+        
+        Implementation details: Returns list(self._discovery_cache.keys()) if discovery run, else
+        empty list. Discovery cache populated by discover() which calls driver.get_connected_cameras().
+        Cache persists until next discover(refresh=True) or clear(). IDs represent hardware state
+        at last scan - cameras may have disconnected since. Order not guaranteed. Typical IDs are
+        0-based sequential (0, 1, 2) matching driver enumeration order (usually USB port order).
         
         Returns:
-            List of discovered camera IDs, or empty list.
+            List of integer camera IDs (0-based) found during last discover(). Empty list if
+            discover() never called or clear() was called. Not sorted - use sorted() for
+            ordered display.
         
         Raises:
-            None. Returns empty list if discovery not yet run.
-        """
+            None. Always succeeds, returns empty list if no discovery run.
+        
+        Example:
+            >>> registry = CameraRegistry(driver)
+            >>> print(registry.discovered_ids)  # []
+            >>> registry.discover()
+            >>> print(registry.discovered_ids)  # [0, 1] - two cameras found
+            >>> registry.get(0)  # Create instance for camera 0
+            >>> print(registry.camera_ids)  # [0] - only one instance
+            >>> print(registry.discovered_ids)  # [0, 1] - both still discovered
+            >>> # Check if expected cameras present
+            >>> expected = [0, 1]
+            >>> if set(registry.discovered_ids) == set(expected):
+            ...     print("All cameras present")
         if self._discovery_cache is None:
             return []
         return list(self._discovery_cache.keys())
     
     def clear(self) -> None:
-        """Disconnect all cameras and clear registry.
+        """Disconnect all cameras and clear registry (graceful shutdown).
         
-        Iterates through all Camera instances, disconnects each,
-        then clears the registry and discovery cache. Safe to call
-        multiple times. Errors during disconnect are silently ignored.
+        Iterates through all Camera instances, disconnects each (releasing USB resources),
+        then clears registry and discovery cache. Safe to call multiple times (idempotent).
+        Errors during disconnect silently ignored for best-effort cleanup. Called automatically
+        by __exit__ for context manager cleanup.
+        
+        Business context: Essential for graceful application shutdown releasing exclusive camera
+        resources (USB handles, driver allocations) so other processes can access cameras.
+        Critical in long-running servers where restart/reload without proper cleanup causes "device
+        busy" errors requiring system reboots. Used in test teardown ensuring clean state between
+        tests. Enables runtime reconfiguration (clear old cameras, discover new configuration).
+        Multi-camera systems require coordinated shutdown to avoid leaving cameras in inconsistent
+        states.
+        
+        Implementation details: Iterates self._cameras.values(), calls camera.disconnect() only if
+        is_connected=True. Catches and suppresses all exceptions (best-effort cleanup - partial
+        failures don't prevent clearing remaining cameras). Clears _cameras dict and sets
+        _discovery_cache=None after disconnects. Idempotent - safe to call on empty registry.
+        No return value, no exceptions raised. Typical disconnect takes 10-50ms per camera (driver
+        close + USB release).
+        
+        Args:
+            None.
+        
+        Returns:
+            None. Side effects: all cameras disconnected, registry emptied, discovery cache cleared.
         
         Raises:
-            None. Suppresses all exceptions during disconnect.
-        """
+            None. Never raises - suppresses all exceptions for reliable cleanup in finally blocks
+            and __exit__ handlers.
+        
+        Example:
+            >>> registry = CameraRegistry(driver)
+            >>> cameras = registry.discover()
+            >>> camera = registry.get(0, auto_connect=True)
+            >>> camera.capture()  # Use camera
+            >>> registry.clear()  # Disconnect all, clear registry
+            >>> assert len(registry.camera_ids) == 0
+            >>> assert len(registry.discovered_ids) == 0
+            >>> # Safe to call multiple times
+            >>> registry.clear()  # No-op, no errors
         for camera in self._cameras.values():
             if camera.is_connected:
                 try:
@@ -517,17 +656,53 @@ def init_registry(
 
 
 def get_registry() -> CameraRegistry:
-    """Get the default module-level registry.
+    """Get module-level singleton registry (Service Locator pattern).
     
-    Returns the singleton registry created by init_registry().
-    Must be called after init_registry() or will raise an error.
+    Returns singleton registry created by init_registry(). Provides global access point for
+    camera resources without passing registry through call stack. Must be called after
+    init_registry() at application startup.
+    
+    Business context: Simplifies architecture in server applications (FastAPI, MCP servers)
+    where cameras accessed from multiple endpoints, handlers, tools. Eliminates need to pass
+    registry as dependency through every layer. Follows Service Locator pattern - well-known
+    access point for shared resources. Particularly useful in telescope control servers where
+    multiple HTTP endpoints, MCP tools, WebSocket handlers need camera access without complex
+    dependency injection. Trade-off: convenience vs testability (global state harder to mock).
+    
+    Implementation details: Returns module-level global _default_registry created by init_registry().
+    Same instance returned on every call until next init_registry() or shutdown_registry(). Not
+    thread-safe during initialization (ensure init_registry() called once before concurrent access).
+    Thread-safe for read access after initialization. For better testability in unit tests,
+    prefer passing CameraRegistry instances directly rather than using global singleton.
     
     Returns:
-        The default CameraRegistry instance.
+        The default CameraRegistry instance configured at application startup. Same instance
+        on every call (true singleton). Contains driver, renderer, clock, hooks from
+        init_registry().
     
     Raises:
-        RuntimeError: If init_registry() has not been called yet.
-    """
+        RuntimeError: If init_registry() not called yet (module-level _default_registry is None).
+            Error message guides user to call init_registry() first.
+    
+    Example:
+        >>> # Application startup (main.py)
+        >>> from telescope_mcp.devices.registry import init_registry, get_registry
+        >>> from telescope_mcp.drivers.cameras import ASICameraDriver
+        >>> init_registry(ASICameraDriver())
+        >>> 
+        >>> # Anywhere in application
+        >>> def capture_handler():
+        ...     registry = get_registry()  # No need to pass as parameter
+        ...     camera = registry.get(0)
+        ...     return camera.capture()
+        >>> 
+        >>> # FastAPI endpoint
+        >>> @app.get("/capture/{camera_id}")
+        >>> async def capture_endpoint(camera_id: int):
+        ...     registry = get_registry()
+        ...     camera = registry.get(camera_id)
+        ...     result = camera.capture()
+        ...     return {"image": base64.encode(result.image_data)}
     if _default_registry is None:
         raise RuntimeError(
             "Registry not initialized. Call init_registry() first."
@@ -536,15 +711,55 @@ def get_registry() -> CameraRegistry:
 
 
 def shutdown_registry() -> None:
-    """Shutdown the default registry, disconnecting all cameras.
+    """Shutdown module-level singleton registry (application teardown).
     
-    Clears the module-level registry and disconnects all cameras.
-    Safe to call even if registry was never initialized (no-op).
-    Call at application shutdown for clean resource release.
+    Clears module-level registry (disconnects all cameras, releases USB resources) and sets
+    global _default_registry=None. Safe to call even if never initialized (no-op). Call at
+    application shutdown for clean resource release before process exit.
+    
+    Business context: Critical for graceful application shutdown in long-running servers
+    (FastAPI, MCP servers, observatory control systems). Ensures exclusive USB camera resources
+    released so next application start (or other processes) can access cameras without "device
+    busy" errors. Prevents resource leaks in restart scenarios (systemd service restart, Docker
+    container recreation). Used in signal handlers (SIGTERM, SIGINT) for clean shutdown on
+    Ctrl+C or service stop. Essential for proper systemd integration where service manager
+    expects clean resource release.
+    
+    Implementation details: Checks if _default_registry is None (not initialized). If initialized,
+    calls registry.clear() (disconnects all cameras, clears caches), then sets global
+    _default_registry=None. Idempotent - safe to call multiple times or when not initialized
+    (no-op on subsequent calls). No exceptions raised - best-effort cleanup. Typical execution
+    50-200ms depending on number of cameras (each disconnect ~10-50ms). Call in finally blocks
+    or atexit handlers for guaranteed cleanup.
+    
+    Args:
+        None.
+    
+    Returns:
+        None. Side effects: cameras disconnected, module-level registry cleared and set to None.
     
     Raises:
-        None. Safe to call multiple times or when not initialized.
-    """
+        None. Never raises - safe for cleanup code. Suppresses all exceptions from clear().
+    
+    Example:
+        >>> # Application startup
+        >>> from telescope_mcp.devices.registry import init_registry, shutdown_registry
+        >>> import signal, atexit
+        >>> 
+        >>> init_registry(ASICameraDriver())
+        >>> 
+        >>> # Register shutdown handler
+        >>> def cleanup():
+        ...     print("Shutting down cameras...")
+        ...     shutdown_registry()
+        >>> 
+        >>> atexit.register(cleanup)
+        >>> signal.signal(signal.SIGTERM, lambda s, f: cleanup())
+        >>> 
+        >>> # Or in FastAPI lifespan
+        >>> @app.on_event("shutdown")
+        >>> async def shutdown_event():
+        ...     shutdown_registry()
     global _default_registry
     if _default_registry is not None:
         _default_registry.clear()
