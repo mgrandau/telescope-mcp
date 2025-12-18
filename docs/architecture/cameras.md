@@ -4,9 +4,64 @@
 
 This document describes the camera subsystem architecture, explaining how MCP tools interact with camera hardware through abstraction layers.
 
-## Current State vs Proposed
+## Hardware Configuration
 
-### Current State (Flat)
+The telescope system uses two ZWO ASI cameras with different purposes:
+
+### Camera 0: ASI120MC-S (Finder/Spotter Scope)
+
+| Specification | Value | Notes |
+|---------------|-------|-------|
+| **Resolution** | 1280 × 960 (1.2 MP) | |
+| **Pixel Size** | 3.75 µm | |
+| **Sensor Size** | 4.8 × 3.6 mm | |
+| **Bit Depth** | 8-bit | |
+| **Lens** | 150° All-Sky | Fish-eye for wide field |
+| **FOV per Pixel** | 421.875 arcseconds | 150° × 3600 / 1280 |
+| **Purpose** | Plate solving, alignment | Wide field acquisition |
+
+### Camera 1: ASI482MC (Main Imaging Camera)
+
+| Specification | Value | Notes |
+|---------------|-------|-------|
+| **Resolution** | 1920 × 1080 (2.07 MP) | |
+| **Pixel Size** | 5.8 µm | |
+| **Sensor Size** | 11.13 × 6.26 mm | |
+| **Bit Depth** | 12-bit | Higher dynamic range |
+| **Optics** | 1600mm focal length | Through telescope |
+| **FOV per Pixel** | 0.748 arcseconds | High resolution imaging |
+| **FOV (total)** | 23.9' × 13.4' | Arcminutes |
+| **Purpose** | Deep sky imaging | Primary science camera |
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+graph TB
+    subgraph "Physical Setup"
+        SKY[🌌 Sky]
+        
+        subgraph "Finder Scope"
+            LENS[150° All-Sky Lens]
+            ASI120[ASI120MC-S<br/>1280×960<br/>421.875 arcsec/px]
+        end
+        
+        subgraph "Main Telescope"
+            OTA[1600mm OTA]
+            ASI482[ASI482MC<br/>1920×1080<br/>0.748 arcsec/px]
+        end
+    end
+    
+    SKY --> LENS
+    SKY --> OTA
+    LENS --> ASI120
+    OTA --> ASI482
+    
+    style ASI120 fill:#9cf,stroke:#333,stroke-width:2px,color:#000
+    style ASI482 fill:#f9c,stroke:#333,stroke-width:2px,color:#000
+```
+
+## Architecture Overview
+
+### Previous State (Flat) — Replaced
 
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
@@ -15,9 +70,9 @@ graph LR
     Z --> H[ASI Camera Hardware]
 ```
 
-**Problem:** Tools call `zwoasi` directly. No abstraction, no way to inject a digital twin for testing.
+**Problem:** Tools called `zwoasi` directly. No abstraction, no way to inject a digital twin for testing.
 
-### Proposed Architecture (Layered)
+### Current Architecture (Layered) ✅ Implemented
 
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
@@ -40,6 +95,11 @@ graph TB
         HW[ASI Camera USB]
         IMG[Image Files<br/>directory/file]
     end
+    
+    subgraph "Observability"
+        LOG[StructuredLogger]
+        STATS[CameraStats]
+    end
 
     TC --> REG
     REG --> CAM
@@ -47,9 +107,15 @@ graph TB
     CAM -->|driver injection| TWIN
     ASI --> HW
     TWIN --> IMG
+    
+    TC -.-> LOG
+    CAM -.-> LOG
+    TWIN -.-> LOG
+    CAM -.-> STATS
 
     style REG fill:#9cf,stroke:#333,stroke-width:2px,color:#000
     style CAM fill:#ff9,stroke:#333,stroke-width:2px,color:#000
+    style LOG fill:#9f9,stroke:#333,stroke-width:2px,color:#000
 ```
 
 ## Class Diagrams
@@ -476,23 +542,107 @@ configure(DriverConfig(
 | **State management** | Camera tracks settings, connection |
 | **Swappability** | Add new driver without changing tools |
 
-## Migration Path
+## Observability Integration
 
-### Phase 1: Create Device Layer
-1. Create `devices/camera.py` with `Camera` class
-2. Create `drivers/cameras/asi.py` wrapping zwoasi
-3. Rename `stub.py` → `twin.py`
-4. Update `tools/cameras.py` to use `Camera`
+Structured logging is integrated throughout the camera subsystem via the `telescope_mcp.observability` module.
 
-### Phase 2: Enhance Twin
-1. Add image file/directory support
-2. Add simulated control responses
-3. Add session logging integration
+### Logging Architecture
 
-### Phase 3: Apply to Motors & Sensors
-1. Create `devices/motor.py`
-2. Create `devices/sensor.py`
-3. Same pattern: device layer + driver injection
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+graph TB
+    subgraph "Camera Subsystem"
+        TOOLS[tools/cameras.py]
+        DEVICES[devices/camera.py<br/>devices/registry.py]
+        DRIVERS[drivers/cameras/twin.py<br/>drivers/cameras/asi.py]
+    end
+    
+    subgraph "Observability Module"
+        LOGGER[StructuredLogger]
+        CONTEXT[LogContext]
+        STATS[CameraStats]
+    end
+    
+    subgraph "Output"
+        CONSOLE[Console<br/>Human-readable]
+        JSON[JSON Logs<br/>Machine-parseable]
+        SESSION[Session ASDF<br/>Persistent storage]
+    end
+    
+    TOOLS --> LOGGER
+    DEVICES --> LOGGER
+    DRIVERS --> LOGGER
+    
+    DEVICES --> STATS
+    
+    LOGGER --> CONSOLE
+    LOGGER --> JSON
+    LOGGER --> SESSION
+    
+    style LOGGER fill:#9cf,stroke:#333,stroke-width:2px,color:#000
+    style STATS fill:#f9c,stroke:#333,stroke-width:2px,color:#000
+```
+
+### Structured Logging Usage
+
+```python
+from telescope_mcp.observability import get_logger
+
+logger = get_logger(__name__)
+
+# Structured logging with keyword arguments
+logger.info("Frame captured", 
+    camera_id=0,
+    exposure_us=100000,
+    gain=50,
+    size_bytes=len(data)
+)
+
+# Output (console): Frame captured camera_id=0 exposure_us=100000 gain=50 size_bytes=245760
+# Output (JSON): {"timestamp": "...", "level": "INFO", "message": "Frame captured", "camera_id": 0, ...}
+```
+
+### Camera Statistics
+
+```python
+from telescope_mcp.observability import CameraStats
+
+stats = CameraStats(camera_id=0)
+stats.record_capture(duration_ms=150.5, size_bytes=245760)
+stats.record_capture(duration_ms=148.2, size_bytes=245120)
+
+summary = stats.get_summary()
+# StatsSummary(
+#     total_captures=2,
+#     avg_duration_ms=149.35,
+#     p95_duration_ms=150.5,
+#     total_bytes=490880,
+#     ...
+# )
+```
+
+## Implementation Status
+
+| Phase | Task | Status |
+|-------|------|--------|
+| **Phase 1** | Device Layer | ✅ Complete |
+| | `devices/camera.py` with Camera class | ✅ |
+| | `devices/registry.py` with CameraRegistry | ✅ |
+| | `devices/controller.py` with CameraController | ✅ |
+| | `drivers/cameras/twin.py` with accurate specs | ✅ |
+| | `drivers/cameras/asi.py` ASI SDK wrapper | ✅ |
+| **Phase 2** | Enhanced Digital Twin | ✅ Complete |
+| | File/directory image sources | ✅ |
+| | Simulated control responses | ✅ |
+| | Real camera specs (ASI120MC-S, ASI482MC) | ✅ |
+| **Phase 3** | Observability | ✅ Complete |
+| | Structured logging module | ✅ |
+| | Camera statistics collection | ✅ |
+| | Integration across all layers | ✅ |
+| **Phase 4** | Motors & Sensors | 🔲 Planned |
+| | `devices/motor.py` | 🔲 |
+| | `devices/sensor.py` | 🔲 |
+| | Same pattern: device layer + driver injection | 🔲 |
 
 ## CameraController: Multi-Camera Coordination
 

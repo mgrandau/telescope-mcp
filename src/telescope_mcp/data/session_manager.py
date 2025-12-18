@@ -6,7 +6,6 @@ implementing the "always have a session" pattern from the architecture.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +13,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from telescope_mcp.data.session import LogLevel, Session, SessionType
+from telescope_mcp.observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SessionManager:

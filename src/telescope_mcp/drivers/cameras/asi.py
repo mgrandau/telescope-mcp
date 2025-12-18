@@ -18,7 +18,6 @@ Example:
 from __future__ import annotations
 
 import base64
-import logging
 import time
 from typing import Any
 
@@ -27,8 +26,9 @@ import numpy as np
 import zwoasi as asi
 
 from telescope_mcp.drivers.asi_sdk import get_sdk_library_path
+from telescope_mcp.observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Control name to ASI constant mapping
 CONTROL_MAP = {

@@ -6,7 +6,6 @@ an ASDF file with complete provenance.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
@@ -17,7 +16,9 @@ import asdf
 import numpy as np
 from numpy.typing import NDArray
 
-logger = logging.getLogger(__name__)
+from telescope_mcp.observability import get_logger
+
+logger = get_logger(__name__)
 
 
 class SessionType(str, Enum):

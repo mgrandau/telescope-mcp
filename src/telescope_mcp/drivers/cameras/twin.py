@@ -17,8 +17,12 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
+from telescope_mcp.observability import get_logger
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+logger = get_logger(__name__)
 
 
 class ImageSource(Enum):
@@ -39,22 +43,50 @@ class DigitalTwinConfig:
 
 
 # Default camera specifications (matching real ASI cameras)
+# Camera 0: ASI120MC-S with 150° All-Sky Lens (finder/spotter scope)
+# Camera 1: ASI482MC through telescope optics (main imaging camera)
+#
+# Specifications from astrophotography_camera_exposure_times.ipynb:
+# - ASI120MC-S: 1.2MP, 1280x960, 3.75µm pixels, 4.8x3.6mm sensor
+# - ASI482MC: 2.07MP, 1920x1080, 5.8µm pixels, 11.13x6.26mm sensor
 DEFAULT_CAMERAS: dict[int, dict] = {
     0: {
-        "Name": b"ASI120MC-S (Simulated)",
+        # Finder camera: ASI120MC-S with 150° All-Sky Lens
+        "Name": b"ASI120MC-S (Finder - 150deg All-Sky)",
         "MaxWidth": 1280,
         "MaxHeight": 960,
         "IsColorCam": True,
-        "PixelSize": 3.75,
+        "PixelSize": 3.75,  # micrometers
+        "SensorWidth": 4.8,  # mm
+        "SensorHeight": 3.6,  # mm
         "BayerPattern": "RGGB",
+        "BitDepth": 8,
+        "ElecPerADU": 0.21,  # electrons per ADU
+        "USB3Host": True,
+        # All-sky lens specific
+        "LensFOV": 150,  # degrees (150° all-sky lens)
+        "FOVPerPixel": 421.875,  # arcseconds (150*3600/1280)
+        "Purpose": "finder",
     },
     1: {
-        "Name": b"ASI482MC (Simulated)",
+        # Main camera: ASI482MC through 1600mm telescope optics
+        "Name": b"ASI482MC (Main - Through Optics)",
         "MaxWidth": 1920,
         "MaxHeight": 1080,
         "IsColorCam": True,
-        "PixelSize": 5.8,
+        "PixelSize": 5.8,  # micrometers
+        "SensorWidth": 11.13,  # mm
+        "SensorHeight": 6.26,  # mm
         "BayerPattern": "RGGB",
+        "BitDepth": 12,  # 12-bit ADC
+        "ElecPerADU": 0.16,
+        "USB3Host": True,
+        # Telescope optics specific
+        "FocalLength": 1600,  # mm (telescope focal length)
+        "FOVPerPixel": 0.748,  # arcseconds (calculated from focal length)
+        "FOVWidth": 23.9,  # arcminutes
+        "FOVHeight": 13.4,  # arcminutes
+        "Purpose": "main",
     },
 }
 
@@ -75,15 +107,23 @@ class DigitalTwinCameraDriver:
         """
         self.config = config or DigitalTwinConfig()
         self._cameras = cameras or DEFAULT_CAMERAS.copy()
+        logger.info(
+            "Digital twin camera driver initialized",
+            image_source=self.config.image_source.value,
+            num_cameras=len(self._cameras),
+        )
 
     def get_connected_cameras(self) -> dict:
         """Return simulated camera list."""
+        logger.debug("Listing simulated cameras", count=len(self._cameras))
         return self._cameras.copy()
 
     def open(self, camera_id: int) -> "DigitalTwinCameraInstance":
         """Open a simulated camera."""
         if camera_id not in self._cameras:
+            logger.error("Camera not found", camera_id=camera_id)
             raise ValueError(f"Camera {camera_id} not found")
+        logger.info("Opening simulated camera", camera_id=camera_id)
         return DigitalTwinCameraInstance(
             camera_id,
             self._cameras[camera_id],
@@ -198,12 +238,27 @@ class DigitalTwinCameraInstance:
         Returns:
             JPEG-encoded image bytes
         """
-        if self._config.image_source == ImageSource.FILE:
-            return self._capture_from_file()
-        elif self._config.image_source == ImageSource.DIRECTORY:
-            return self._capture_from_directory()
+        source = self._config.image_source
+        logger.debug(
+            "Capturing frame",
+            camera_id=self._camera_id,
+            source=source.value,
+            exposure_us=exposure_us,
+        )
+        
+        if source == ImageSource.FILE:
+            data = self._capture_from_file()
+        elif source == ImageSource.DIRECTORY:
+            data = self._capture_from_directory()
         else:
-            return self._capture_synthetic(exposure_us)
+            data = self._capture_synthetic(exposure_us)
+        
+        logger.debug(
+            "Frame captured",
+            camera_id=self._camera_id,
+            size_bytes=len(data),
+        )
+        return data
 
     def _capture_from_file(self) -> bytes:
         """Load image from a single file."""

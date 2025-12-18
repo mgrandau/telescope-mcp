@@ -5,6 +5,10 @@ from typing import Any
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 
+from telescope_mcp.observability import get_logger
+
+logger = get_logger(__name__)
+
 # Tool definitions
 TOOLS = [
     Tool(

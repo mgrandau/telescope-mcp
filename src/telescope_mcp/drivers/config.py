@@ -15,6 +15,9 @@ from telescope_mcp.drivers.cameras import (
 )
 from telescope_mcp.drivers.motors import MotorController, StubMotorController
 from telescope_mcp.drivers.sensors import PositionSensor, StubPositionSensor
+from telescope_mcp.observability import get_logger
+
+logger = get_logger(__name__)
 
 
 class DriverMode(Enum):

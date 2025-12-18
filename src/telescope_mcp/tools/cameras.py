@@ -6,7 +6,6 @@ Supports both real ASI cameras and digital twin simulation.
 
 import base64
 import json
-import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -15,8 +14,9 @@ from mcp.types import TextContent, Tool
 
 from telescope_mcp.devices import CameraRegistry, CaptureOptions, get_registry
 from telescope_mcp.drivers.config import get_factory
+from telescope_mcp.observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Tool definitions

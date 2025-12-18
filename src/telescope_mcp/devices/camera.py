@@ -28,8 +28,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from telescope_mcp.observability import LogContext, get_camera_stats, get_logger
+
 if TYPE_CHECKING:
     from telescope_mcp.drivers.cameras import CameraDriver, CameraInstance
+
+# Module logger
+logger = get_logger(__name__)
 
 
 # =============================================================================
@@ -415,8 +420,11 @@ class Camera:
                 f"Camera {self._config.camera_id} is already connected"
             )
         
+        camera_id = self._config.camera_id
+        logger.info("Connecting to camera", camera_id=camera_id)
+        
         try:
-            self._instance = self._driver.open(self._config.camera_id)
+            self._instance = self._driver.open(camera_id)
             
             # Get camera info from driver
             driver_info = self._instance.get_info()
@@ -434,14 +442,25 @@ class Camera:
             if self._hooks.on_connect:
                 self._hooks.on_connect(self._info)
             
+            logger.info(
+                "Camera connected",
+                camera_id=camera_id,
+                name=self._info.name,
+                resolution=f"{self._info.max_width}x{self._info.max_height}",
+            )
             return self._info
             
         except Exception as e:
             self._instance = None
             self._info = None
+            logger.error(
+                "Camera connection failed",
+                camera_id=camera_id,
+                error=str(e),
+            )
             if self._hooks.on_error:
                 self._hooks.on_error(e)
-            raise CameraError(f"Failed to connect to camera {self._config.camera_id}: {e}") from e
+            raise CameraError(f"Failed to connect to camera {camera_id}: {e}") from e
     
     def disconnect(self) -> None:
         """Disconnect from camera and release resources.
@@ -449,10 +468,17 @@ class Camera:
         Safe to call even if not connected (no-op).
         """
         if self._instance is not None:
+            camera_id = self._config.camera_id
+            logger.info("Disconnecting camera", camera_id=camera_id)
             try:
                 self._instance.close()
-            except Exception:
-                pass  # Best effort cleanup
+                logger.debug("Camera disconnected", camera_id=camera_id)
+            except Exception as e:
+                logger.warning(
+                    "Error during camera disconnect",
+                    camera_id=camera_id,
+                    error=str(e),
+                )
             finally:
                 self._instance = None
                 self._info = None
@@ -523,6 +549,7 @@ class Camera:
         """Internal capture without overlay logic.
         
         Includes automatic recovery on disconnect.
+        Records statistics for observability.
         
         Args:
             exposure_us: Override exposure time (microseconds), or None for current
@@ -533,6 +560,10 @@ class Camera:
         """
         if self._instance is None:
             raise CameraNotConnectedError("Camera is not connected")
+        
+        camera_id = self._config.camera_id
+        stats = get_camera_stats()
+        start_time = self._clock.monotonic()
         
         # Apply overrides if provided
         effective_exposure = exposure_us if exposure_us is not None else self._current_exposure_us
@@ -546,6 +577,23 @@ class Camera:
         
         try:
             image_data = self._instance.capture(effective_exposure)
+            duration_ms = (self._clock.monotonic() - start_time) * 1000
+            
+            # Record successful capture stats
+            stats.record_capture(
+                camera_id=camera_id,
+                duration_ms=duration_ms,
+                success=True,
+            )
+            
+            logger.debug(
+                "Frame captured",
+                camera_id=camera_id,
+                exposure_us=effective_exposure,
+                gain=effective_gain,
+                size_bytes=len(image_data),
+                duration_ms=round(duration_ms, 1),
+            )
             
             return CaptureResult(
                 image_data=image_data,
@@ -556,12 +604,30 @@ class Camera:
                 height=self._info.max_height if self._info else 0,
                 format="jpeg",
                 metadata={
-                    "camera_id": self._config.camera_id,
+                    "camera_id": camera_id,
                     "camera_name": self._config.name or self._info.name if self._info else "Unknown",
+                    "capture_duration_ms": round(duration_ms, 1),
                 },
                 has_overlay=False,
             )
         except Exception as e:
+            duration_ms = (self._clock.monotonic() - start_time) * 1000
+            
+            # Record failed capture stats
+            stats.record_capture(
+                camera_id=camera_id,
+                duration_ms=duration_ms,
+                success=False,
+                error_type=type(e).__name__,
+            )
+            
+            logger.warning(
+                "Capture failed, attempting recovery",
+                camera_id=camera_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            
             # Attempt recovery from disconnect
             return self._recover_and_capture(
                 exposure_us=effective_exposure,
@@ -588,24 +654,50 @@ class Camera:
         Raises:
             CameraDisconnectedError: If recovery fails
         """
+        camera_id = self._config.camera_id
+        stats = get_camera_stats()
+        
         # Clear stale instance
         self._instance = None
         self._info = None
         
+        logger.info("Attempting camera recovery", camera_id=camera_id)
+        
         # Attempt recovery via injected strategy
-        if not self._recovery.attempt_recovery(self._config.camera_id):
+        if not self._recovery.attempt_recovery(camera_id):
+            logger.error(
+                "Camera recovery failed",
+                camera_id=camera_id,
+                original_error=str(original_error),
+            )
+            stats.record_capture(
+                camera_id=camera_id,
+                duration_ms=0,
+                success=False,
+                error_type="recovery_failed",
+            )
             if self._hooks.on_error:
                 self._hooks.on_error(original_error)
             raise CameraDisconnectedError(
-                f"Camera {self._config.camera_id} disconnected and recovery failed"
+                f"Camera {camera_id} disconnected and recovery failed"
             ) from original_error
         
         # Camera is available - reconnect
         try:
             self.connect()
+            logger.info("Camera recovered successfully", camera_id=camera_id)
             
             # Retry capture
+            start_time = self._clock.monotonic()
             image_data = self._instance.capture(exposure_us)
+            duration_ms = (self._clock.monotonic() - start_time) * 1000
+            
+            # Record recovered capture
+            stats.record_capture(
+                camera_id=camera_id,
+                duration_ms=duration_ms,
+                success=True,
+            )
             
             return CaptureResult(
                 image_data=image_data,
@@ -616,9 +708,10 @@ class Camera:
                 height=self._info.max_height if self._info else 0,
                 format="jpeg",
                 metadata={
-                    "camera_id": self._config.camera_id,
+                    "camera_id": camera_id,
                     "camera_name": self._config.name or self._info.name if self._info else "Unknown",
                     "recovered": True,
+                    "capture_duration_ms": round(duration_ms, 1),
                 },
                 has_overlay=False,
             )

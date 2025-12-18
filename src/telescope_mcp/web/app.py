@@ -1,7 +1,6 @@
 """FastAPI web application for telescope dashboard."""
 
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -16,8 +15,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from telescope_mcp.drivers.asi_sdk import get_sdk_library_path
+from telescope_mcp.observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Paths
 WEB_DIR = Path(__file__).parent

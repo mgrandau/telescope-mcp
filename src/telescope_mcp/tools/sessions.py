@@ -5,7 +5,6 @@ Sessions are the core abstraction for telescope data storage.
 """
 
 import json
-import logging
 from typing import Any
 
 from mcp.server import Server
@@ -13,8 +12,9 @@ from mcp.types import TextContent, Tool
 
 from telescope_mcp.data import LogLevel, SessionType
 from telescope_mcp.drivers.config import get_factory, get_session_manager
+from telescope_mcp.observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Tool definitions

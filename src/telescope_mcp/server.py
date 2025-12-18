@@ -10,10 +10,11 @@ import uvicorn
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
+from telescope_mcp.observability import configure_logging, get_logger
 from telescope_mcp.tools import cameras, motors, position, sessions
 from telescope_mcp.web.app import create_app
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Dashboard server thread
 _dashboard_thread: Optional[threading.Thread] = None
@@ -122,24 +123,22 @@ def main() -> None:
     """Main entry point."""
     args = parse_args()
     
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    # Configure structured logging
+    configure_logging(level=logging.INFO)
     
     # Configure data directory if specified
     if args.data_dir:
         from pathlib import Path
         from telescope_mcp.drivers.config import set_data_dir
         set_data_dir(Path(args.data_dir))
-        logger.info(f"Data directory set to: {args.data_dir}")
+        logger.info("Data directory configured", path=args.data_dir)
     
     # Initialize session manager and log startup
     from telescope_mcp.drivers.config import get_session_manager
     manager = get_session_manager()
     manager.log("INFO", "Telescope MCP server starting", source="server")
     
+    logger.info("Starting MCP server")
     asyncio.run(run_server(args.dashboard_host, args.dashboard_port))
 
 
