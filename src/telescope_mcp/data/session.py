@@ -479,6 +479,7 @@ class Session:
             ...     session.add_frame(more_data, metadata)  # Fails
             ... except RuntimeError as e:
             ...     print(f"Cannot add to closed session: {e}")
+        """
         return self._closed
 
     @property
@@ -524,5 +525,6 @@ class Session:
             >>> hours, remainder = divmod(session.duration_seconds, 3600)
             >>> minutes, seconds = divmod(remainder, 60)
             >>> print(f"Duration: {int(hours)}h {int(minutes)}m {seconds:.1f}s")
+        """
         end = self._end_time or datetime.now(timezone.utc)
         return (end - self.start_time).total_seconds()

@@ -107,6 +107,7 @@ class SyncCaptureResult:
             >>> if abs(result.timing_error_ms) > 100:
             ...     logger.warning(f"Poor sync: {result.timing_error_ms:.1f}ms error")
             >>> print(f"Timing: {result.timing_error_ms:+.2f}ms")  # +1.23ms or -2.45ms
+        """
         return self.timing_error_us / 1000.0
 
 

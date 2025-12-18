@@ -71,6 +71,7 @@ addopts = "--cov-report=term-missing --no-cov-on-fail"
 [tool.coverage.run]
 source = ["telescope_mcp"]
 branch = true
+omit = ["tests/*"]
 
 [tool.coverage.report]
 show_missing = true

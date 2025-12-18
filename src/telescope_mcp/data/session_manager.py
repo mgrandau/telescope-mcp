@@ -376,6 +376,7 @@ class SessionManager:
             >>> session.add_metadata("observer", "John Doe")
             >>> # Or use manager facade (preferred)
             >>> manager.add_metadata("telescope", "SCT 8\"")
+        """
         return self._active_session
 
     @property
@@ -457,6 +458,7 @@ class SessionManager:
             >>> # Parse timestamp from ID
             >>> timestamp_str = session_id.split('_')[0] + session_id.split('_')[1]  # 20251218203045
             >>> dt = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
+        """
         if self._active_session:
             return self._active_session.session_id
         return None

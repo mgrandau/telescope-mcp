@@ -107,6 +107,7 @@ class RecoveryStrategy:
             ...     camera.connect()  # Reconnect after successful recovery
             ... else:
             ...     print("Camera still unavailable")
+        """
         cameras = self._registry.discover(refresh=True)
         return camera_id in cameras
 
@@ -156,6 +157,7 @@ class NullRecoveryStrategy:
             ...     camera.capture()  # If fails, immediate exception
             ... except CameraDisconnectedError:
             ...     print("Camera disconnected, no recovery attempted")
+        """
         return False
 
 
@@ -443,6 +445,7 @@ class CameraRegistry:
             >>> for cam_id in registry.camera_ids:
             ...     camera = registry.get(cam_id)
             ...     print(f"Camera {cam_id}: connected={camera.is_connected}")
+        """
         return list(self._cameras.keys())
     
     @property
@@ -486,6 +489,7 @@ class CameraRegistry:
             >>> expected = [0, 1]
             >>> if set(registry.discovered_ids) == set(expected):
             ...     print("All cameras present")
+        """
         if self._discovery_cache is None:
             return []
         return list(self._discovery_cache.keys())
@@ -533,6 +537,7 @@ class CameraRegistry:
             >>> assert len(registry.discovered_ids) == 0
             >>> # Safe to call multiple times
             >>> registry.clear()  # No-op, no errors
+        """
         for camera in self._cameras.values():
             if camera.is_connected:
                 try:
@@ -703,6 +708,7 @@ def get_registry() -> CameraRegistry:
         ...     camera = registry.get(camera_id)
         ...     result = camera.capture()
         ...     return {"image": base64.encode(result.image_data)}
+    """
     if _default_registry is None:
         raise RuntimeError(
             "Registry not initialized. Call init_registry() first."
@@ -760,6 +766,7 @@ def shutdown_registry() -> None:
         >>> @app.on_event("shutdown")
         >>> async def shutdown_event():
         ...     shutdown_registry()
+    """
     global _default_registry
     if _default_registry is not None:
         _default_registry.clear()

@@ -10,7 +10,7 @@ from telescope_mcp.drivers import (
     use_digital_twin,
     use_hardware,
 )
-from telescope_mcp.drivers.cameras import StubCameraDriver, StubCameraInstance
+from telescope_mcp.drivers.cameras import CameraInstance, DigitalTwinCameraDriver
 
 
 class TestDriverConfig:
@@ -33,12 +33,12 @@ class TestDriverConfig:
         use_digital_twin()
 
 
-class TestStubCameraDriver:
+class TestDigitalTwinCameraDriver:
     """Tests for the digital twin camera driver."""
 
     def test_list_cameras(self):
         """Should return simulated camera list."""
-        driver = StubCameraDriver()
+        driver = DigitalTwinCameraDriver()
         cameras = driver.get_connected_cameras()
         assert 0 in cameras
         assert 1 in cameras
@@ -46,24 +46,26 @@ class TestStubCameraDriver:
 
     def test_open_camera(self):
         """Should open a simulated camera."""
-        driver = StubCameraDriver()
+        driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
         assert camera is not None
-        assert isinstance(camera, StubCameraInstance)
+        # Check that it implements CameraInstance protocol
+        assert hasattr(camera, 'get_info')
+        assert hasattr(camera, 'capture')
 
     def test_open_invalid_camera(self):
         """Should raise error for invalid camera ID."""
-        driver = StubCameraDriver()
+        driver = DigitalTwinCameraDriver()
         with pytest.raises(ValueError):
             driver.open(99)
 
 
-class TestStubCameraInstance:
+class TestDigitalTwinCameraInstance:
     """Tests for the digital twin camera instance."""
 
     def test_get_info(self):
         """Should return camera info."""
-        driver = StubCameraDriver()
+        driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
         info = camera.get_info()
         assert "MaxWidth" in info
@@ -71,7 +73,7 @@ class TestStubCameraInstance:
 
     def test_get_controls(self):
         """Should return available controls."""
-        driver = StubCameraDriver()
+        driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
         controls = camera.get_controls()
         assert "ASI_GAIN" in controls
@@ -79,7 +81,7 @@ class TestStubCameraInstance:
 
     def test_set_and_get_control(self):
         """Should set and retrieve control values."""
-        driver = StubCameraDriver()
+        driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
         
         camera.set_control("ASI_GAIN", 75)
@@ -88,7 +90,7 @@ class TestStubCameraInstance:
 
     def test_capture_returns_jpeg(self):
         """Should return JPEG bytes."""
-        driver = StubCameraDriver()
+        driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
         
         jpeg = camera.capture(exposure_us=100000)
@@ -105,7 +107,7 @@ class TestDriverFactory:
         """Should create stub camera driver in digital twin mode."""
         factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
         driver = factory.create_camera_driver()
-        assert isinstance(driver, StubCameraDriver)
+        assert isinstance(driver, DigitalTwinCameraDriver)
 
     def test_create_camera_driver_hardware_not_implemented(self):
         """Should raise NotImplementedError for hardware mode (until implemented)."""
