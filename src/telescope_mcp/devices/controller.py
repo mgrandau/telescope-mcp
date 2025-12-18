@@ -78,7 +78,13 @@ class SyncCaptureResult:
     
     @property
     def timing_error_ms(self) -> float:
-        """Timing error in milliseconds."""
+        """Timing error in milliseconds.
+        
+        Converts timing_error_us to milliseconds for easier reading.
+        
+        Returns:
+            Timing error in milliseconds as float.
+        """
         return self.timing_error_us / 1000.0
 
 
@@ -131,9 +137,18 @@ class CameraController:
     ) -> None:
         """Create controller with cameras and optional clock.
         
+        Initializes the controller with a collection of named cameras.
+        The clock can be injected for deterministic timing in tests.
+        
         Args:
-            cameras: Dict mapping names to Camera instances
-            clock: Clock implementation (for testing), defaults to SystemClock
+            cameras: Dict mapping camera names to Camera instances.
+            clock: Clock implementation for timing (default: SystemClock).
+        
+        Example:
+            controller = CameraController({
+                "finder": finder_camera,
+                "main": main_camera,
+            })
         """
         self._cameras: dict[str, Camera] = cameras or {}
         self._clock = clock or SystemClock()
@@ -141,34 +156,55 @@ class CameraController:
     def add_camera(self, name: str, camera: Camera) -> None:
         """Add a camera to the controller.
         
+        Registers a camera under the given name for use in sync operations.
+        Camera should be connected before adding.
+        
         Args:
-            name: Unique name for the camera
-            camera: Camera instance (should be connected)
+            name: Unique name for the camera (e.g., "finder", "main").
+            camera: Camera instance, typically already connected.
+        
+        Example:
+            controller.add_camera("guide", guide_camera)
         """
         self._cameras[name] = camera
     
     def remove_camera(self, name: str) -> Camera | None:
         """Remove and return a camera from the controller.
         
+        Unregisters the camera but does not disconnect it. The caller
+        is responsible for disconnecting if needed.
+        
         Args:
-            name: Name of camera to remove
+            name: Name of camera to remove.
             
         Returns:
-            Removed camera or None if not found
+            Removed Camera instance, or None if name not found.
+        
+        Example:
+            camera = controller.remove_camera("guide")
+            if camera:
+                camera.disconnect()
         """
         return self._cameras.pop(name, None)
     
     def get_camera(self, name: str) -> Camera:
         """Get a camera by name.
         
+        Retrieves a registered camera for direct access. Used internally
+        by sync_capture and can be used by callers.
+        
         Args:
-            name: Camera name
+            name: Camera name (e.g., "finder", "main").
             
         Returns:
-            Camera instance
+            Camera instance.
             
         Raises:
-            CameraNotFoundError: If camera doesn't exist
+            CameraNotFoundError: If name not registered.
+        
+        Example:
+            camera = controller.get_camera("main")
+            result = camera.capture()
         """
         if name not in self._cameras:
             raise CameraNotFoundError(f"Camera '{name}' not found")
@@ -176,7 +212,34 @@ class CameraController:
     
     @property
     def camera_names(self) -> list[str]:
-        """List of registered camera names."""
+        """List of registered camera names for iteration and UI display.
+        
+        Returns the names of all cameras currently managed by this controller.
+        Useful for building UIs, validating camera availability, and iterating
+        over all cameras for batch operations.
+        
+        Business context: Enables dynamic UI generation showing available cameras,
+        validation of camera references in configurations, and bulk operations
+        across all cameras. Essential for multi-camera setups where camera
+        availability may change at runtime.
+        
+        Returns:
+            List of camera names (strings) in registration order. Empty list if
+            no cameras registered. Names correspond to keys used in register()
+            and get_camera().
+        
+        Raises:
+            None. Always succeeds, returning empty list if no cameras.
+        
+        Example:
+            >>> controller.register("main", main_camera)
+            >>> controller.register("finder", finder_camera)
+            >>> print(controller.camera_names)
+            ['main', 'finder']
+            >>> for name in controller.camera_names:
+            ...     camera = controller.get_camera(name)
+            ...     print(f"{name}: {camera.is_connected}")
+        """
         return list(self._cameras.keys())
     
     def calculate_sync_timing(
@@ -184,18 +247,53 @@ class CameraController:
         primary_exposure_us: int,
         secondary_exposure_us: int,
     ) -> int:
-        """Calculate delay before starting secondary capture.
+        """Calculate delay before starting secondary capture for temporal centering.
         
-        To center the secondary exposure within the primary:
+        Determines the optimal delay to start the secondary camera exposure so that
+        it's temporally centered within the primary camera's exposure. This ensures
+        both cameras capture the same moment in time at their respective exposure
+        midpoints, critical for accurate alignment and tracking.
         
-            delay = (primary / 2) - (secondary / 2)
+        Formula: delay = (primary / 2) - (secondary / 2)
+        
+        Business context: Essential for synchronized multi-camera astrophotography
+        where a long-exposure main camera is guided by a shorter-exposure finder
+        camera. By centering exposures, tracking corrections measured in the finder
+        frame correspond to the main frame's temporal midpoint, minimizing field
+        rotation and drift artifacts. Used in guided imaging to ensure guide
+        corrections represent the science exposure's actual position.
+        
+        Implementation details: Uses integer division for microsecond precision.
+        For very long primary exposures (>30 minutes), secondary should be centered
+        to avoid accumulation of tracking errors. The delay can be quite long
+        (tens of seconds) for typical long-exposure scenarios.
         
         Args:
-            primary_exposure_us: Primary exposure in microseconds
-            secondary_exposure_us: Secondary exposure in microseconds
+            primary_exposure_us: Primary camera exposure time in microseconds.
+                Typically the main imaging camera with long exposure (1s-10min).
+            secondary_exposure_us: Secondary camera exposure time in microseconds.
+                Typically the guide/finder camera with short exposure (100ms-1s).
             
         Returns:
-            Delay in microseconds before starting secondary
+            Delay in microseconds to wait after starting primary before starting
+            secondary. Ensures secondary's temporal midpoint aligns with primary's.
+            Result may be 0 if secondary exposure equals or exceeds primary (no delay).
+        
+        Raises:
+            None. Always returns a valid delay value.
+        
+        Example:
+            >>> # Typical astrophotography: 176s main, 312ms guide
+            >>> delay = controller.calculate_sync_timing(176_000_000, 312_000)
+            >>> print(f"Wait {delay / 1_000_000:.1f}s before starting guide")
+            Wait 87.8s before starting guide
+            >>> 
+            >>> # Verify centering
+            >>> primary_mid = 176_000_000 / 2  # 88s
+            >>> secondary_start = delay / 1_000_000  # 87.844s
+            >>> secondary_mid = secondary_start + (312_000 / 2 / 1_000_000)  # 88.0s
+            >>> print(f"Midpoints: primary={primary_mid:.1f}s, secondary={secondary_mid:.1f}s")
+            Midpoints: primary=88.0s, secondary=88.0s
         """
         primary_midpoint = primary_exposure_us // 2
         secondary_half = secondary_exposure_us // 2
@@ -203,6 +301,11 @@ class CameraController:
     
     def sync_capture(self, config: SyncCaptureConfig) -> SyncCaptureResult:
         """Capture with secondary centered in primary exposure.
+        
+        Coordinates two cameras to capture simultaneously, with the secondary
+        exposure centered within the primary exposure. Useful for alignment
+        where a short main camera exposure must be taken during a long finder
+        exposure to ensure both see the same sky state.
         
         Timeline for 176s primary, 312ms secondary:
         
@@ -217,14 +320,23 @@ class CameraController:
         So the CENTER of secondary aligns with CENTER of primary.
         
         Args:
-            config: Sync capture configuration
+            config: Sync capture configuration with camera names and timings.
             
         Returns:
-            SyncCaptureResult with both frames and timing info
+            SyncCaptureResult with both frames and timing measurements.
             
         Raises:
-            CameraNotFoundError: If camera doesn't exist
-            SyncCaptureError: If capture fails
+            CameraNotFoundError: If camera name not registered.
+            SyncCaptureError: If either capture fails.
+        
+        Example:
+            result = controller.sync_capture(SyncCaptureConfig(
+                primary="finder",
+                secondary="main",
+                primary_exposure_us=176_000_000,
+                secondary_exposure_us=312_000,
+            ))
+            print(f"Timing error: {result.timing_error_ms:.1f}ms")
         """
         primary_cam = self.get_camera(config.primary)
         secondary_cam = self.get_camera(config.secondary)

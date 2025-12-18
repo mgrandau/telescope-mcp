@@ -71,15 +71,26 @@ class Session:
         rotate_interval_hours: int = 1,
     ) -> None:
         """Initialize a new session.
+        
+        Creates a new session with a unique ID based on timestamp and type.
+        Session data is buffered in memory until close() writes ASDF.
 
         Args:
-            session_type: Type of session (observation, alignment, etc.)
-            data_dir: Base directory for ASDF file storage
-            target: Target object name (e.g., "M31") for observations
-            purpose: Purpose description for alignment/experiment sessions
-            location: Observer location {lat, lon, alt}
-            auto_rotate: Whether to auto-rotate idle sessions
-            rotate_interval_hours: Hours between auto-rotations
+            session_type: Type of session (observation, alignment, etc.).
+            data_dir: Base directory for ASDF file storage.
+            target: Target object name (e.g., "M31") for observations.
+            purpose: Purpose description for alignment/experiment sessions.
+            location: Observer location dict with lat, lon, alt keys.
+            auto_rotate: Whether to auto-rotate idle sessions.
+            rotate_interval_hours: Hours between auto-rotations.
+        
+        Example:
+            session = Session(
+                SessionType.OBSERVATION,
+                Path("/data/telescope"),
+                target="M42",
+                location={"lat": 34.05, "lon": -118.25, "alt": 100.0},
+            )
         """
         self.session_type = session_type
         self.data_dir = Path(data_dir)
@@ -122,7 +133,15 @@ class Session:
         )
 
     def _generate_session_id(self) -> str:
-        """Generate a unique session ID."""
+        """Generate a unique session ID.
+        
+        Creates an ID from session type, optional target, and timestamp.
+        Format: '{type}_{target}_{YYYYMMDD_HHMMSS}' or '{type}_{YYYYMMDD_HHMMSS}'.
+        Used for ASDF filename and identification.
+        
+        Returns:
+            Unique session ID string.
+        """
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
         prefix = self.session_type.value[:3]
 
@@ -144,13 +163,19 @@ class Session:
         """Log a message to the session and console.
 
         Implements dual-write: logs go to both console (real-time)
-        and the in-memory buffer (for ASDF).
+        and the in-memory buffer (for ASDF). Also tracks error/warning counts.
 
         Args:
-            level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-            message: Log message
-            source: Source component name
-            **context: Additional context key-value pairs
+            level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+            message: Human-readable log message.
+            source: Source component name for filtering.
+            **context: Additional context as key-value pairs.
+        
+        Raises:
+            RuntimeError: If session is already closed.
+        
+        Example:
+            session.log(LogLevel.INFO, "Exposure started", camera="main", exposure_us=500000)
         """
         if self._closed:
             raise RuntimeError("Cannot log to a closed session")
@@ -181,11 +206,23 @@ class Session:
             self._warning_count += 1
 
     def add_event(self, event: str, **details: Any) -> None:
-        """Record a significant event (tracking_lost, cloud_detected, etc.).
+        """Record a significant event to the session.
+        
+        Events mark important occurrences like tracking_lost, slew_complete,
+        or cloud_detected. Timestamped and stored in ASDF for analysis.
 
         Args:
-            event: Event name
-            **details: Event details
+            event: Event name/type identifier.
+            **details: Event-specific details as key-value pairs.
+        
+        Returns:
+            None.
+        
+        Raises:
+            RuntimeError: If session is already closed.
+        
+        Example:
+            session.add_event("tracking_lost", reason="clouds", duration_sec=30)
         """
         if self._closed:
             raise RuntimeError("Cannot add event to a closed session")
@@ -206,12 +243,29 @@ class Session:
         settings: dict[str, Any] | None = None,
     ) -> None:
         """Add a captured frame to the session.
+        
+        Frames are grouped by camera identifier and stored with their
+        capture settings. Increments the frames_captured counter.
 
         Args:
-            camera: Camera identifier ("main", "spotter", etc.)
-            frame: Image data as numpy array
-            camera_info: Camera metadata (model, sensor_size, etc.)
-            settings: Capture settings (gain, exposure_us, etc.)
+            camera: Camera identifier ("main", "finder", etc.).
+            frame: Image data as numpy array (uint8 or uint16).
+            camera_info: Camera metadata (model, sensor_size, etc.). Optional.
+            settings: Capture settings (gain, exposure_us, etc.). Optional.
+        
+        Returns:
+            None.
+        
+        Raises:
+            RuntimeError: If session is already closed.
+        
+        Example:
+            session.add_frame(
+                "main",
+                image_array,
+                camera_info={"name": "ASI482MC"},
+                settings={"exposure_us": 500000, "gain": 50},
+            )
         """
         if self._closed:
             raise RuntimeError("Cannot add frame to a closed session")
@@ -235,11 +289,23 @@ class Session:
         telemetry_type: str,
         **data: Any,
     ) -> None:
-        """Add telemetry data point.
+        """Add a telemetry data point.
+        
+        Records time-series sensor data like mount position, temperature,
+        or focus readings. Each entry is timestamped automatically.
 
         Args:
-            telemetry_type: Type of telemetry (mount_position, temperature, etc.)
-            **data: Telemetry data (e.g., ra=12.5, dec=45.2)
+            telemetry_type: Type of telemetry (mount_position, temperature, etc.).
+            **data: Telemetry values (e.g., ra=12.5, dec=45.2).
+        
+        Returns:
+            None.
+        
+        Raises:
+            RuntimeError: If session is already closed.
+        
+        Example:
+            session.add_telemetry("mount_position", ra=12.5, dec=45.2, alt=60.0)
         """
         if self._closed:
             raise RuntimeError("Cannot add telemetry to a closed session")
@@ -251,11 +317,25 @@ class Session:
         self._telemetry[telemetry_type].append(entry)
 
     def add_calibration(self, calibration_type: str, data: Any) -> None:
-        """Add calibration data.
+        """Add calibration data to the session.
+        
+        Stores calibration results like dark frames, flat fields, or
+        plate solve results for later processing. Data is appended to
+        the appropriate calibration list.
 
         Args:
-            calibration_type: Type (dark_frames, flat_frames, plate_solve_results)
-            data: Calibration data (frame array or result dict)
+            calibration_type: Type (dark_frames, flat_frames, plate_solve_results).
+            data: Calibration data (frame array or result dict).
+        
+        Returns:
+            None.
+        
+        Raises:
+            RuntimeError: If session is already closed.
+        
+        Example:
+            session.add_calibration("dark_frames", dark_array)
+            session.add_calibration("plate_solve_results", {"ra": 12.5, "dec": 45.2})
         """
         if self._closed:
             raise RuntimeError("Cannot add calibration to a closed session")
@@ -269,7 +349,15 @@ class Session:
             self._calibration[calibration_type] = data
 
     def _build_asdf_tree(self) -> dict[str, Any]:
-        """Build the ASDF tree structure from session data."""
+        """Build the ASDF tree structure from session data.
+        
+        Assembles all session data (meta, cameras, telemetry, calibration,
+        observability) into the hierarchical structure expected by ASDF.
+        Sets end_time and calculates duration.
+        
+        Returns:
+            Dictionary representing the complete ASDF tree structure.
+        """
         self._end_time = datetime.now(timezone.utc)
         duration_seconds = (self._end_time - self.start_time).total_seconds()
 
@@ -299,7 +387,14 @@ class Session:
         }
 
     def _get_output_path(self) -> Path:
-        """Get the output path for the ASDF file."""
+        """Get the output path for the ASDF file.
+        
+        Organizes files by date: data_dir/YYYY/MM/DD/session_id.asdf.
+        Creates directories if they don't exist.
+        
+        Returns:
+            Path where the ASDF file will be written.
+        """
         # Organize by date: data_dir/YYYY/MM/DD/session_id.asdf
         date_path = self.start_time.strftime("%Y/%m/%d")
         output_dir = self.data_dir / date_path
@@ -310,9 +405,22 @@ class Session:
 
     def close(self) -> Path:
         """Close the session and write ASDF file.
+        
+        Logs a closing message, builds the ASDF tree from all accumulated
+        data, and writes to disk. Session becomes read-only after close.
+        
+        Args:
+            None. Operates on session's internal state.
 
         Returns:
-            Path to the written ASDF file
+            Path to the written ASDF file.
+        
+        Raises:
+            RuntimeError: If session is already closed.
+        
+        Example:
+            path = session.close()
+            print(f"Session saved to {path}")
         """
         if self._closed:
             raise RuntimeError("Session already closed")
@@ -333,11 +441,37 @@ class Session:
 
     @property
     def is_closed(self) -> bool:
-        """Check if session is closed."""
+        """Check if session is closed.
+        
+        A closed session has been written to disk and cannot accept
+        new data. All add_* methods will raise RuntimeError.
+        
+        Args:
+            None. Property access.
+        
+        Returns:
+            True if session is closed, False if still active.
+        
+        Raises:
+            None. Always returns a boolean.
+        """
         return self._closed
 
     @property
     def duration_seconds(self) -> float:
-        """Get session duration in seconds."""
+        """Get session duration in seconds.
+        
+        Returns elapsed time since session start. For active sessions,
+        uses current time; for closed sessions, uses end_time.
+        
+        Args:
+            None. Property access.
+        
+        Returns:
+            Duration in seconds as float.
+        
+        Raises:
+            None. Always computes a valid duration.
+        """
         end = self._end_time or datetime.now(timezone.utc)
         return (end - self.start_time).total_seconds()

@@ -76,6 +76,38 @@ class StructuredLogRecord(logging.LogRecord):
         sinfo: str | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initialize a structured log record with optional structured data.
+
+        Creates a standard LogRecord and attaches structured key-value data
+        for downstream formatting. This enables logs to carry contextual
+        metadata (camera IDs, durations, etc.) that can be formatted as
+        JSON or human-readable key=value pairs.
+
+        Args:
+            name: Logger name (e.g., 'telescope_mcp.devices.camera').
+            level: Numeric log level (e.g., logging.INFO = 20).
+            pathname: Full path to source file where log was created.
+            lineno: Line number in source file.
+            msg: Log message (may contain % formatting placeholders).
+            args: Arguments for % formatting of msg, or None.
+            exc_info: Exception info tuple from sys.exc_info(), or None.
+            func: Function name where log was created, or None.
+            sinfo: Stack info string, or None.
+            **kwargs: Additional keyword arguments. If 'structured_data' key
+                is present, its value (dict) is stored; otherwise empty dict.
+
+        Returns:
+            None (constructor).
+
+        Example:
+            >>> record = StructuredLogRecord(
+            ...     name="test", level=20, pathname="test.py", lineno=1,
+            ...     msg="Captured", args=(), exc_info=None,
+            ...     structured_data={"camera_id": 0, "exposure_ms": 100}
+            ... )
+            >>> record.structured_data
+            {'camera_id': 0, 'exposure_ms': 100}
+        """
         super().__init__(
             name, level, pathname, lineno, msg, args, exc_info, func, sinfo
         )
@@ -109,10 +141,38 @@ class StructuredLogger(logging.Logger):
         stacklevel: int = 1,
         **kwargs: Any,
     ) -> None:
-        """Override _log to handle structured data.
-        
-        Accepts keyword arguments as structured data and merges with
-        context from LogContext.
+        """Log a message with structured data support.
+
+        Overrides the standard Logger._log to capture keyword arguments as
+        structured data. The structured data is merged with any active
+        LogContext values, with explicit kwargs taking precedence. This
+        enables rich, queryable logs for telescope operations.
+
+        The merge order is: LogContext values < explicit kwargs, allowing
+        operation-specific data to override ambient context.
+
+        Args:
+            level: Numeric log level (e.g., logging.DEBUG=10, INFO=20).
+            msg: Log message, may contain % formatting placeholders.
+            args: Arguments for % formatting, or None for no formatting.
+            exc_info: Exception tuple from sys.exc_info(), True to capture
+                current exception, or None for no exception info.
+            extra: Additional context dict passed to LogRecord. The
+                'structured_data' key will be added/overwritten.
+            stack_info: If True, include stack trace in log.
+            stacklevel: Stack frames to skip for determining caller info.
+                Incremented by 1 internally for accurate source location.
+            **kwargs: Arbitrary key-value pairs to include as structured
+                data. Common keys: camera_id, exposure_us, duration_ms.
+
+        Returns:
+            None.
+
+        Example:
+            >>> logger = StructuredLogger("telescope_mcp.camera")
+            >>> with LogContext(session_id="abc123"):
+            ...     logger.info("Frame captured", camera_id=0, duration_ms=150)
+            # Output includes: session_id=abc123 camera_id=0 duration_ms=150
         """
         # Merge context + kwargs into structured_data
         context = _log_context.get()
@@ -150,13 +210,79 @@ class StructuredFormatter(logging.Formatter):
         datefmt: str | None = None,
         include_structured: bool = True,
     ) -> None:
+        """Initialize the structured formatter.
+
+        Creates a human-readable log formatter that appends structured
+        key-value data after the main message. Designed for development
+        and debugging where readability is prioritized over parseability.
+
+        This formatter is the default for telescope-mcp development
+        environments, providing readable console output while preserving
+        structured metadata for debugging camera operations, timing
+        analysis, and session tracking.
+
+        Args:
+            fmt: Format string using LogRecord attributes. If None, uses:
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'.
+                See logging.Formatter for available attributes.
+            datefmt: Date/time format string for %(asctime)s. If None,
+                uses ISO 8601 format. Example: '%Y-%m-%d %H:%M:%S'.
+            include_structured: If True (default), appends structured data
+                as ' | key=value key=value' after the message. Set False
+                to output only the base message format.
+
+        Returns:
+            None (constructor).
+
+        Raises:
+            None.
+
+        Example:
+            >>> formatter = StructuredFormatter(
+            ...     fmt="%(levelname)s: %(message)s",
+            ...     include_structured=True
+            ... )
+            >>> handler.setFormatter(formatter)
+            # Output: "INFO: Camera connected | camera_id=0 name=ASI120"
+        """
         if fmt is None:
             fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         super().__init__(fmt, datefmt)
         self.include_structured = include_structured
     
     def format(self, record: logging.LogRecord) -> str:
-        """Format record with structured data appended."""
+        """Format a log record as human-readable text with structured data.
+
+        Produces output suitable for console viewing during development.
+        The base message is formatted according to the configured format
+        string, then structured data (if any) is appended as key=value
+        pairs separated by ' | '.
+
+        Structured data values are formatted via _format_value():
+        - Strings with spaces are quoted
+        - Dicts/lists become JSON
+        - Other types use str()
+
+        Args:
+            record: The LogRecord to format. May have a 'structured_data'
+                attribute (dict) containing key-value pairs to append.
+                If missing or empty, only the base format is returned.
+
+        Returns:
+            Formatted log string. Examples:
+            - Without structured: '2025-01-15 10:30:00 - app - INFO - Started'
+            - With structured: '... - INFO - Captured | camera_id=0 ms=150'
+
+        Raises:
+            None. Gracefully handles missing structured_data attribute.
+
+        Example:
+            >>> formatter = StructuredFormatter()
+            >>> record = logging.LogRecord(...)
+            >>> record.structured_data = {"camera_id": 0}
+            >>> formatter.format(record)
+            '2025-01-15 10:30:00 - test - INFO - Message | camera_id=0'
+        """
         base = super().format(record)
         
         if not self.include_structured:
@@ -184,7 +310,42 @@ class JSONFormatter(logging.Formatter):
     """
     
     def format(self, record: logging.LogRecord) -> str:
-        """Format record as JSON."""
+        """Format a log record as a single-line JSON object.
+
+        Produces machine-parseable JSON output suitable for log aggregation
+        systems (Elasticsearch, CloudWatch, etc.). Each log entry becomes
+        one JSON line (NDJSON format) for easy ingestion and querying.
+
+        The output JSON contains:
+        - timestamp: ISO 8601 format in UTC (e.g., '2025-01-15T10:30:00+00:00')
+        - level: Log level name (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        - logger: Logger name (e.g., 'telescope_mcp.devices.camera')
+        - message: The formatted log message
+        - exception: Stack trace string (only if exc_info is set)
+        - ...plus all structured_data keys merged at top level
+
+        Non-serializable values are converted via str() as fallback.
+
+        Args:
+            record: The LogRecord to format. The 'structured_data' attribute
+                (if present) is merged into the output dict. Exception info
+                from record.exc_info is formatted and included if present.
+
+        Returns:
+            Single-line JSON string with no trailing newline. Example:
+            '{"timestamp":"2025-01-15T10:30:00+00:00","level":"INFO",...}'
+
+        Raises:
+            None. Uses json.dumps(default=str) for safe serialization.
+
+        Example:
+            >>> formatter = JSONFormatter()
+            >>> record = logging.LogRecord(...)
+            >>> record.structured_data = {"camera_id": 0, "exposure_us": 100000}
+            >>> output = formatter.format(record)
+            >>> json.loads(output)["camera_id"]
+            0
+        """
         # Base fields
         log_dict: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(
@@ -207,7 +368,41 @@ class JSONFormatter(logging.Formatter):
 
 
 def _format_value(value: Any) -> str:
-    """Format a value for human-readable output."""
+    """Format a value for human-readable structured log output.
+
+    Converts arbitrary Python values to strings suitable for the
+    key=value format used by StructuredFormatter. Ensures output
+    is unambiguous and parseable while remaining human-readable.
+
+    Formatting rules:
+    - Strings: returned as-is, unless containing spaces (then quoted)
+    - Dicts/lists: JSON-serialized for structure preservation
+    - Other types: converted via str()
+
+    Args:
+        value: Any Python value to format. Common types include:
+            str, int, float, bool, dict, list, None.
+
+    Returns:
+        String representation suitable for log output. Examples:
+        - 'hello' → 'hello'
+        - 'hello world' → '"hello world"'
+        - {'key': 1} → '{"key": 1}'
+        - [1, 2, 3] → '[1, 2, 3]'
+        - 42 → '42'
+        - None → 'None'
+
+    Raises:
+        None. Non-serializable objects fall back to str() representation.
+
+    Example:
+        >>> _format_value("simple")
+        'simple'
+        >>> _format_value("has spaces")
+        '"has spaces"'
+        >>> _format_value({"camera": 0})
+        '{"camera": 0}'
+    """
     if isinstance(value, str):
         # Quote strings with spaces
         if " " in value:
@@ -242,19 +437,86 @@ class LogContext:
     )
     
     def __init__(self, **kwargs: Any) -> None:
-        """Initialize with context key-value pairs."""
+        """Initialize a logging context with key-value pairs.
+
+        Creates a context manager that will inject the provided key-value
+        pairs into all log messages emitted within its scope. Supports
+        nesting, where inner contexts merge with (and can override) outer
+        context values.
+
+        Common use cases:
+        - Request tracking: LogContext(request_id="abc123")
+        - Camera operations: LogContext(camera_id=0, operation="capture")
+        - Session scoping: LogContext(session_id=session.id)
+
+        Args:
+            **kwargs: Arbitrary key-value pairs to include in log context.
+                Keys should be valid Python identifiers. Values can be any
+                JSON-serializable type (str, int, float, bool, dict, list).
+
+        Returns:
+            None (constructor).
+
+        Example:
+            >>> ctx = LogContext(camera_id=0, operation="capture")
+            >>> with ctx:
+            ...     logger.info("Starting")  # includes camera_id, operation
+        """
         self._kwargs = kwargs
         self._token = None
     
     def __enter__(self) -> LogContext:
-        """Enter context and add to log context."""
+        """Enter the context and activate structured logging values.
+
+        Merges this context's key-value pairs into the current logging
+        context. Uses Python's contextvars for proper async/thread
+        isolation. The previous context is preserved via token for
+        restoration on exit.
+
+        The merge uses {**current, **self._kwargs}, so values from this
+        LogContext override any existing values with the same keys.
+
+        Args:
+            None (uses self._kwargs set during __init__).
+
+        Returns:
+            Self, allowing use as 'with LogContext(...) as ctx:'.
+
+        Raises:
+            None.
+
+        Example:
+            >>> with LogContext(camera_id=0) as ctx:
+            ...     # All logs now include camera_id=0
+            ...     logger.info("Processing")
+        """
         current = _log_context.get()
         new_context = {**current, **self._kwargs}
         self._token = _log_context.set(new_context)
         return self
     
     def __exit__(self, *args: Any) -> None:
-        """Exit context and restore previous context."""
+        """Exit the context and restore the previous logging context.
+
+        Uses the saved contextvars token to reset the log context to its
+        state before this LogContext was entered. This ensures proper
+        nesting behavior and cleanup even if exceptions occur.
+
+        Args:
+            *args: Exception info (exc_type, exc_val, exc_tb) from context
+                manager protocol. Ignored; exceptions are not suppressed.
+
+        Returns:
+            None. Does not suppress exceptions (no return True).
+
+        Raises:
+            None.
+
+        Example:
+            >>> with LogContext(session_id="abc"):
+            ...     pass  # session_id active here
+            ... # session_id no longer in context
+        """
         if self._token is not None:
             _log_context.reset(self._token)
 
@@ -274,16 +536,49 @@ def configure_logging(
     stream: Any = None,
     include_structured: bool = True,
 ) -> None:
-    """Configure the telescope-mcp logging system.
-    
-    Call once at application startup. Safe to call multiple times
-    (subsequent calls are no-ops unless force=True).
-    
+    """Configure the telescope-mcp structured logging system.
+
+    Initializes the logging infrastructure for the entire telescope-mcp
+    package. Sets up handlers, formatters, and configures the root
+    'telescope_mcp' logger. Should be called once at application startup.
+
+    This function is idempotent: subsequent calls after the first have
+    no effect. The configuration is protected by a threading lock for
+    safe concurrent initialization.
+
+    The logging system provides structured data support via keyword
+    arguments to log methods, enabling rich queryable logs for
+    telescope operations monitoring.
+
     Args:
-        level: Log level (default: INFO)
-        json_format: Use JSON formatter for production (default: False)
-        stream: Output stream (default: sys.stderr)
-        include_structured: Include structured data in output (default: True)
+        level: Minimum log level to capture. Can be int (e.g., logging.DEBUG=10,
+            logging.INFO=20) or string ('DEBUG', 'INFO', etc.). Default: INFO.
+        json_format: If True, use JSONFormatter for machine-parseable output
+            (NDJSON). If False (default), use StructuredFormatter for
+            human-readable output with key=value pairs.
+        stream: Output stream for logs. Default: sys.stderr. Can be any
+            file-like object with write() method (e.g., sys.stdout, StringIO).
+        include_structured: If True (default) and json_format=False, append
+            structured data as ' | key=value' to log messages. Ignored when
+            json_format=True (structured data always included in JSON).
+
+    Returns:
+        None.
+
+    Raises:
+        None. Thread-safe; handles concurrent calls gracefully.
+
+    Example:
+        >>> # Development setup (human-readable)
+        >>> configure_logging(level=logging.DEBUG)
+        >>>
+        >>> # Production setup (JSON for log aggregation)
+        >>> configure_logging(level=logging.INFO, json_format=True)
+        >>>
+        >>> # Testing setup (capture to StringIO)
+        >>> import io
+        >>> buffer = io.StringIO()
+        >>> configure_logging(stream=buffer, level=logging.DEBUG)
     """
     global _configured
     
@@ -318,20 +613,40 @@ def configure_logging(
 
 
 def get_logger(name: str) -> StructuredLogger:
-    """Get a structured logger for the given name.
-    
-    Returns a StructuredLogger that supports keyword arguments
-    for structured data.
-    
+    """Get a structured logger for the given module or component.
+
+    Factory function to obtain a StructuredLogger instance configured
+    for the telescope-mcp logging system. The returned logger supports
+    keyword arguments that become structured data in log output.
+
+    If configure_logging() hasn't been called yet, this function
+    automatically configures logging with default settings (INFO level,
+    human-readable format, stderr output).
+
+    Logger names form a hierarchy (dot-separated), inheriting settings
+    from parent loggers. Using __name__ ensures logs are properly
+    attributed to their source module.
+
     Args:
-        name: Logger name (typically __name__)
-        
+        name: Logger name, typically __name__ for automatic module
+            attribution. Examples: 'telescope_mcp.devices.camera',
+            'telescope_mcp.tools.sessions'. The name appears in log
+            output for traceability.
+
     Returns:
-        StructuredLogger instance
-    
+        StructuredLogger instance supporting keyword arguments:
+            logger.info("message", key=value, ...)
+        The logger inherits from the 'telescope_mcp' root logger.
+
+    Raises:
+        None. Automatically initializes logging if needed.
+
     Example:
-        logger = get_logger(__name__)
-        logger.info("Connected", camera_id=0)
+        >>> # In telescope_mcp/devices/camera.py
+        >>> logger = get_logger(__name__)
+        >>> logger.info("Camera initialized", camera_id=0, model="ASI120")
+        # Output: 2025-01-15 10:30:00 - telescope_mcp.devices.camera - INFO
+        #         - Camera initialized | camera_id=0 model=ASI120
     """
     # Ensure logging is configured with defaults if not already
     if not _configured:
@@ -365,17 +680,75 @@ class SessionLogHandler(logging.Handler):
         session_manager_getter: Any,  # Callable[[], SessionManager]
         level: int = logging.NOTSET,
     ) -> None:
-        """Initialize with session manager getter.
-        
+        """Initialize the session log handler with a manager accessor.
+
+        Uses a getter function (rather than direct reference) to support
+        lazy initialization and avoid circular imports. The getter is
+        called on each emit() to get the current session manager.
+
+        This design enables:
+        - Handler creation before session manager exists
+        - Dynamic session switching during runtime
+        - Graceful handling when no session is active (getter returns None)
+
         Args:
-            session_manager_getter: Callable that returns SessionManager
-            level: Minimum level to forward to session
+            session_manager_getter: Callable that returns the current
+                SessionManager instance, or None if no session is active.
+                Typically: lambda: get_session_manager() or similar.
+            level: Minimum log level to forward to sessions. Default:
+                logging.NOTSET (0) forwards all levels. Use logging.INFO
+                to skip DEBUG messages in session storage.
+
+        Returns:
+            None (constructor).
+
+        Raises:
+            None.
+
+        Example:
+            >>> from telescope_mcp.drivers.config import get_session_manager
+            >>> handler = SessionLogHandler(
+            ...     session_manager_getter=get_session_manager,
+            ...     level=logging.INFO
+            ... )
+            >>> logging.getLogger("telescope_mcp").addHandler(handler)
         """
         super().__init__(level)
         self._get_manager = session_manager_getter
     
     def emit(self, record: logging.LogRecord) -> None:
-        """Forward log record to session."""
+        """Forward a log record to the active observation session.
+
+        Implements the logging.Handler protocol to capture log entries
+        and persist them in the current telescope observation session.
+        This enables session replay, debugging, and audit trails.
+
+        The handler extracts structured data from the record and passes
+        it to the session manager's log() method. If no session is active
+        (manager returns None), the record is silently skipped.
+
+        Following Python logging best practices, exceptions during emit
+        are caught and passed to handleError() rather than propagated,
+        ensuring logging failures never crash the application.
+
+        Args:
+            record: LogRecord to forward. Expected to have:
+                - levelname: Log level string (INFO, ERROR, etc.)
+                - name: Logger name (source module)
+                - getMessage(): Formatted message
+                - structured_data (optional): Dict of key-value metadata
+
+        Returns:
+            None.
+
+        Raises:
+            None. Exceptions are caught and passed to self.handleError().
+
+        Example:
+            >>> handler = SessionLogHandler(get_session_manager)
+            >>> logging.getLogger("telescope_mcp").addHandler(handler)
+            >>> # Now all telescope_mcp logs are also saved to sessions
+        """
         try:
             manager = self._get_manager()
             if manager is None:

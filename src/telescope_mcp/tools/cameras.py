@@ -112,14 +112,84 @@ TOOLS = [
 
 
 def register(server: Server) -> None:
-    """Register camera tools with the MCP server."""
+    """Register camera control tools with the MCP server.
+
+    Attaches camera-related tools to the MCP server instance, enabling
+    AI assistants to discover and use camera functionality. Registers
+    both the tool listing and call handlers.
+
+    Tools registered:
+    - list_cameras: Enumerate connected cameras
+    - get_camera_info: Query camera properties
+    - capture_frame: Take a single exposure
+    - set_camera_control: Adjust camera settings
+    - get_camera_control: Read camera settings
+
+    Args:
+        server: MCP Server instance to register tools with. Must be
+            initialized but not yet running.
+
+    Returns:
+        None. Modifies server in-place by adding handlers.
+
+    Raises:
+        None. Registration itself doesn't access hardware.
+
+    Example:
+        >>> server = Server("telescope-mcp")
+        >>> register(server)
+        >>> # Tools now available via server.list_tools()
+    """
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
+        """Return the list of available camera tools.
+
+        MCP handler that provides tool definitions to clients. Called
+        when clients request available tools for discovery.
+
+        Returns:
+            List of Tool objects defining camera capabilities.
+        """
         return TOOLS
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+        """Route tool calls to appropriate camera implementations.
+
+        MCP handler that dispatches incoming tool calls based on name.
+        Extracts arguments and calls the corresponding _* function.
+        This is the primary entry point for all camera-related MCP tool
+        invocations from AI agents or external clients.
+        
+        Business context: Enables AI agents (Claude, GPT) to control telescope
+        cameras through the Model Context Protocol. Provides a uniform interface
+        for camera discovery, configuration, and capture across different camera
+        types (ASI hardware or digital twin). Essential for building AI-powered
+        telescope automation where LLMs orchestrate imaging workflows.
+
+        Args:
+            name: Tool name from TOOLS definitions (list_cameras, get_camera_info,
+                capture_frame, set_camera_control, get_camera_control).
+            arguments: Dict of arguments matching tool's inputSchema. Keys and
+                types validated by MCP framework before this handler.
+
+        Returns:
+            List containing single TextContent with JSON result string or error
+            message. Success responses have structured JSON, errors have
+            descriptive text.
+        
+        Raises:
+            None. Errors are caught and returned as TextContent with error details.
+        
+        Example:
+            # MCP client invocation from AI agent
+            result = await call_tool(
+                "capture_frame",
+                {"camera_id": 0, "exposure_us": 100000, "gain": 50}
+            )
+            # Returns: [TextContent(type="text", text='{"success": true, ...}')]
+        """
         if name == "list_cameras":
             return await _list_cameras()
         elif name == "get_camera_info":
@@ -149,7 +219,33 @@ def register(server: Server) -> None:
 
 
 async def _list_cameras() -> list[TextContent]:
-    """List connected cameras via CameraRegistry."""
+    """List all connected cameras via the CameraRegistry.
+
+    Queries the camera registry to discover connected ASI cameras.
+    Returns basic identification info for each camera including ID,
+    name, and sensor dimensions.
+
+    Uses the device layer abstraction, which handles both real
+    hardware and digital twin simulation based on configuration.
+
+    Args:
+        None.
+
+    Returns:
+        List with single TextContent containing JSON:
+        {"count": int, "cameras": [{"id": int, "name": str,
+         "max_width": int, "max_height": int}, ...]}
+        Returns "No cameras connected" if registry is empty.
+        Returns error message on exceptions.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _list_cameras()
+        >>> print(result[0].text)
+        {"count": 2, "cameras": [{"id": 0, "name": "ASI120MC"}, ...]}
+    """
     try:
         registry = get_registry()
         cameras = registry.discover()
@@ -176,7 +272,32 @@ async def _list_cameras() -> list[TextContent]:
 
 
 async def _get_camera_info(camera_id: int) -> list[TextContent]:
-    """Get detailed camera information."""
+    """Get detailed information about a specific camera.
+
+    Retrieves comprehensive camera properties including sensor specs,
+    supported controls, and connection status. Auto-connects to the
+    camera if not already connected.
+
+    The info dict includes: name, max_width, max_height, pixel_size,
+    color_type, bayer_pattern, and supported control ranges.
+
+    Args:
+        camera_id: Zero-based camera index (0=finder, 1=main).
+
+    Returns:
+        List with single TextContent containing JSON:
+        {"camera_id": int, "info": {...}, "is_connected": bool}
+        Returns error message if camera not found or on exceptions.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _get_camera_info(0)
+        >>> info = json.loads(result[0].text)
+        >>> info["info"]["name"]
+        "ASI120MC-S"
+    """
     try:
         registry = get_registry()
         camera = registry.get(camera_id, auto_connect=True)
@@ -196,7 +317,37 @@ async def _get_camera_info(camera_id: int) -> list[TextContent]:
 
 
 async def _capture_frame(camera_id: int, exposure_us: int, gain: int) -> list[TextContent]:
-    """Capture a single frame and return as base64 JPEG."""
+    """Capture a single frame from a camera and return as base64 JPEG.
+
+    Takes a single exposure with the specified settings and returns
+    the image data encoded for transmission. Auto-connects to the
+    camera if not already connected.
+
+    The image is returned as base64-encoded JPEG suitable for display
+    in web interfaces or saving to files. Metadata includes capture
+    parameters and timestamp.
+
+    Args:
+        camera_id: Zero-based camera index (0=finder, 1=main).
+        exposure_us: Exposure duration in microseconds. Typical range
+            1000 (1ms) to 60000000 (60s). Common values: 100000 (100ms).
+        gain: Amplification value. Range varies by camera, typically
+            0-500. Higher values increase brightness but add noise.
+
+    Returns:
+        List with single TextContent containing JSON:
+        {"camera_id": int, "exposure_us": int, "gain": int,
+         "timestamp": str (ISO), "image_base64": str}
+        Returns error message on capture failure.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _capture_frame(0, 100000, 50)
+        >>> data = json.loads(result[0].text)
+        >>> image_bytes = base64.b64decode(data["image_base64"])
+    """
     try:
         registry = get_registry()
         camera = registry.get(camera_id, auto_connect=True)
@@ -224,10 +375,35 @@ async def _capture_frame(camera_id: int, exposure_us: int, gain: int) -> list[Te
 
 
 async def _set_camera_control(camera_id: int, control: str, value: int) -> list[TextContent]:
-    """Set a camera control value.
-    
-    Note: Control names should not include 'ASI_' prefix.
-    Valid names: Gain, Exposure, WB_R, WB_B, Gamma, etc.
+    """Set a camera control parameter to a specified value.
+
+    Adjusts camera hardware settings like gain, exposure, white balance.
+    Control names should not include 'ASI_' prefix (added for backwards
+    compatibility if present). Changes take effect immediately.
+
+    Common controls: Gain, Exposure, WB_R, WB_B, Gamma, Brightness,
+    Offset, Flip, HighSpeedMode, BandwidthOverload.
+
+    Args:
+        camera_id: Zero-based camera index (0=finder, 1=main).
+        control: Control name without ASI_ prefix (e.g., "Gain").
+            Legacy "ASI_GAIN" format also accepted.
+        value: Integer value to set. Valid range depends on control
+            and camera model. Use get_camera_info for ranges.
+
+    Returns:
+        List with single TextContent containing JSON with result:
+        {"camera_id": int, "control": str, "value": int,
+         "min": int, "max": int, "default": int}
+        Returns error message if camera not connected or control invalid.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _set_camera_control(0, "Gain", 100)
+        >>> print(result[0].text)
+        {"camera_id": 0, "control": "Gain", "value": 100, ...}
     """
     try:
         registry = get_registry()
@@ -250,10 +426,33 @@ async def _set_camera_control(camera_id: int, control: str, value: int) -> list[
 
 
 async def _get_camera_control(camera_id: int, control: str) -> list[TextContent]:
-    """Get current value of a camera control.
-    
-    Note: Control names should not include 'ASI_' prefix.
-    Valid names: Gain, Exposure, WB_R, WB_B, Temperature, etc.
+    """Get the current value of a camera control parameter.
+
+    Reads camera hardware settings including current value, valid range,
+    and whether auto mode is enabled. Control names should not include
+    'ASI_' prefix (added for backwards compatibility if present).
+
+    Common controls: Gain, Exposure, WB_R, WB_B, Temperature, Gamma,
+    Brightness, Offset, Flip, HighSpeedMode.
+
+    Args:
+        camera_id: Zero-based camera index (0=finder, 1=main).
+        control: Control name without ASI_ prefix (e.g., "Temperature").
+            Legacy "ASI_TEMPERATURE" format also accepted.
+
+    Returns:
+        List with single TextContent containing JSON:
+        {"camera_id": int, "control": str, "value": int,
+         "min": int, "max": int, "default": int, "is_auto": bool}
+        Returns error message if camera not connected or control invalid.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _get_camera_control(0, "Temperature")
+        >>> data = json.loads(result[0].text)
+        >>> print(f"Sensor temp: {data['value'] / 10}°C")
     """
     try:
         registry = get_registry()

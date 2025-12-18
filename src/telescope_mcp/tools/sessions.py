@@ -131,14 +131,83 @@ TOOLS = [
 
 
 def register(server: Server) -> None:
-    """Register session tools with the MCP server."""
+    """Register session management tools with the MCP server.
+
+    Attaches session-related tools to the MCP server instance, enabling
+    AI assistants to manage telescope observation sessions. Sessions are
+    the core data abstraction for organizing telescope data.
+
+    Tools registered:
+    - start_session: Begin new observation/alignment/experiment session
+    - end_session: Close session and write ASDF file
+    - get_session_info: Query active session status
+    - session_log: Add log entries to session
+    - session_event: Record significant events
+    - get_data_dir / set_data_dir: Manage storage location
+
+    Args:
+        server: MCP Server instance to register tools with. Must be
+            initialized but not yet running.
+
+    Returns:
+        None. Modifies server in-place by adding handlers.
+
+    Raises:
+        None. Registration itself doesn't access storage.
+
+    Example:
+        >>> server = Server("telescope-mcp")
+        >>> register(server)
+    """
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
+        """Return the list of available session tools.
+
+        MCP handler that provides tool definitions to clients.
+
+        Returns:
+            List of Tool objects defining session capabilities.
+        """
         return TOOLS
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+        """Route tool calls to appropriate session implementations.
+
+        MCP handler that dispatches incoming tool calls based on name.
+        Primary entry point for all session management operations from
+        AI agents through the Model Context Protocol.
+        
+        Business context: Enables AI agents to manage observation sessions,
+        tracking all data capture, events, and metadata in structured ASDF
+        files. Sessions provide context for multi-frame captures, enabling
+        correlation of frames with environmental conditions, equipment settings,
+        and observation goals. Critical for scientific reproducibility and
+        automated data organization in telescope operations.
+
+        Args:
+            name: Tool name from TOOLS definitions (start_session, end_session,
+                get_session_info, session_log, session_event, get/set_data_dir).
+            arguments: Dict of arguments matching tool's inputSchema. Validated
+                by MCP framework before dispatch.
+
+        Returns:
+            List containing single TextContent with JSON result string or error
+            message. Success responses contain structured JSON with session data,
+            errors contain descriptive text.
+        
+        Raises:
+            None. All errors are caught and returned as TextContent with details.
+        
+        Example:
+            # AI agent starts an imaging session
+            result = await call_tool(
+                "start_session",
+                {"session_type": "imaging", "target": "M31"}
+            )
+            # Returns: [TextContent(text='{"session_id": "...", ...}')]
+        """
         if name == "start_session":
             return await _start_session(
                 arguments["session_type"],
@@ -173,7 +242,41 @@ async def _start_session(
     target: str | None,
     purpose: str | None,
 ) -> list[TextContent]:
-    """Start a new session."""
+    """Start a new telescope session of the specified type.
+
+    Creates a new session, automatically closing any existing active
+    session first. Sessions organize telescope data collection and
+    provide context for captured frames, events, and telemetry.
+
+    Session types determine data organization and metadata:
+    - observation: Target-focused imaging (requires target name)
+    - alignment: Telescope/mount calibration (uses purpose)
+    - experiment: Testing and development (uses purpose)
+    - maintenance: System maintenance (uses purpose)
+
+    Args:
+        session_type: One of 'observation', 'alignment', 'experiment',
+            'maintenance'. Case-insensitive. Cannot be 'idle'.
+        target: Target object name for observation sessions (e.g., 'M31',
+            'Jupiter'). Optional for other session types.
+        purpose: Description of session purpose for non-observation
+            sessions. Optional but recommended.
+
+    Returns:
+        List with TextContent containing JSON:
+        {"status": "started", "session_id": str, "session_type": str,
+         "target": str|null, "purpose": str|null, "start_time": str}
+        Returns error message for invalid session_type or exceptions.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _start_session("observation", "M31", None)
+        >>> data = json.loads(result[0].text)
+        >>> data["session_id"]
+        "obs_20250115_103000"
+    """
     try:
         manager = get_session_manager()
         
@@ -211,7 +314,35 @@ async def _start_session(
 
 
 async def _end_session() -> list[TextContent]:
-    """End the current session."""
+    """End the current active session and persist data.
+
+    Closes the active session, writes all collected data to an ASDF
+    file, and automatically starts an idle session. The ASDF file
+    contains frames, logs, events, telemetry, and metadata.
+
+    Cannot end an idle session (no-op with informative message).
+    Session files are named with session ID and stored in the
+    configured data directory.
+
+    Args:
+        None.
+
+    Returns:
+        List with TextContent containing JSON:
+        {"status": "ended", "session_id": str, "session_type": str,
+         "file_path": str}
+        Returns message if already in idle state.
+        Returns error message on file write failures.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _end_session()
+        >>> data = json.loads(result[0].text)
+        >>> data["file_path"]
+        "/data/telescope/obs_20250115_103000.asdf"
+    """
     try:
         manager = get_session_manager()
         
@@ -239,7 +370,34 @@ async def _end_session() -> list[TextContent]:
 
 
 async def _get_session_info() -> list[TextContent]:
-    """Get current session info."""
+    """Get information about the currently active session.
+
+    Returns detailed status of the active session including type,
+    target, duration, and accumulated metrics. Works for both
+    active sessions and idle state.
+
+    Metrics include frame count, log entries, events, and error/
+    warning counts - useful for monitoring session health.
+
+    Args:
+        None.
+
+    Returns:
+        List with TextContent containing JSON:
+        {"session_id": str, "session_type": str, "target": str|null,
+         "purpose": str|null, "start_time": str, "duration_seconds": float,
+         "is_idle": bool, "metrics": {"frames_captured": int,
+         "log_entries": int, "events": int, "errors": int, "warnings": int}}
+        Returns "No active session" if session manager unavailable.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _get_session_info()
+        >>> data = json.loads(result[0].text)
+        >>> print(f"Duration: {data['duration_seconds']:.1f}s")
+    """
     try:
         manager = get_session_manager()
         session = manager.active_session
@@ -270,7 +428,35 @@ async def _get_session_info() -> list[TextContent]:
 
 
 async def _session_log(level: str, message: str, source: str) -> list[TextContent]:
-    """Log a message to the current session."""
+    """Log a message to the current telescope session.
+
+    Adds a timestamped log entry to the active session's log collection.
+    Logs are persisted in the ASDF file when the session ends, providing
+    an audit trail of operations and observations.
+
+    Use for recording observations, decisions, anomalies, or any
+    information relevant to the session that should be preserved.
+
+    Args:
+        level: Log severity, one of 'DEBUG', 'INFO', 'WARNING', 'ERROR'.
+            Case-insensitive. INFO is typical for user messages.
+        message: Log message text. Can include any relevant details.
+            No length limit but keep reasonable for readability.
+        source: Identifier for the log source component. Use 'user'
+            for manual entries, or component name for automated logs.
+
+    Returns:
+        List with TextContent containing JSON:
+        {"status": "logged", "level": str, "message": str,
+         "source": str, "session_id": str}
+        Returns error message for invalid level or exceptions.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _session_log("INFO", "Started M31 imaging", "user")
+    """
     try:
         manager = get_session_manager()
         
@@ -299,7 +485,37 @@ async def _session_log(level: str, message: str, source: str) -> list[TextConten
 
 
 async def _session_event(event: str, details: dict[str, Any]) -> list[TextContent]:
-    """Record an event in the current session."""
+    """Record a significant event in the current session.
+
+    Events are discrete occurrences during a session that warrant
+    special attention in analysis. Unlike logs (continuous stream),
+    events mark specific moments with structured metadata.
+
+    Common events: 'tracking_lost', 'cloud_detected', 'focus_changed',
+    'meridian_flip', 'filter_changed', 'guide_star_acquired'.
+
+    Args:
+        event: Event type/name string. Use consistent naming for
+            analysis (e.g., snake_case category_action format).
+        details: Additional event metadata as key-value pairs.
+            Contents are event-specific. Example for tracking_lost:
+            {"duration_seconds": 30, "recovery_action": "manual"}.
+
+    Returns:
+        List with TextContent containing JSON:
+        {"status": "recorded", "event": str, "details": dict,
+         "session_id": str}
+        Returns error message on exceptions.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _session_event(
+        ...     "cloud_detected",
+        ...     {"coverage_percent": 40, "action": "paused_capture"}
+        ... )
+    """
     try:
         manager = get_session_manager()
         manager.add_event(event, **details)
@@ -317,7 +533,31 @@ async def _session_event(event: str, details: dict[str, Any]) -> list[TextConten
 
 
 async def _get_data_dir() -> list[TextContent]:
-    """Get the current data directory."""
+    """Get the current data directory path for session storage.
+
+    Returns the configured path where session ASDF files are stored.
+    This directory contains all telescope data organized by session.
+
+    The path can be changed with set_data_dir for different storage
+    locations (e.g., different drives for different observation runs).
+
+    Args:
+        None.
+
+    Returns:
+        List with TextContent containing JSON:
+        {"data_dir": str, "exists": bool}
+        Returns error message on configuration access failure.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _get_data_dir()
+        >>> data = json.loads(result[0].text)
+        >>> data["data_dir"]
+        "/home/user/telescope-data"
+    """
     try:
         factory = get_factory()
         data_dir = factory.config.data_dir
@@ -333,7 +573,34 @@ async def _get_data_dir() -> list[TextContent]:
 
 
 async def _set_data_dir(path: str) -> list[TextContent]:
-    """Set the data directory."""
+    """Set the data directory path for session storage.
+
+    Changes where session ASDF files are saved. The directory is
+    created if it doesn't exist. Changing the directory resets
+    the session manager, starting a fresh idle session.
+
+    Use this to direct data to different drives or organize data
+    by observation campaign. Previous sessions are not moved.
+
+    Args:
+        path: Absolute filesystem path for data storage. The path
+            will be created if it doesn't exist. Must be writable.
+
+    Returns:
+        List with TextContent containing JSON:
+        {"status": "updated", "data_dir": str, "exists": bool,
+         "note": str (about session manager reset)}
+        Returns error message on invalid path or permission errors.
+
+    Raises:
+        None. Exceptions caught and returned as error text.
+
+    Example:
+        >>> result = await _set_data_dir("/mnt/astro/tonight")
+        >>> data = json.loads(result[0].text)
+        >>> data["status"]
+        "updated"
+    """
     try:
         from pathlib import Path
         from telescope_mcp.drivers.config import set_data_dir

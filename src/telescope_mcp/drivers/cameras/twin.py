@@ -92,7 +92,23 @@ DEFAULT_CAMERAS: dict[int, dict] = {
 
 
 class DigitalTwinCameraDriver:
-    """Digital twin camera driver for development without hardware."""
+    """Digital twin camera driver for development without hardware.
+    
+    Provides simulated camera responses for testing and development without
+    requiring physical ASI cameras. Supports multiple image sources including
+    synthetic test patterns, single file, or cycling through a directory.
+    
+    Example:
+        # Basic synthetic camera (test patterns)
+        driver = DigitalTwinCameraDriver()
+        
+        # Camera with images from directory
+        config = DigitalTwinConfig(
+            image_source=ImageSource.DIRECTORY,
+            image_path=Path("/data/test_images"),
+        )
+        driver = DigitalTwinCameraDriver(config=config)
+    """
 
     def __init__(
         self,
@@ -100,10 +116,23 @@ class DigitalTwinCameraDriver:
         cameras: dict[int, dict] | None = None,
     ) -> None:
         """Initialize digital twin camera driver.
+        
+        Sets up the simulated camera driver with the specified configuration.
+        By default, simulates two cameras matching ASI120MC-S (finder) and
+        ASI482MC (main) specifications.
 
         Args:
-            config: Configuration for image source behavior
-            cameras: Custom camera definitions (defaults to ASI120MC-S and ASI482MC)
+            config: Configuration for image source behavior. Defaults to
+                synthetic test pattern generation.
+            cameras: Custom camera definitions mapping camera_id to properties.
+                Defaults to DEFAULT_CAMERAS (ASI120MC-S and ASI482MC).
+        
+        Example:
+            # Custom camera specifications
+            cameras = {
+                0: {"Name": b"Test Camera", "MaxWidth": 640, "MaxHeight": 480}
+            }
+            driver = DigitalTwinCameraDriver(cameras=cameras)
         """
         self.config = config or DigitalTwinConfig()
         self._cameras = cameras or DEFAULT_CAMERAS.copy()
@@ -114,12 +143,43 @@ class DigitalTwinCameraDriver:
         )
 
     def get_connected_cameras(self) -> dict:
-        """Return simulated camera list."""
+        """Return simulated camera list.
+        
+        Returns a copy of the configured camera definitions, simulating
+        the behavior of scanning for connected ASI cameras.
+        
+        Returns:
+            Dictionary mapping camera_id to camera properties dict.
+            Properties include Name, MaxWidth, MaxHeight, IsColorCam, etc.
+        
+        Example:
+            cameras = driver.get_connected_cameras()
+            for cam_id, props in cameras.items():
+                print(f"Camera {cam_id}: {props['Name']}")
+        """
         logger.debug("Listing simulated cameras", count=len(self._cameras))
         return self._cameras.copy()
 
     def open(self, camera_id: int) -> "DigitalTwinCameraInstance":
-        """Open a simulated camera."""
+        """Open a simulated camera.
+        
+        Creates a DigitalTwinCameraInstance for the specified camera ID,
+        simulating the process of opening a connection to physical hardware.
+        
+        Args:
+            camera_id: Camera identifier (0 for finder, 1 for main by default).
+        
+        Returns:
+            DigitalTwinCameraInstance configured with camera properties
+            and the driver's image source configuration.
+        
+        Raises:
+            ValueError: If camera_id is not in the configured cameras dict.
+        
+        Example:
+            camera = driver.open(0)  # Open finder camera
+            frame = camera.capture(100_000)
+        """
         if camera_id not in self._cameras:
             logger.error("Camera not found", camera_id=camera_id)
             raise ValueError(f"Camera {camera_id} not found")
@@ -132,7 +192,12 @@ class DigitalTwinCameraDriver:
 
 
 class DigitalTwinCameraInstance:
-    """Digital twin camera instance."""
+    """Digital twin camera instance for simulated capture operations.
+    
+    Represents an open connection to a simulated camera. Provides the same
+    interface as ASICameraInstance for capture, control get/set, and info
+    queries. Images can come from synthetic generation, a file, or directory.
+    """
 
     def __init__(
         self,
@@ -141,11 +206,15 @@ class DigitalTwinCameraInstance:
         config: DigitalTwinConfig,
     ) -> None:
         """Initialize digital twin camera instance.
+        
+        Sets up the simulated camera with default control values matching
+        typical ASI camera defaults. For directory mode, loads the list of
+        available image files.
 
         Args:
-            camera_id: Camera identifier
-            info: Camera properties
-            config: Image source configuration
+            camera_id: Camera identifier (used for logging and synthetic images).
+            info: Camera properties dict (resolution, color, pixel size, etc.).
+            config: Image source configuration specifying how frames are generated.
         """
         self._camera_id = camera_id
         self._info = info
@@ -170,7 +239,12 @@ class DigitalTwinCameraInstance:
         self._load_image_files()
 
     def _load_image_files(self) -> None:
-        """Load list of image files for directory mode."""
+        """Load list of image files for directory mode.
+        
+        Scans the configured image_path directory for supported image files
+        and stores sorted paths in _image_files. Supports JPEG, PNG, TIFF,
+        and FITS formats. No-op if not in DIRECTORY mode or path is invalid.
+        """
         if self._config.image_source != ImageSource.DIRECTORY:
             return
 
@@ -188,11 +262,59 @@ class DigitalTwinCameraInstance:
         )
 
     def get_info(self) -> dict:
-        """Get camera info."""
+        """Get simulated camera information from digital twin.
+        
+        Returns a copy of the camera properties dictionary containing
+        resolution, color mode, pixel size, and other specifications.
+        Business context: Enables testing camera-dependent logic without hardware.
+        Applications can validate field-of-view calculations, plate solving setup,
+        and UI camera selection using realistic simulated camera specifications.
+        
+        Args:
+            None. Returns cached camera properties from digital twin config.
+        
+        Returns:
+            Dictionary with camera properties (Name, MaxWidth, MaxHeight,
+            IsColorCam, PixelSize, BayerPattern, etc.).
+        
+        Raises:
+            None. Always returns valid dictionary.
+        
+        Example:
+            >>> twin = DigitalTwinCameraInstance(...)
+            >>> info = twin.get_info()
+            >>> print(f"{info['Name']}: {info['MaxWidth']}x{info['MaxHeight']}")
+            >>> if info['IsColorCam']:
+            ...     print(f"Simulating color camera")
+        """
         return self._info.copy()
 
     def get_controls(self) -> dict:
-        """Get available controls."""
+        """Get available simulated camera controls from digital twin.
+        
+        Returns control definitions matching the ASI SDK control format.
+        Each control includes name, min/max values, default, and flags.
+        Business context: Enables testing control UI and validation logic
+        without hardware. Ensures control range validation, slider bounds,
+        and auto-mode toggles work correctly across different camera types.
+        
+        Args:
+            None. Returns simulated control definitions.
+        
+        Returns:
+            Dictionary mapping control names to their definitions.
+            Each definition includes Name, MinValue, MaxValue, DefaultValue,
+            IsAutoSupported, and IsWritable.
+        
+        Raises:
+            None. Always returns valid control definitions.
+        
+        Example:
+            >>> twin = DigitalTwinCameraInstance(...)
+            >>> controls = twin.get_controls()
+            >>> gain = controls['ASI_GAIN']
+            >>> print(f"Gain range: {gain['MinValue']}-{gain['MaxValue']}")
+        """
         return {
             name: {
                 "Name": name,
@@ -206,7 +328,29 @@ class DigitalTwinCameraInstance:
         }
 
     def _get_control_max(self, control: str) -> int:
-        """Get max value for a control."""
+        """Get maximum value for a simulated control.
+        
+        Returns appropriate maximum values based on control type to match
+        typical ASI camera specifications.
+        Business context: Provides realistic control ranges for testing
+        validation logic. Ensures test code uses valid ranges that match
+        actual hardware capabilities.
+        
+        Args:
+            control: Control name (e.g., "ASI_GAIN", "ASI_EXPOSURE").
+        
+        Returns:
+            Maximum allowed value for the control (e.g., 600 for gain,
+            60000000 for exposure in microseconds).
+        
+        Raises:
+            None. Returns sensible defaults for all control types.
+        
+        Example:
+            >>> twin = DigitalTwinCameraInstance(...)
+            >>> max_gain = twin._get_control_max("ASI_GAIN")
+            >>> print(f"Max gain: {max_gain}")  # 600
+        """
         if "GAIN" in control:
             return 600
         if "EXPOSURE" in control:
@@ -220,23 +364,94 @@ class DigitalTwinCameraInstance:
         return 100
 
     def set_control(self, control: str, value: int) -> dict:
-        """Set a control value."""
+        """Set a simulated camera control value for digital twin testing.
+        
+        Updates the internal control state in the digital twin simulation.
+        Values are stored and some affect synthetic image generation behavior.
+        For example, gain affects noise level in generated images, exposure
+        affects brightness simulation.
+        
+        Business context: Enables realistic testing of camera control workflows
+        without physical hardware. Developers can test exposure/gain adjustment
+        algorithms, auto-exposure logic, and UI controls using predictable
+        simulated camera responses. Essential for CI/CD testing, offline
+        development, and demonstrating telescope control features in presentations
+        or training without actual cameras.
+        
+        Args:
+            control: Control name (e.g., "ASI_GAIN", "ASI_EXPOSURE", "ASI_WB_R").
+                Must be one of the controls defined in _controls dict. Unknown
+                controls are ignored (no error).
+            value: Integer value to set. Not validated against min/max ranges
+                in digital twin (simulation accepts any value for flexibility).
+        
+        Returns:
+            Updated control state dict with:
+            - value: int - The value just set
+            - auto: bool - Always False for digital twin (no auto modes simulated)
+        
+        Raises:
+            None. Unknown controls are silently ignored for compatibility.
+        
+        Example:
+            >>> twin = DigitalTwinCameraInstance(...)
+            >>> twin.set_control("ASI_GAIN", 80)
+            >>> twin.set_control("ASI_EXPOSURE", 500000)  # 500ms
+            >>> result = twin.get_control("ASI_GAIN")
+            >>> print(result['value'])  # 80
+        """
         if control in self._controls:
             self._controls[control]["value"] = value
         return self.get_control(control)
 
     def get_control(self, control: str) -> dict:
-        """Get a control value."""
+        """Get a simulated control's current value from digital twin.
+        
+        Retrieves the current state of a camera control including its
+        value and auto mode setting.
+        Business context: Enables testing control readback logic and UI
+        synchronization without hardware. Validates that control state
+        management works correctly in multi-threaded environments.
+        
+        Args:
+            control: Control name (e.g., "ASI_GAIN", "ASI_TEMPERATURE").
+        
+        Returns:
+            Dictionary with 'value' (int) and 'auto' (bool) keys.
+            Returns {'value': 0, 'auto': False} for unknown controls.
+        
+        Raises:
+            None. Returns default values for unknown controls.
+        
+        Example:
+            >>> twin = DigitalTwinCameraInstance(...)
+            >>> twin.set_control("ASI_GAIN", 100)
+            >>> result = twin.get_control("ASI_GAIN")
+            >>> print(f"Gain is now {result['value']}")
+        """
         return self._controls.get(control, {"value": 0, "auto": False})
 
     def capture(self, exposure_us: int) -> bytes:
         """Capture a frame based on configured image source.
+        
+        Generates or loads an image based on the camera's ImageSource config.
+        SYNTHETIC mode creates test patterns, FILE mode loads a single image,
+        DIRECTORY mode cycles through images in a folder.
 
         Args:
-            exposure_us: Exposure time in microseconds (used for synthetic)
+            exposure_us: Exposure time in microseconds. Used by synthetic mode
+                to display on the test pattern; ignored for file/directory.
 
         Returns:
-            JPEG-encoded image bytes
+            JPEG-encoded image bytes at the camera's native resolution.
+        
+        Raises:
+            cv2.error: If image encoding fails (rare).
+        
+        Example:
+            frame = camera.capture(100_000)  # 100ms exposure
+            with open("frame.jpg", "wb") as f:
+                f.write(frame)
         """
         source = self._config.image_source
         logger.debug(
@@ -261,7 +476,15 @@ class DigitalTwinCameraInstance:
         return data
 
     def _capture_from_file(self) -> bytes:
-        """Load image from a single file."""
+        """Load and return image from configured file path.
+        
+        Reads the image file specified in config.image_path, resizes it
+        to match camera resolution if needed, and returns JPEG bytes.
+        Falls back to synthetic generation if file is missing or unreadable.
+        
+        Returns:
+            JPEG-encoded image bytes at camera resolution.
+        """
         if self._config.image_path is None:
             return self._capture_synthetic(100000)
 
@@ -280,7 +503,15 @@ class DigitalTwinCameraInstance:
         return jpeg.tobytes()
 
     def _capture_from_directory(self) -> bytes:
-        """Load next image from directory."""
+        """Load next image from directory and advance index.
+        
+        Returns the next image in the sorted file list, then advances
+        the index. If cycle_images is True, loops back to start after
+        the last image. Falls back to synthetic if directory is empty.
+        
+        Returns:
+            JPEG-encoded image bytes at camera resolution.
+        """
         if not self._image_files:
             return self._capture_synthetic(100000)
 
@@ -305,7 +536,17 @@ class DigitalTwinCameraInstance:
         return jpeg.tobytes()
 
     def _resize_to_camera(self, img: "NDArray") -> "NDArray":
-        """Resize image to match camera resolution."""
+        """Resize image to match camera resolution.
+        
+        Scales the input image to the camera's MaxWidth x MaxHeight if
+        dimensions don't match. Uses OpenCV resize with default interpolation.
+        
+        Args:
+            img: Input image as numpy array (BGR format from cv2.imread).
+        
+        Returns:
+            Image resized to camera resolution, or original if already correct.
+        """
         target_width = self._info["MaxWidth"]
         target_height = self._info["MaxHeight"]
 
@@ -316,7 +557,22 @@ class DigitalTwinCameraInstance:
         return img
 
     def _capture_synthetic(self, exposure_us: int) -> bytes:
-        """Generate a synthetic test pattern."""
+        """Generate a synthetic test pattern image.
+        
+        Creates a test image with grid lines, center crosshair, diagnostic
+        text overlay, and simulated noise based on gain setting. Useful for
+        testing capture pipelines without real hardware.
+        
+        Args:
+            exposure_us: Exposure time displayed on the test pattern.
+        
+        Returns:
+            JPEG-encoded test pattern at camera resolution.
+        
+        Note:
+            Noise level increases with gain setting to simulate real camera
+            behavior. Text overlay shows camera ID, exposure, and gain.
+        """
         width = self._info["MaxWidth"]
         height = self._info["MaxHeight"]
 
@@ -376,20 +632,60 @@ class DigitalTwinCameraInstance:
         return jpeg.tobytes()
 
     def close(self) -> None:
-        """Close the camera (no-op for stub)."""
+        """Close the simulated camera connection.
+        
+        No-op for digital twin since there's no actual hardware to release.
+        Exists for API compatibility with real camera drivers, ensuring
+        test code and production code can use identical patterns.
+        
+        Business context: Maintains consistent resource management patterns
+        across hardware and simulated cameras. Enables test code to use
+        try/finally blocks and context managers without modification when
+        switching between real and simulated hardware.
+        
+        Implementation: Empty function that does nothing. Safe to call multiple
+        times. No state changes occur. Provided solely for API compatibility.
+        
+        Args:
+            None. No resources to clean up in simulation.
+        
+        Returns:
+            None.
+        
+        Raises:
+            None. Never fails.
+        
+        Example:
+            >>> twin = driver.open(0)
+            >>> try:
+            ...     twin.capture(100000)
+            ... finally:
+            ...     twin.close()  # Safe no-op for digital twin
+        """
         pass
 
 
 # Convenience function for creating pre-configured twins
 def create_file_camera(image_path: Path | str, camera_id: int = 0) -> DigitalTwinCameraDriver:
     """Create a digital twin camera that returns a single image.
+    
+    Convenience factory for creating a camera that always returns the same
+    image. Useful for testing with a known reference image.
 
     Args:
-        image_path: Path to the image file
-        camera_id: Which camera ID to simulate
+        image_path: Path to the image file (JPEG, PNG, TIFF, or FITS).
+        camera_id: Which camera ID to simulate (default 0 for finder).
 
     Returns:
-        Configured DigitalTwinCameraDriver
+        Configured DigitalTwinCameraDriver in FILE mode.
+    
+    Raises:
+        FileNotFoundError: If image_path does not exist (on first capture).
+    
+    Example:
+        driver = create_file_camera("/data/reference.jpg")
+        camera = driver.open(0)
+        frame = camera.capture(100_000)  # Always returns reference.jpg
     """
     config = DigitalTwinConfig(
         image_source=ImageSource.FILE,
@@ -404,14 +700,27 @@ def create_directory_camera(
     cycle: bool = True,
 ) -> DigitalTwinCameraDriver:
     """Create a digital twin camera that cycles through images in a directory.
+    
+    Convenience factory for creating a camera that returns images from a
+    folder in sorted order. Useful for testing with a sequence of frames
+    or simulating time-lapse capture.
 
     Args:
-        image_dir: Path to directory containing images
-        camera_id: Which camera ID to simulate
-        cycle: Whether to loop back to start after last image
+        image_dir: Path to directory containing images.
+        camera_id: Which camera ID to simulate (default 0 for finder).
+        cycle: Whether to loop back to start after last image (default True).
 
     Returns:
-        Configured DigitalTwinCameraDriver
+        Configured DigitalTwinCameraDriver in DIRECTORY mode.
+    
+    Raises:
+        FileNotFoundError: If image_dir does not exist (on driver creation).
+    
+    Example:
+        driver = create_directory_camera("/data/test_frames/", cycle=True)
+        camera = driver.open(0)
+        for i in range(10):
+            frame = camera.capture(100_000)  # Cycles through directory
     """
     config = DigitalTwinConfig(
         image_source=ImageSource.DIRECTORY,

@@ -65,9 +65,31 @@ def get_sdk_library_path() -> str:
 
 
 def get_udev_rules_path() -> str:
-    """Get the path to the udev rules file for USB permissions.
+    """Get the path to the udev rules file for ASI camera USB permissions.
+    
+    Returns the filesystem path to the asi.rules file which configures Linux
+    udev to grant USB access to ZWO ASI cameras without requiring root privileges.
+    Use this path when installing camera drivers on Linux systems.
+    
+    Business context: Essential for Linux installations where cameras would
+    otherwise require root/sudo access. Allows normal users to access ASI cameras
+    by configuring proper USB device permissions. Part of the camera driver setup
+    process documented in installation guides. Without proper udev rules, cameras
+    may not be accessible or may require running applications as root (security risk).
     
     Returns:
-        Full path to asi.rules
+        Absolute path to asi.rules file as string. This file should be copied to
+        /etc/udev/rules.d/ and udev reloaded for camera access to work properly.
+    
+    Raises:
+        None. Always returns the path (file existence not validated).
+    
+    Example:
+        >>> rules_path = get_udev_rules_path()
+        >>> print(f"Copy {rules_path} to /etc/udev/rules.d/")
+        >>> # In setup script:
+        >>> import shutil
+        >>> shutil.copy(get_udev_rules_path(), "/etc/udev/rules.d/asi.rules")
+        >>> # Then reload: sudo udevadm control --reload-rules
     """
     return str(Path(__file__).parent / "asi.rules")

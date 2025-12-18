@@ -68,7 +68,44 @@ class StatsSummary:
     uptime_seconds: float = 0.0
     
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """Convert statistics summary to a serializable dictionary.
+
+        Creates a plain dictionary representation suitable for JSON
+        serialization, session storage, or API responses. All values
+        are converted to JSON-compatible types.
+
+        This is the primary export format for camera performance metrics,
+        enabling persistence to ASDF session files and real-time
+        dashboard updates.
+
+        Args:
+            None (uses self attributes).
+
+        Returns:
+            Dictionary containing all statistics fields:
+            - camera_id (int): Camera identifier
+            - total_captures (int): Total attempts
+            - successful_captures (int): Success count
+            - failed_captures (int): Failure count
+            - success_rate (float): 0.0-1.0 ratio
+            - min_duration_ms (float): Fastest capture
+            - max_duration_ms (float): Slowest capture
+            - avg_duration_ms (float): Mean duration
+            - p95_duration_ms (float): 95th percentile
+            - error_counts (dict): {error_type: count}
+            - last_capture_time (str|None): ISO timestamp
+            - uptime_seconds (float): Collector uptime
+
+        Raises:
+            None.
+
+        Example:
+            >>> summary = collector.get_summary()
+            >>> data = summary.to_dict()
+            >>> json.dumps(data)  # Safe to serialize
+            >>> data["success_rate"]
+            0.95
+        """
         return {
             "camera_id": self.camera_id,
             "total_captures": self.total_captures,
@@ -109,11 +146,35 @@ class CameraStatsCollector:
         camera_id: int,
         window_size: int = 1000,
     ) -> None:
-        """Initialize collector.
-        
+        """Initialize a statistics collector for a single camera.
+
+        Creates a thread-safe collector that maintains a rolling window
+        of capture records. Older records are automatically discarded
+        when the window fills, ensuring bounded memory usage while
+        preserving recent performance data for analysis.
+
+        The collector tracks both cumulative totals (for overall success
+        rate) and windowed records (for duration percentiles), balancing
+        historical accuracy with recent performance visibility.
+
         Args:
-            camera_id: Camera identifier
-            window_size: Max records to keep for rolling stats
+            camera_id: Unique identifier for the camera (0=finder, 1=main).
+                Used to label statistics in multi-camera setups.
+            window_size: Maximum capture records to retain for rolling
+                statistics. Default 1000 provides ~10min of history at
+                typical capture rates. Larger windows increase memory
+                but improve percentile accuracy.
+
+        Returns:
+            None (constructor).
+
+        Raises:
+            None.
+
+        Example:
+            >>> collector = CameraStatsCollector(camera_id=0, window_size=500)
+            >>> collector.record(duration_ms=150, success=True)
+            >>> summary = collector.get_summary()
         """
         self.camera_id = camera_id
         self._window_size = window_size
@@ -131,12 +192,38 @@ class CameraStatsCollector:
         success: bool,
         error_type: str | None = None,
     ) -> None:
-        """Record a capture attempt.
-        
+        """Record a camera capture attempt for statistics tracking.
+
+        Thread-safe method to log capture outcomes. Each call updates
+        both cumulative counters (total, successful, failed) and the
+        rolling window of detailed records. Error types are tracked
+        separately for failure analysis.
+
+        This is the primary data ingestion point for the statistics
+        system, typically called by camera capture code after each
+        frame acquisition attempt.
+
         Args:
-            duration_ms: Capture duration in milliseconds
-            success: Whether capture succeeded
-            error_type: Error type if failed (e.g., "timeout", "disconnected")
+            duration_ms: Capture duration in milliseconds. For successful
+                captures, this should be the actual time. For failures,
+                use 0 or the time until failure was detected.
+            success: True if capture completed successfully and produced
+                a valid frame. False for any failure condition.
+            error_type: Categorized error string for failures. Common
+                values: 'timeout', 'disconnected', 'buffer_overflow',
+                'exposure_failed'. None for successful captures or
+                uncategorized failures.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Thread-safe via internal lock.
+
+        Example:
+            >>> collector = CameraStatsCollector(camera_id=0)
+            >>> collector.record(duration_ms=150.5, success=True)
+            >>> collector.record(duration_ms=0, success=False, error_type="timeout")
         """
         record = CaptureRecord(
             timestamp=time.monotonic(),
@@ -158,10 +245,47 @@ class CameraStatsCollector:
                 )
     
     def get_summary(self) -> StatsSummary:
-        """Get current statistics summary.
-        
+        """Compute and return current statistics summary.
+
+        Calculates comprehensive statistics from the cumulative counters
+        and rolling window of capture records. Duration statistics (min,
+        max, avg, p95) are computed from successful captures only.
+
+        This is the primary statistics query method, used by dashboards,
+        session logging, and diagnostic tools to assess camera health
+        and performance.
+
+        The computation is thread-safe and returns a snapshot of the
+        current state; subsequent captures won't affect the returned
+        summary.
+
+        Args:
+            None (uses internal state).
+
         Returns:
-            StatsSummary with computed statistics
+            StatsSummary dataclass containing:
+            - camera_id: This collector's camera ID
+            - total_captures: All-time capture attempts
+            - successful_captures: All-time successes
+            - failed_captures: All-time failures
+            - success_rate: successful/total (0.0 if no captures)
+            - min/max/avg/p95_duration_ms: From windowed successes
+            - error_counts: {error_type: count} copy
+            - last_capture_time: UTC datetime of most recent capture
+            - uptime_seconds: Time since collector creation/reset
+
+        Raises:
+            None.
+
+        Example:
+            >>> collector = CameraStatsCollector(camera_id=0)
+            >>> collector.record(duration_ms=100, success=True)
+            >>> collector.record(duration_ms=200, success=True)
+            >>> summary = collector.get_summary()
+            >>> summary.avg_duration_ms
+            150.0
+            >>> summary.success_rate
+            1.0
         """
         with self._lock:
             total = self._total_captures
@@ -198,7 +322,33 @@ class CameraStatsCollector:
             )
     
     def reset(self) -> None:
-        """Reset all statistics."""
+        """Reset all statistics to initial state.
+
+        Clears all capture records, counters, and error tracking. Resets
+        the uptime timer to zero. Use this when starting a new observation
+        session or when previous statistics are no longer relevant.
+
+        Thread-safe; any concurrent record() calls will see the reset
+        state. The camera_id and window_size configuration are preserved.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+
+        Example:
+            >>> collector = CameraStatsCollector(camera_id=0)
+            >>> collector.record(duration_ms=100, success=True)
+            >>> collector.get_summary().total_captures
+            1
+            >>> collector.reset()
+            >>> collector.get_summary().total_captures
+            0
+        """
         with self._lock:
             self._records.clear()
             self._error_counts.clear()
@@ -230,17 +380,60 @@ class CameraStats:
     """
     
     def __init__(self, window_size: int = 1000) -> None:
-        """Initialize stats manager.
-        
+        """Initialize the multi-camera statistics manager.
+
+        Creates a thread-safe container that lazily creates per-camera
+        collectors on first access. All cameras share the same window
+        size configuration.
+
+        This is the main entry point for statistics in telescope-mcp,
+        typically accessed via the get_camera_stats() singleton.
+
         Args:
-            window_size: Max records per camera for rolling stats
+            window_size: Maximum capture records per camera for rolling
+                statistics. Passed to each CameraStatsCollector created.
+                Default 1000 balances memory with statistical accuracy.
+
+        Returns:
+            None (constructor).
+
+        Raises:
+            None.
+
+        Example:
+            >>> stats = CameraStats(window_size=500)
+            >>> stats.record_capture(camera_id=0, duration_ms=100, success=True)
         """
         self._window_size = window_size
         self._collectors: dict[int, CameraStatsCollector] = {}
         self._lock = threading.Lock()
     
     def _get_collector(self, camera_id: int) -> CameraStatsCollector:
-        """Get or create collector for camera."""
+        """Get or create the statistics collector for a camera.
+
+        Thread-safe lazy initialization of per-camera collectors. If a
+        collector doesn't exist for the given camera_id, one is created
+        with the manager's configured window_size.
+
+        This internal method is used by all public methods that need
+        camera-specific statistics access.
+
+        Args:
+            camera_id: Camera identifier (0=finder, 1=main, etc.).
+
+        Returns:
+            CameraStatsCollector instance for the specified camera.
+            Always returns a valid collector (creates if needed).
+
+        Raises:
+            None.
+
+        Example:
+            >>> stats = CameraStats()
+            >>> collector = stats._get_collector(0)
+            >>> collector.camera_id
+            0
+        """
         with self._lock:
             if camera_id not in self._collectors:
                 self._collectors[camera_id] = CameraStatsCollector(
@@ -255,34 +448,103 @@ class CameraStats:
         success: bool,
         error_type: str | None = None,
     ) -> None:
-        """Record a capture attempt for a camera.
-        
+        """Record a capture attempt for statistics tracking.
+
+        Primary method for logging camera captures. Routes the record
+        to the appropriate per-camera collector, creating it if needed.
+        Thread-safe for concurrent multi-camera operations.
+
+        Call this after every capture attempt (successful or not) to
+        maintain accurate performance metrics. The statistics enable
+        session analysis, alerting on degradation, and capacity planning.
+
         Args:
-            camera_id: Camera identifier
-            duration_ms: Capture duration in milliseconds
-            success: Whether capture succeeded
-            error_type: Error type if failed
+            camera_id: Camera identifier (0=finder, 1=main). Determines
+                which collector receives the record.
+            duration_ms: Capture duration in milliseconds. Use actual
+                time for successes, 0 or time-to-failure for errors.
+            success: True if a valid frame was captured, False otherwise.
+            error_type: Error category string for failures. Use consistent
+                values like 'timeout', 'disconnected', 'hardware_error'
+                to enable error analysis. None for successes.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Thread-safe; creates collector if needed.
+
+        Example:
+            >>> stats = CameraStats()
+            >>> stats.record_capture(camera_id=0, duration_ms=150, success=True)
+            >>> stats.record_capture(
+            ...     camera_id=0, duration_ms=5000, 
+            ...     success=False, error_type="timeout"
+            ... )
         """
         collector = self._get_collector(camera_id)
         collector.record(duration_ms, success, error_type)
     
     def get_summary(self, camera_id: int) -> StatsSummary:
-        """Get statistics summary for a camera.
-        
+        """Get statistics summary for a specific camera.
+
+        Retrieves computed statistics for the specified camera. If no
+        captures have been recorded for this camera, returns a summary
+        with zero values (a new collector is created).
+
+        Use this for single-camera queries. For all cameras, use
+        get_all_summaries() instead.
+
         Args:
-            camera_id: Camera identifier
-            
+            camera_id: Camera identifier to query (0=finder, 1=main).
+
         Returns:
-            StatsSummary for the camera
+            StatsSummary dataclass with computed statistics including
+            success rate, duration percentiles, error counts, etc.
+            See StatsSummary.to_dict() for full field list.
+
+        Raises:
+            None. Creates empty collector if camera not seen before.
+
+        Example:
+            >>> stats = CameraStats()
+            >>> stats.record_capture(0, 100, True)
+            >>> summary = stats.get_summary(camera_id=0)
+            >>> print(f"Success rate: {summary.success_rate:.0%}")
+            Success rate: 100%
         """
         collector = self._get_collector(camera_id)
         return collector.get_summary()
     
     def get_all_summaries(self) -> dict[int, StatsSummary]:
-        """Get summaries for all cameras.
-        
+        """Get statistics summaries for all tracked cameras.
+
+        Returns summaries only for cameras that have recorded at least
+        one capture. Thread-safe snapshot of current state.
+
+        Use this for dashboard displays, session exports, or any
+        operation needing a complete view of system performance.
+
+        Args:
+            None.
+
         Returns:
-            Dict mapping camera_id to StatsSummary
+            Dictionary mapping camera_id (int) to StatsSummary.
+            Empty dict if no captures recorded for any camera.
+            Example: {0: StatsSummary(...), 1: StatsSummary(...)}
+
+        Raises:
+            None.
+
+        Example:
+            >>> stats = CameraStats()
+            >>> stats.record_capture(0, 100, True)
+            >>> stats.record_capture(1, 200, True)
+            >>> summaries = stats.get_all_summaries()
+            >>> for cam_id, summary in summaries.items():
+            ...     print(f"Camera {cam_id}: {summary.total_captures} captures")
+            Camera 0: 1 captures
+            Camera 1: 1 captures
         """
         with self._lock:
             return {
@@ -291,10 +553,36 @@ class CameraStats:
             }
     
     def reset(self, camera_id: int | None = None) -> None:
-        """Reset statistics.
-        
+        """Reset statistics for one or all cameras.
+
+        Clears capture records and counters. Use when starting a new
+        observation session or to clear stale data after configuration
+        changes. Collector objects are preserved (not deleted).
+
+        Thread-safe; concurrent record_capture() calls may interleave
+        with reset but won't cause errors.
+
         Args:
-            camera_id: Camera to reset, or None for all cameras
+            camera_id: Specific camera to reset (0, 1, etc.), or None
+                to reset all tracked cameras. If the camera_id hasn't
+                been seen, this is a no-op (no error).
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+
+        Example:
+            >>> stats = CameraStats()
+            >>> stats.record_capture(0, 100, True)
+            >>> stats.record_capture(1, 100, True)
+            >>> stats.reset(camera_id=0)  # Reset only camera 0
+            >>> stats.get_summary(0).total_captures
+            0
+            >>> stats.get_summary(1).total_captures
+            1
+            >>> stats.reset()  # Reset all
         """
         with self._lock:
             if camera_id is not None:
@@ -305,10 +593,39 @@ class CameraStats:
                     collector.reset()
     
     def to_dict(self) -> dict[str, Any]:
-        """Export all statistics for serialization.
-        
+        """Export all camera statistics for serialization.
+
+        Creates a complete snapshot of statistics for all tracked
+        cameras in a JSON-serializable format. Used for session
+        persistence, API responses, and debugging.
+
+        The output format is designed for ASDF session files and
+        integrates with telescope-mcp's data management system.
+
+        Args:
+            None.
+
         Returns:
-            Dict with all camera statistics
+            Dictionary with structure:
+            {
+                "cameras": {
+                    "0": {StatsSummary fields...},
+                    "1": {StatsSummary fields...}
+                },
+                "timestamp": "2025-01-15T10:30:00+00:00"
+            }
+            Camera IDs are string keys for JSON compatibility.
+
+        Raises:
+            None.
+
+        Example:
+            >>> stats = CameraStats()
+            >>> stats.record_capture(0, 150, True)
+            >>> data = stats.to_dict()
+            >>> json.dumps(data)  # Safe to serialize
+            >>> data["cameras"]["0"]["success_rate"]
+            1.0
         """
         summaries = self.get_all_summaries()
         return {
@@ -321,14 +638,36 @@ class CameraStats:
 
 
 def _percentile(sorted_data: list[float], p: float) -> float:
-    """Calculate percentile from sorted data.
-    
+    """Calculate a percentile value from pre-sorted data.
+
+    Uses linear interpolation between data points for percentiles
+    that fall between values. This matches numpy's 'linear'
+    interpolation method.
+
+    Common use in telescope-mcp is p95 capture duration to identify
+    outlier captures without being skewed by maximum values.
+
     Args:
-        sorted_data: Sorted list of values
-        p: Percentile (0-100)
-        
+        sorted_data: List of float values, must be sorted ascending.
+            Empty list returns 0.0. Caller must ensure sorted order.
+        p: Percentile to calculate, 0-100 inclusive. Common values:
+            50 (median), 90, 95, 99.
+
     Returns:
-        Percentile value
+        The percentile value. Returns 0.0 for empty input.
+        For single-element input, returns that element.
+        For p=0 returns minimum, p=100 returns maximum.
+
+    Raises:
+        None. Does not validate that data is sorted.
+
+    Example:
+        >>> _percentile([1.0, 2.0, 3.0, 4.0, 5.0], 50)
+        3.0
+        >>> _percentile([100.0, 150.0, 200.0], 95)
+        195.0
+        >>> _percentile([], 50)
+        0.0
     """
     if not sorted_data:
         return 0.0
@@ -352,10 +691,37 @@ _stats_lock = threading.Lock()
 
 
 def get_camera_stats() -> CameraStats:
-    """Get the global camera statistics instance.
-    
+    """Get the global camera statistics singleton.
+
+    Returns a shared CameraStats instance for application-wide
+    statistics tracking. The instance is created on first call
+    and reused thereafter.
+
+    This is the recommended way to access camera statistics in
+    telescope-mcp, ensuring all components share the same data.
+    The singleton pattern avoids passing stats objects through
+    the call stack.
+
+    Thread-safe initialization using a module-level lock.
+
+    Args:
+        None.
+
     Returns:
-        Global CameraStats instance (created on first call)
+        The global CameraStats instance. Always returns the same
+        object across multiple calls within a process.
+
+    Raises:
+        None.
+
+    Example:
+        >>> # In camera.py
+        >>> stats = get_camera_stats()
+        >>> stats.record_capture(camera_id=0, duration_ms=150, success=True)
+        >>>
+        >>> # In dashboard.py (same stats object)
+        >>> stats = get_camera_stats()
+        >>> summary = stats.get_summary(camera_id=0)
     """
     global _global_stats
     

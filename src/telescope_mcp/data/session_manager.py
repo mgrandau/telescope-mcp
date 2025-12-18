@@ -53,12 +53,22 @@ class SessionManager:
         idle_rotate_hours: int = 1,
     ) -> None:
         """Initialize the session manager.
+        
+        Creates the data directory if needed and starts an idle session.
+        All telescope operations should go through the SessionManager to
+        ensure logs and data are captured.
 
         Args:
-            data_dir: Base directory for ASDF file storage
-            location: Default observer location {lat, lon, alt}
-            auto_rotate_idle: Whether to auto-rotate idle sessions
-            idle_rotate_hours: Hours between idle session rotations
+            data_dir: Base directory for ASDF file storage.
+            location: Default observer location {lat, lon, alt} in degrees/meters.
+            auto_rotate_idle: Whether to auto-rotate idle sessions periodically.
+            idle_rotate_hours: Hours between idle session rotations.
+        
+        Example:
+            sessions = SessionManager(
+                data_dir=Path("/data/telescope"),
+                location={"lat": 34.05, "lon": -118.25, "alt": 100.0},
+            )
         """
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +83,12 @@ class SessionManager:
         logger.info("SessionManager initialized: %s", self.data_dir)
 
     def _ensure_idle_session(self) -> None:
-        """Create idle session if nothing else is active."""
+        """Create idle session if no session is active.
+        
+        Internal method that maintains the "always have a session" invariant.
+        Called after session end and during operations that require a session.
+        Idle sessions capture logs when no observation is in progress.
+        """
         if self._active_session is None:
             self._active_session = Session(
                 session_type=SessionType.IDLE,
@@ -92,15 +107,28 @@ class SessionManager:
         location: dict[str, float] | None = None,
     ) -> Session:
         """Start a new session, closing any existing one.
+        
+        Ends the current session (saving to ASDF) and creates a new one
+        of the specified type. Use for observations, alignments, or experiments.
 
         Args:
-            session_type: Type of session to start
-            target: Target object (for observations)
-            purpose: Purpose description (for alignment/experiment)
-            location: Override default location
+            session_type: Type of session (observation, alignment, experiment, idle).
+            target: Target object name for observations (e.g., "M31", "Jupiter").
+            purpose: Description for alignment/experiment sessions.
+            location: Override default observer location.
 
         Returns:
-            The newly created session
+            The newly created Session instance.
+        
+        Raises:
+            ValueError: If session_type string is invalid.
+        
+        Example:
+            session = sessions.start_session(
+                SessionType.OBSERVATION,
+                target="M42",
+                purpose="Orion Nebula imaging",
+            )
         """
         if isinstance(session_type, str):
             session_type = SessionType(session_type.lower())
@@ -122,9 +150,23 @@ class SessionManager:
 
     def end_session(self) -> Path:
         """End current session and return to idle.
+        
+        Closes the active session, writes ASDF file to disk, and starts
+        a new idle session to capture subsequent logs. The returned path
+        points to the saved session data.
+        
+        Args:
+            None. Operates on the currently active session.
 
         Returns:
-            Path to the written ASDF file
+            Path to the written ASDF file.
+        
+        Raises:
+            RuntimeError: If no active session exists.
+        
+        Example:
+            asdf_path = sessions.end_session()
+            print(f"Session saved to {asdf_path}")
         """
         if self._active_session is None:
             raise RuntimeError("No active session to end")
@@ -145,23 +187,60 @@ class SessionManager:
         source: str = "telescope_mcp",
         **context: Any,
     ) -> None:
-        """Log to current session (always exists).
+        """Log to current session.
+        
+        Adds a structured log entry to the active session. Ensures idle
+        session exists if needed. Context kwargs become searchable metadata.
 
         Args:
-            level: Log level
-            message: Log message
-            source: Source component
-            **context: Additional context
+            level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+            message: Human-readable log message.
+            source: Source component identifier. Defaults to "telescope_mcp".
+            **context: Additional context as key-value pairs.
+        
+        Returns:
+            None.
+        
+        Raises:
+            None. Automatically creates idle session if needed.
+        
+        Example:
+            sessions.log(
+                "INFO",
+                "Starting exposure",
+                source="camera",
+                camera_id=0,
+                exposure_us=500000,
+            )
         """
         self._ensure_idle_session()
         self._active_session.log(level, message, source, **context)  # type: ignore[union-attr]
 
     def add_event(self, event: str, **details: Any) -> None:
         """Record an event to current session.
+        
+        Events are timestamped markers for significant occurrences like
+        slewing, focusing, or capturing. Different from logs in that
+        events are structured data meant for programmatic analysis.
 
         Args:
-            event: Event name
-            **details: Event details
+            event: Event name/type (e.g., "slew_start", "focus_complete").
+            **details: Event-specific details as key-value pairs.
+        
+        Returns:
+            None.
+        
+        Raises:
+            None. Automatically creates idle session if needed.
+        
+        Example:
+            sessions.add_event(
+                "slew_complete",
+                target="M31",
+                ra=10.684,
+                dec=41.269,
+                duration_sec=15.3,
+            )
         """
         self._ensure_idle_session()
         self._active_session.add_event(event, **details)  # type: ignore[union-attr]
@@ -174,13 +253,30 @@ class SessionManager:
         camera_info: dict[str, Any] | None = None,
         settings: dict[str, Any] | None = None,
     ) -> None:
-        """Add a frame to current session.
+        """Add a captured frame to current session.
+        
+        Stores image data with metadata in the session's ASDF file.
+        Frames are organized by camera identifier for multi-camera setups.
 
         Args:
-            camera: Camera identifier
-            frame: Image data
-            camera_info: Camera metadata
-            settings: Capture settings
+            camera: Camera identifier (e.g., "finder", "main").
+            frame: Image data as numpy array (uint8 or uint16).
+            camera_info: Camera metadata (resolution, pixel size, etc.). Optional.
+            settings: Capture settings (exposure, gain, etc.). Optional.
+        
+        Returns:
+            None.
+        
+        Raises:
+            None. Automatically creates idle session if needed.
+        
+        Example:
+            sessions.add_frame(
+                "main",
+                image_array,
+                camera_info={"name": "ASI482MC", "width": 1920},
+                settings={"exposure_us": 500000, "gain": 50},
+            )
         """
         self._ensure_idle_session()
         self._active_session.add_frame(  # type: ignore[union-attr]
@@ -188,49 +284,148 @@ class SessionManager:
         )
 
     def add_telemetry(self, telemetry_type: str, **data: Any) -> None:
-        """Add telemetry to current session.
+        """Add telemetry data to current session.
+        
+        Records time-series sensor data like temperature, humidity, or
+        position readings. Useful for correlating environmental conditions
+        with image quality.
 
         Args:
-            telemetry_type: Type of telemetry
-            **data: Telemetry data
+            telemetry_type: Type of telemetry (e.g., "environment", "motor").
+            **data: Telemetry values as key-value pairs.
+        
+        Returns:
+            None.
+        
+        Raises:
+            None. Automatically creates idle session if needed.
+        
+        Example:
+            sessions.add_telemetry(
+                "environment",
+                temperature_c=18.5,
+                humidity_pct=65.0,
+                pressure_hpa=1013.25,
+            )
         """
         self._ensure_idle_session()
         self._active_session.add_telemetry(telemetry_type, **data)  # type: ignore[union-attr]
 
     def add_calibration(self, calibration_type: str, data: Any) -> None:
         """Add calibration data to current session.
+        
+        Stores calibration results like dark frames, flat fields, or
+        alignment matrices for later processing.
 
         Args:
-            calibration_type: Type of calibration
-            data: Calibration data
+            calibration_type: Type of calibration (e.g., "dark", "flat", "alignment").
+            data: Calibration data (numpy array, dict, or other serializable).
+        
+        Returns:
+            None.
+        
+        Raises:
+            None. Automatically creates idle session if needed.
+        
+        Example:
+            sessions.add_calibration("dark_frame", dark_array)
+            sessions.add_calibration("alignment", {"rotation": 1.5, "scale": 0.98})
         """
         self._ensure_idle_session()
         self._active_session.add_calibration(calibration_type, data)  # type: ignore[union-attr]
 
     @property
     def active_session(self) -> Session | None:
-        """Get the currently active session."""
+        """Get the currently active session.
+        
+        Returns the Session object for direct access to session methods.
+        May be an idle session if no observation is in progress.
+        
+        Args:
+            None. Property access.
+        
+        Returns:
+            Active Session instance, or None if shutdown.
+        
+        Raises:
+            None. Returns None when no session active.
+        """
         return self._active_session
 
     @property
     def active_session_type(self) -> SessionType | None:
-        """Get the type of the currently active session."""
+        """Get the type of the currently active session for workflow logic.
+        
+        Returns the session type which categorizes the current observing activity.
+        Used to determine appropriate data handling, validation, and metadata
+        collection based on session context.
+        
+        Business context: Enables context-aware application behavior where different
+        session types have different requirements. OBSERVATION sessions may require
+        dark frames and flatfields, ALIGNMENT sessions focus on plate solving, and
+        EXPERIMENT sessions may have custom metadata. Critical for automated workflows
+        that adapt behavior based on observation goals.
+        
+        Returns:
+            SessionType enum (OBSERVATION, ALIGNMENT, EXPERIMENT, or IDLE) if a
+            session is active, or None if no session is currently active. Use this
+            to check session context before operations that depend on session type.
+        
+        Raises:
+            None. Always succeeds, returning None when no session active.
+        
+        Example:
+            >>> manager = SessionManager()
+            >>> manager.start_session(SessionType.OBSERVATION, "M31")
+            >>> if manager.active_session_type == SessionType.OBSERVATION:
+            ...     print("Taking science frames with calibrations")
+            >>> else:
+            ...     print("Not in observation mode")
+        """
         if self._active_session:
             return self._active_session.session_type
         return None
 
     @property
     def active_session_id(self) -> str | None:
-        """Get the ID of the currently active session."""
+        """Get the ID of the currently active session.
+        
+        Session IDs are unique identifiers in the format
+        'YYYYMMDD_HHMMSS_type' used for file naming.
+        
+        Args:
+            None. Property access.
+        
+        Returns:
+            Session ID string, or None if no session is active.
+        
+        Raises:
+            None. Returns None when no session active.
+        """
         if self._active_session:
             return self._active_session.session_id
         return None
 
     def shutdown(self) -> Path | None:
         """Shutdown the session manager, closing any active session.
+        
+        Logs a shutdown message to the active session, closes it (writing
+        ASDF to disk), and clears the session reference. Does not start
+        a new idle session. Call at application exit.
+        
+        Args:
+            None. Operates on the currently active session.
 
         Returns:
-            Path to final ASDF file, or None if no session was active
+            Path to final ASDF file, or None if no session was active.
+        
+        Raises:
+            None. Safe to call even if no session active.
+        
+        Example:
+            path = sessions.shutdown()
+            if path:
+                print(f"Final session saved to {path}")
         """
         if self._active_session is not None:
             self._active_session.log(
