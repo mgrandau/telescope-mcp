@@ -869,163 +869,71 @@ class TestCameraAPIEndpoints:
 
 
 class TestMotorAPIEndpoints:
-    """Tests for motor control REST API endpoints."""
+    """Tests for motor control REST API endpoints.
 
-    def test_move_altitude_default_speed(self, client):
-        """Verifies POST /api/motor/altitude moves telescope vertically.
+    Parameterized tests covering both altitude and azimuth axes with
+    various step counts and speeds. Validates bidirectional movement
+    and default parameter handling.
+    """
 
-        Tests altitude axis motor control with default speed parameter.
+    @pytest.mark.parametrize(
+        "axis,steps,speed,expected_speed",
+        [
+            ("altitude", 1000, None, 100),
+            ("altitude", 500, 50, 50),
+            ("altitude", -200, 75, 75),
+            ("azimuth", 2000, None, 100),
+            ("azimuth", 1000, 60, 60),
+            ("azimuth", -500, None, 100),
+        ],
+        ids=[
+            "altitude_default_speed",
+            "altitude_custom_speed",
+            "altitude_negative",
+            "azimuth_default_speed",
+            "azimuth_custom_speed",
+            "azimuth_negative",
+        ],
+    )
+    def test_motor_move(self, client, axis, steps, speed, expected_speed):
+        """Verifies motor endpoints accept step and speed parameters.
+
+        Business context:
+        Motor control is essential for telescope positioning. Tests
+        validate both axes respond correctly to movement commands
+        with proper speed handling and bidirectional support.
+
+        Args:
+            client: FastAPI TestClient fixture.
+            axis: Motor axis ("altitude" or "azimuth").
+            steps: Step count (positive or negative for direction).
+            speed: Speed parameter (None for default).
+            expected_speed: Expected speed in response.
 
         Arrangement:
-        1. Telescope motors initialized and ready.
-        2. Request specifies steps=1000 (positive = upward movement).
-        3. Speed parameter omitted (uses default speed=100).
-
-        Action:
-        Issues POST to altitude motor endpoint with step count.
+        Motor endpoints accept steps (required) and speed (optional).
 
         Assertion Strategy:
         Validates motor command by confirming:
         - HTTP 200 indicates command accepted.
         - Response status="ok" confirms execution.
-        - Response steps=1000 echoes requested movement.
-        - Response speed=100 shows default applied.
+        - Response steps matches requested value.
+        - Response speed matches expected (default or custom).
+
+        Testing Principle:
+        Validates motor control API contract for both axes.
         """
-        response = client.post("/api/motor/altitude?steps=1000")
+        url = f"/api/motor/{axis}?steps={steps}"
+        if speed is not None:
+            url += f"&speed={speed}"
+
+        response = client.post(url)
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "ok"
-        assert data["steps"] == 1000
-        assert data["speed"] == 100
-
-    def test_move_altitude_custom_speed(self, client):
-        """Verifies altitude motor accepts custom speed parameter.
-
-        Tests motor speed control for smooth vs. fast movements.
-
-        Arrangement:
-        1. Altitude motor supports variable speed (0-100 range).
-        2. Request: steps=500, speed=50 (half speed for smooth tracking).
-        3. Custom speed enables precise positioning.
-
-        Action:
-        Issues POST with explicit speed parameter.
-
-        Assertion Strategy:
-        Validates speed control by confirming:
-        - HTTP 200 indicates accepted.
-        - Response steps=500 matches request.
-        - Response speed=50 confirms custom speed applied.
-        """
-        response = client.post("/api/motor/altitude?steps=500&speed=50")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["status"] == "ok"
-        assert data["steps"] == 500
-        assert data["speed"] == 50
-
-    def test_move_altitude_negative_steps(self, client):
-        """Verifies altitude motor supports bidirectional movement.
-
-        Tests downward telescope movement using negative step values.
-
-        Arrangement:
-        1. Telescope at arbitrary altitude position.
-        2. Negative steps=-200 indicates downward movement.
-        3. Speed=75 controls descent rate.
-
-        Action:
-        Issues POST with negative step count.
-
-        Assertion Strategy:
-        Validates bidirectional control by confirming:
-        - HTTP 200 indicates command accepted.
-        - Response steps=-200 preserves negative sign.
-        """
-        response = client.post("/api/motor/altitude?steps=-200&speed=75")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["steps"] == -200
-
-    def test_move_azimuth_default_speed(self, client):
-        """Verifies POST /api/motor/azimuth rotates telescope horizontally.
-
-        Tests azimuth axis motor control with default speed.
-
-        Arrangement:
-        1. Azimuth motor initialized and operational.
-        2. Request steps=2000 (horizontal rotation).
-        3. Default speed=100 applied automatically.
-
-        Action:
-        Issues POST to azimuth endpoint.
-
-        Assertion Strategy:
-        Validates azimuth control by confirming:
-        - HTTP 200 indicates success.
-        - Response status="ok".
-        - Response steps=2000 matches request.
-        - Response speed=100 shows default.
-        """
-        response = client.post("/api/motor/azimuth?steps=2000")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["status"] == "ok"
-        assert data["steps"] == 2000
-        assert data["speed"] == 100
-
-    def test_move_azimuth_custom_speed(self, client):
-        """Verifies azimuth motor accepts custom speed parameter.
-
-        Tests variable speed azimuth rotation.
-
-        Arrangement:
-        1. Azimuth motor supports speed range 0-100.
-        2. Request: steps=1000, speed=60 (moderate speed).
-
-        Action:
-        Issues POST with speed parameter.
-
-        Assertion Strategy:
-        Validates speed control by confirming:
-        - HTTP 200.
-        - Response steps=1000.
-        - Response speed=60 applied.
-        """
-        response = client.post("/api/motor/azimuth?steps=1000&speed=60")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["status"] == "ok"
-        assert data["steps"] == 1000
-        assert data["speed"] == 60
-
-    def test_move_azimuth_negative_steps(self, client):
-        """Verifies azimuth motor supports reverse rotation.
-
-        Tests counterclockwise rotation using negative steps.
-
-        Arrangement:
-        1. Azimuth at arbitrary position.
-        2. Negative steps=-500 reverses direction.
-
-        Action:
-        Issues POST with negative step count.
-
-        Assertion Strategy:
-        Validates bidirectional rotation by confirming:
-        - HTTP 200.
-        - Response steps=-500 preserves sign.
-        """
-        response = client.post("/api/motor/azimuth?steps=-500")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["steps"] == -500
+        assert data["steps"] == steps
+        assert data["speed"] == expected_speed
 
     def test_stop_motors(self, client):
         """Verifies POST /api/motor/stop halts all motor movement.

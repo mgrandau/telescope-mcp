@@ -548,128 +548,74 @@ class TestJSONFormatter:
 
 
 class TestFormatValue:
-    """Tests for _format_value helper."""
+    """Tests for _format_value helper.
 
-    def test_none_value(self):
-        """Verifies None formats as 'null' string.
+    Parameterized tests covering all value types: None, strings,
+    numbers, and collections. Each case validates proper formatting
+    for human-readable structured log output.
+    """
 
-        Arrangement:
-        Helper function _format_value() with None input.
+    @pytest.mark.parametrize(
+        "input_val,expected,description",
+        [
+            (None, "null", "None formats as JSON-compatible 'null'"),
+            ("hello", "hello", "simple strings pass through unchanged"),
+            ("hello world", '"hello world"', "strings with spaces get quoted"),
+            (42, "42", "integers convert to string representation"),
+            (3.14, "3.14", "floats convert to string representation"),
+            (True, "True", "booleans convert to string representation"),
+        ],
+        ids=["none", "simple_string", "string_with_spaces", "integer", "float", "bool"],
+    )
+    def test_format_value_simple_types(self, input_val, expected, description):
+        """Verifies _format_value handles simple types correctly.
 
-        Action:
-        Calls _format_value(None) and checks output.
+        Business context:
+        Structured log values must be formatted for human-readable
+        key=value output while preserving parseability.
+
+        Args:
+            input_val: Value to format.
+            expected: Expected string output.
+            description: Human-readable test case description.
 
         Assertion Strategy:
-        Validates null formatting by confirming output equals 'null'.
+        Validates formatting by confirming output equals expected string.
 
         Testing Principle:
-        Validates JSON-compatible null representation for log output.
+        Validates type-specific formatting rules for log output clarity.
         """
-        assert _format_value(None) == "null"
+        assert _format_value(input_val) == expected
 
-    def test_simple_string(self):
-        """Verifies simple strings pass through unchanged.
+    @pytest.mark.parametrize(
+        "input_val,expected_parsed,description",
+        [
+            ({"key": "value"}, {"key": "value"}, "dicts serialize as JSON"),
+            ([1, 2, 3], [1, 2, 3], "lists serialize as JSON arrays"),
+            ({"nested": {"a": 1}}, {"nested": {"a": 1}}, "nested dicts serialize"),
+        ],
+        ids=["dict", "list", "nested_dict"],
+    )
+    def test_format_value_collections(self, input_val, expected_parsed, description):
+        """Verifies _format_value serializes collections as JSON.
 
-        Arrangement:
-        Helper function _format_value() with simple string.
+        Business context:
+        Complex structured data (dicts, lists) must be JSON-encoded
+        to preserve structure in log output.
 
-        Action:
-        Calls _format_value("hello") and checks output.
+        Args:
+            input_val: Collection to format.
+            expected_parsed: Expected value after JSON parsing result.
+            description: Human-readable test case description.
 
         Assertion Strategy:
-        Validates passthrough by confirming output equals input string.
-
-        Testing Principle:
-        Validates string preservation without quotes for readability.
-        """
-        assert _format_value("hello") == "hello"
-
-    def test_string_with_spaces(self):
-        """Verifies strings with spaces get quoted.
-
-        Arrangement:
-        Helper function _format_value() with string containing spaces.
-
-        Action:
-        Calls _format_value("hello world") and checks output.
-
-        Assertion Strategy:
-        Validates quoting by confirming output has surrounding quotes.
-
-        Testing Principle:
-        Validates quoting for unambiguous parsing in log output.
-        """
-        assert _format_value("hello world") == '"hello world"'
-
-    def test_integer(self):
-        """Verifies integers convert to string representation.
-
-        Arrangement:
-        Helper function _format_value() with integer input.
-
-        Action:
-        Calls _format_value(42) and checks string conversion.
-
-        Assertion Strategy:
-        Validates conversion by confirming output equals "42".
-
-        Testing Principle:
-        Validates numeric formatting for log output.
-        """
-        assert _format_value(42) == "42"
-
-    def test_float(self):
-        """Verifies floats convert to string representation.
-
-        Arrangement:
-        Helper function _format_value() with float input.
-
-        Action:
-        Calls _format_value(3.14) and checks string conversion.
-
-        Assertion Strategy:
-        Validates conversion by confirming output equals "3.14".
-
-        Testing Principle:
-        Validates decimal formatting for log output.
-        """
-        assert _format_value(3.14) == "3.14"
-
-    def test_dict(self):
-        """Verifies dicts serialize as JSON strings.
-
-        Arrangement:
-        Helper function _format_value() with dict input.
-
-        Action:
-        Calls _format_value({"key": "value"}) and parses result.
-
-        Assertion Strategy:
-        Validates JSON serialization by parsing output back to dict.
+        Validates JSON serialization by parsing output and comparing.
 
         Testing Principle:
         Validates structured data preservation through JSON encoding.
         """
-        result = _format_value({"key": "value"})
-        assert json.loads(result) == {"key": "value"}
-
-    def test_list(self):
-        """Verifies lists serialize as JSON arrays.
-
-        Arrangement:
-        Helper function _format_value() with list input.
-
-        Action:
-        Calls _format_value([1, 2, 3]) and parses result.
-
-        Assertion Strategy:
-        Validates JSON array serialization by parsing output back to list.
-
-        Testing Principle:
-        Validates array formatting through JSON encoding.
-        """
-        result = _format_value([1, 2, 3])
-        assert json.loads(result) == [1, 2, 3]
+        result = _format_value(input_val)
+        assert json.loads(result) == expected_parsed
 
 
 class TestLogContext:
@@ -1831,114 +1777,61 @@ class TestCameraStats:
 
 
 class TestPercentile:
-    """Tests for _percentile helper."""
+    """Tests for _percentile helper.
 
-    def test_empty_list(self):
-        """Verifies empty list returns 0.
+    Parameterized tests covering edge cases (empty, single value),
+    boundary conditions (P0, P100), and standard percentiles (P50, P95).
+    """
 
-        Arrangement:
-        Helper function _percentile() with empty list input.
+    @pytest.mark.parametrize(
+        "data,percentile,expected,description",
+        [
+            ([], 50, 0.0, "empty list returns 0"),
+            ([100.0], 50, 100.0, "single value returns itself"),
+            ([1.0, 2.0, 3.0, 4.0, 5.0], 50, 3.0, "P50 median calculation"),
+            ([1.0, 2.0, 3.0], 0, 1.0, "P0 returns minimum"),
+            ([1.0, 2.0, 3.0], 100, 3.0, "P100 returns maximum"),
+        ],
+        ids=["empty", "single", "median", "p0_min", "p100_max"],
+    )
+    def test_percentile_exact(self, data, percentile, expected, description):
+        """Verifies _percentile returns exact values for common cases.
 
-        Action:
-        Calls _percentile([], 50) for median of empty dataset.
+        Business context:
+        Percentile calculations are used for latency analysis (P95, P99)
+        in camera capture statistics and SLA monitoring.
 
-        Assertion Strategy:
-        Validates edge case by confirming return value equals 0.0.
-
-        Testing Principle:
-        Validates edge case handling for uninitialized/empty datasets.
-        """
-        assert _percentile([], 50) == 0.0
-
-    def test_single_value(self):
-        """Verifies single value returns itself for any percentile.
-
-        Arrangement:
-        Helper function _percentile() with single-element list.
-
-        Action:
-        Calls _percentile([100.0], 50) for median.
-
-        Assertion Strategy:
-        Validates degenerate case by confirming output equals 100.0.
-
-        Testing Principle:
-        Validates degenerate case where all percentiles collapse to single value.
-        """
-        assert _percentile([100.0], 50) == 100.0
-
-    def test_median(self):
-        """Verifies P50 (median) calculation.
-
-        Arrangement:
-        Helper function _percentile() with 5-element sorted list.
-
-        Action:
-        Calls _percentile([1.0, 2.0, 3.0, 4.0, 5.0], 50).
+        Args:
+            data: Input data list.
+            percentile: Percentile to compute (0-100).
+            expected: Expected exact result.
+            description: Human-readable test case description.
 
         Assertion Strategy:
-        Validates median by confirming middle value equals 3.0.
+        Validates percentile calculation by confirming exact match.
 
         Testing Principle:
-        Validates median as middle value in sorted odd-length list.
+        Validates boundary conditions and edge cases for statistical accuracy.
         """
-        data = [1.0, 2.0, 3.0, 4.0, 5.0]
-        assert _percentile(data, 50) == 3.0
+        assert _percentile(data, percentile) == expected
 
-    def test_p0(self):
-        """Verifies P0 returns minimum value.
-
-        Arrangement:
-        Helper function _percentile() with 3-element list.
-
-        Action:
-        Calls _percentile([1.0, 2.0, 3.0], 0) for 0th percentile.
-
-        Assertion Strategy:
-        Validates boundary by confirming output equals minimum 1.0.
-
-        Testing Principle:
-        Validates boundary condition where 0th percentile equals minimum.
-        """
-        data = [1.0, 2.0, 3.0]
-        assert _percentile(data, 0) == 1.0
-
-    def test_p100(self):
-        """Verifies P100 returns maximum value.
-
-        Arrangement:
-        Helper function _percentile() with 3-element list.
-
-        Action:
-        Calls _percentile([1.0, 2.0, 3.0], 100) for 100th percentile.
-
-        Assertion Strategy:
-        Validates boundary by confirming output equals maximum 3.0.
-
-        Testing Principle:
-        Validates boundary condition where 100th percentile equals maximum.
-        """
-        data = [1.0, 2.0, 3.0]
-        assert _percentile(data, 100) == 3.0
-
-    def test_p95(self):
+    def test_percentile_p95_interpolation(self):
         """Verifies P95 interpolation for large datasets.
 
-        Arrangement:
-        Helper function _percentile() with 100 linearly-distributed values.
+        Business context:
+        P95 is critical for SLA monitoring - validates that 95% of
+        captures complete within acceptable time bounds.
 
-        Action:
-        Calls _percentile(1.0..100.0, 95) for 95th percentile.
+        Arrangement:
+        100 linearly-distributed values from 1.0 to 100.0.
 
         Assertion Strategy:
         Validates interpolation by confirming result in range [94, 96].
 
         Testing Principle:
-        Validates linear interpolation for tail latency analysis (SLA monitoring).
+        Validates linear interpolation for tail latency analysis.
         """
-        # 100 values from 1 to 100
-        data = list(range(1, 101))
-        data = [float(x) for x in data]
+        data = [float(x) for x in range(1, 101)]
         result = _percentile(data, 95)
         assert 94 <= result <= 96
 
