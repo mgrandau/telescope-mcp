@@ -28,7 +28,28 @@ class TestDefaultCameraSpecs:
     """Tests for DEFAULT_CAMERAS specifications matching real hardware."""
 
     def test_finder_camera_specs(self):
-        """Camera 0 (ASI120MC-S finder) has correct specifications."""
+        """Verifies ASI120MC-S finder camera specification accuracy.
+
+        Arrangement:
+        1. DEFAULT_CAMERAS[0] = finder camera spec.
+        2. ASI120MC-S: 1280x960, 3.75μm pixels, 150° lens.
+        3. 8-bit color camera with RGGB Bayer pattern.
+
+        Action:
+        Retrieves finder spec and validates all fields.
+
+        Assertion Strategy:
+        Validates hardware specification by confirming:
+        - Name contains "ASI120MC-S", Purpose="finder".
+        - MaxWidth=1280, MaxHeight=960 (1.2MP).
+        - PixelSize=3.75μm, sensor 4.8x3.6mm.
+        - IsColorCam=True, BayerPattern="RGGB", BitDepth=8.
+        - LensFOV=150° (all-sky lens).
+
+        Testing Principle:
+        Validates hardware specification accuracy, ensuring
+        digital twin matches real ASI120MC-S finder camera.
+        """
         finder = DEFAULT_CAMERAS[0]
 
         # Basic identification
@@ -53,7 +74,28 @@ class TestDefaultCameraSpecs:
         assert finder["LensFOV"] == 150  # degrees
 
     def test_main_camera_specs(self):
-        """Camera 1 (ASI482MC main) has correct specifications."""
+        """Verifies ASI482MC main imager specification accuracy.
+
+        Arrangement:
+        1. DEFAULT_CAMERAS[1] = main imager spec.
+        2. ASI482MC: 1920x1080, 5.8μm pixels, 1600mm focal length.
+        3. 12-bit color camera with RGGB Bayer pattern.
+
+        Action:
+        Retrieves main imager spec and validates all fields.
+
+        Assertion Strategy:
+        Validates hardware specification by confirming:
+        - Name contains "ASI482MC", Purpose="main".
+        - MaxWidth=1920, MaxHeight=1080 (2.07MP).
+        - PixelSize=5.8μm, sensor 11.13x6.26mm.
+        - IsColorCam=True, BayerPattern="RGGB", BitDepth=12.
+        - FocalLength=1600mm (telescope optics).
+
+        Testing Principle:
+        Validates hardware specification accuracy, ensuring
+        digital twin matches real ASI482MC main imager.
+        """
         main = DEFAULT_CAMERAS[1]
 
         # Basic identification
@@ -78,7 +120,27 @@ class TestDefaultCameraSpecs:
         assert main["FocalLength"] == 1600  # mm
 
     def test_fov_calculations(self):
-        """FOV calculations are accurate."""
+        """Verifies field-of-view calculation accuracy for both cameras.
+
+        Arrangement:
+        1. Finder: 150° lens, 1280 pixels → 421.875 arcsec/pixel.
+        2. Main: 1600mm focal length, 1920x1080 → 0.748 arcsec/pixel.
+        3. Main FOV: 23.9' x 13.4' arcminutes.
+
+        Action:
+        Retrieves FOV fields from camera specs.
+
+        Assertion Strategy:
+        Validates FOV calculations by confirming:
+        - Finder FOVPerPixel = 421.875 arcsec/pixel (±1%).
+        - Main FOVPerPixel = 0.748 arcsec/pixel (±1%).
+        - Main FOVWidth = 23.9 arcmin (±10%).
+        - Main FOVHeight = 13.4 arcmin (±10%).
+
+        Testing Principle:
+        Validates plate scale calculations, ensuring
+        astrometry and alignment use correct angular resolution.
+        """
         finder = DEFAULT_CAMERAS[0]
         main = DEFAULT_CAMERAS[1]
 
@@ -95,7 +157,24 @@ class TestDigitalTwinCameraDriver:
     """Tests for DigitalTwinCameraDriver."""
 
     def test_init_defaults(self):
-        """Driver initializes with default cameras."""
+        """Verifies driver initializes with 2 default cameras.
+
+        Arrangement:
+        1. DigitalTwinCameraDriver() with no arguments.
+        2. DEFAULT_CAMERAS defines ASI120MC-S (id=0) and ASI482MC (id=1).
+
+        Action:
+        Creates driver and retrieves connected camera list.
+
+        Assertion Strategy:
+        Validates default initialization by confirming:
+        - get_connected_cameras() returns 2 cameras.
+        - Camera IDs 0 and 1 present.
+
+        Testing Principle:
+        Validates default behavior, ensuring driver provides
+        working twin cameras without explicit configuration.
+        """
         driver = DigitalTwinCameraDriver()
         cameras = driver.get_connected_cameras()
         assert len(cameras) == 2
@@ -103,7 +182,25 @@ class TestDigitalTwinCameraDriver:
         assert 1 in cameras
 
     def test_init_custom_cameras(self):
-        """Driver accepts custom camera definitions."""
+        """Verifies driver accepts custom camera definitions.
+
+        Arrangement:
+        1. Custom camera dict with single camera (id=0).
+        2. Camera spec: "Custom Camera", 640x480.
+        3. Driver created with cameras= parameter.
+
+        Action:
+        Creates driver with custom cameras, retrieves list.
+
+        Assertion Strategy:
+        Validates custom initialization by confirming:
+        - get_connected_cameras() returns 1 camera.
+        - Camera Name = "Custom Camera".
+
+        Testing Principle:
+        Validates configuration flexibility, allowing test
+        scenarios with non-standard camera configurations.
+        """
         custom = {0: {"Name": b"Custom Camera", "MaxWidth": 640, "MaxHeight": 480}}
         driver = DigitalTwinCameraDriver(cameras=custom)
         cameras = driver.get_connected_cameras()
@@ -111,20 +208,70 @@ class TestDigitalTwinCameraDriver:
         assert cameras[0]["Name"] == b"Custom Camera"
 
     def test_get_connected_cameras_returns_copy(self):
-        """get_connected_cameras returns a copy, not the original."""
+        """Verifies get_connected_cameras returns defensive copy.
+
+        Arrangement:
+        1. Driver initialized with camera specs.
+        2. Internal camera dict must not be exposed.
+        3. get_connected_cameras() called twice.
+
+        Action:
+        Retrieves camera list twice.
+
+        Assertion Strategy:
+        Validates defensive copying by confirming:
+        - cameras1 is not cameras2 (different object IDs).
+        - Prevents external modification of internal state.
+
+        Testing Principle:
+        Validates encapsulation, ensuring driver maintains
+        immutable camera registry for thread safety.
+        """
         driver = DigitalTwinCameraDriver()
         cameras1 = driver.get_connected_cameras()
         cameras2 = driver.get_connected_cameras()
         assert cameras1 is not cameras2
 
     def test_open_valid_camera(self):
-        """Opening a valid camera returns instance."""
+        """Verifies opening valid camera ID returns instance.
+
+        Arrangement:
+        1. Driver initialized with DEFAULT_CAMERAS.
+        2. Camera ID 0 exists (ASI120MC-S finder).
+
+        Action:
+        Opens camera 0.
+
+        Assertion Strategy:
+        Validates camera opening by confirming:
+        - Returns DigitalTwinCameraInstance type.
+
+        Testing Principle:
+        Validates driver interface, ensuring valid camera
+        IDs return usable camera instances.
+        """
         driver = DigitalTwinCameraDriver()
         instance = driver.open(0)
         assert isinstance(instance, DigitalTwinCameraInstance)
 
     def test_open_invalid_camera_raises(self):
-        """Opening invalid camera raises ValueError."""
+        """Verifies opening invalid camera ID raises ValueError.
+
+        Arrangement:
+        1. Driver initialized with cameras 0 and 1.
+        2. Camera ID 99 does not exist.
+
+        Action:
+        Attempts to open camera 99.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - Raises ValueError with message "Camera 99 not found".
+
+        Testing Principle:
+        Validates error handling, ensuring invalid camera
+        IDs fail fast with clear error messages.
+        """
         driver = DigitalTwinCameraDriver()
         with pytest.raises(ValueError, match="Camera 99 not found"):
             driver.open(99)
@@ -135,38 +282,151 @@ class TestDigitalTwinCameraInstance:
 
     @pytest.fixture
     def finder_camera(self):
-        """Create finder camera instance."""
+        """Pytest fixture providing ASI120MC-S finder camera instance.
+
+        Creates digital twin camera for finder (id=0) with
+        1280x960 resolution, 3.75μm pixels, and 150° FOV.
+        Used for testing camera info retrieval, control operations,
+        and specification queries.
+
+        Args:
+            None (pytest fixture with implicit request parameter).
+
+        Returns:
+            DigitalTwinCameraInstance: Camera instance for camera 0 (finder).
+                Provides get_info(), get_controls(), capture() interfaces.
+
+        Raises:
+            None. DigitalTwin driver guaranteed to provide camera 0.
+
+        Example:
+            >>> def test_finder(finder_camera):
+            ...     info = finder_camera.get_info()
+            ...     assert info["MaxWidth"] == 1280
+
+        Business Context:
+            The finder camera (ASI120MC-S) provides wide-field
+            all-sky monitoring for telescope alignment and target
+            acquisition. Testing ensures driver correctly exposes
+            camera specifications for alignment calculations.
+        """
         driver = DigitalTwinCameraDriver()
         return driver.open(0)
 
     @pytest.fixture
     def main_camera(self):
-        """Create main camera instance."""
+        """Pytest fixture providing ASI482MC main imager instance.
+
+        Creates digital twin camera for main imager (id=1) with
+        1920x1080 resolution, 5.8μm pixels, 1600mm focal length.
+        Used for testing camera specifications, control interfaces,
+        and high-resolution imaging parameters.
+
+        Args:
+            None (pytest fixture with implicit request parameter).
+
+        Returns:
+            DigitalTwinCameraInstance: Camera instance for camera 1 (main).
+                Provides get_info(), get_controls(), capture() interfaces.
+
+        Raises:
+            None. DigitalTwin driver guaranteed to provide camera 1.
+
+        Example:
+            >>> def test_main(main_camera):
+            ...     info = main_camera.get_info()
+            ...     assert info["MaxWidth"] == 1920
+
+        Business Context:
+            The main imager (ASI482MC) captures high-resolution
+            astronomy images through telescope optics. Testing
+            ensures driver correctly exposes camera specifications
+            for plate scale calculations and image processing.
+        """
         driver = DigitalTwinCameraDriver()
         return driver.open(1)
 
     def test_get_info_finder(self, finder_camera):
-        """Finder camera info matches specifications."""
+        """Verifies finder camera returns correct specifications.
+
+        Arrangement:
+        1. Finder camera (id=0) opened via DigitalTwinCameraDriver.
+        2. Camera spec: 1280x960, 3.75μm pixel size.
+
+        Action:
+        Calls get_info() to retrieve camera specifications.
+
+        Assertion Strategy:
+        Validates specification accuracy by confirming:
+        - MaxWidth=1280 matches finder spec.
+        - MaxHeight=960 matches finder spec.
+        - PixelSize=3.75 matches sensor spec.
+        """
         info = finder_camera.get_info()
         assert info["MaxWidth"] == 1280
         assert info["MaxHeight"] == 960
         assert info["PixelSize"] == 3.75
 
     def test_get_info_main(self, main_camera):
-        """Main camera info matches specifications."""
+        """Verifies main camera returns correct specifications.
+
+        Arrangement:
+        1. Main camera (id=1) opened via DigitalTwinCameraDriver.
+        2. Camera spec: 1920x1080, 5.8μm pixel size.
+
+        Action:
+        Calls get_info() to retrieve camera specifications.
+
+        Assertion Strategy:
+        Validates specification accuracy by confirming:
+        - MaxWidth=1920 matches main imager spec.
+        - MaxHeight=1080 matches main imager spec.
+        - PixelSize=5.8 matches sensor spec.
+        """
         info = main_camera.get_info()
         assert info["MaxWidth"] == 1920
         assert info["MaxHeight"] == 1080
         assert info["PixelSize"] == 5.8
 
     def test_get_info_returns_copy(self, finder_camera):
-        """get_info returns a copy, not the original."""
+        """Verifies get_info returns defensive copy.
+
+        Arrangement:
+        1. Camera info stored internally.
+        2. get_info() called twice.
+        3. Each call should return new dict instance.
+
+        Action:
+        Retrieves camera info twice.
+
+        Assertion Strategy:
+        Validates defensive copying by confirming:
+        - info1 and info2 are not the same object.
+        - Prevents external modification of internal state.
+        """
         info1 = finder_camera.get_info()
         info2 = finder_camera.get_info()
         assert info1 is not info2
 
     def test_get_controls(self, finder_camera):
-        """Controls are available with correct structure."""
+        """Verifies camera exposes all control parameters.
+
+        Arrangement:
+        1. Finder camera with standard ASI control set.
+        2. Controls include gain, exposure, white balance, temperature.
+        3. Each control has metadata (min, max, default, writable).
+
+        Action:
+        Retrieves all available camera controls.
+
+        Assertion Strategy:
+        Validates control availability by confirming:
+        - ASI_GAIN, ASI_EXPOSURE, ASI_WB_R/B present.
+        - ASI_TEMPERATURE available for monitoring.
+        - Each control has MinValue, MaxValue fields.
+        - Each control has DefaultValue, IsAutoSupported.
+        - IsWritable flag indicates adjustability.
+        """
         controls = finder_camera.get_controls()
         assert "ASI_GAIN" in controls
         assert "ASI_EXPOSURE" in controls
@@ -183,13 +443,39 @@ class TestDigitalTwinCameraInstance:
         assert "IsWritable" in gain
 
     def test_set_and_get_control(self, finder_camera):
-        """Setting a control updates its value."""
+        """Verifies control value updates persist.
+
+        Arrangement:
+        1. Camera with writable ASI_GAIN control.
+        2. set_control() changes value to 200.
+        3. get_control() reads back current value.
+
+        Action:
+        Sets gain to 200, then reads it back.
+
+        Assertion Strategy:
+        Validates state persistence by confirming:
+        - get_control returns value=200.
+        """
         finder_camera.set_control("ASI_GAIN", 200)
         result = finder_camera.get_control("ASI_GAIN")
         assert result["value"] == 200
 
     def test_get_unknown_control(self, finder_camera):
-        """Getting unknown control returns default."""
+        """Verifies unknown control returns safe default.
+
+        Arrangement:
+        1. Camera has defined control set.
+        2. Request for UNKNOWN_CONTROL (not in set).
+        3. Default response: {value: 0, auto: False}.
+
+        Action:
+        Requests non-existent control.
+
+        Assertion Strategy:
+        Validates graceful handling by confirming:
+        - Returns default dict with value=0, auto=False.
+        """
         result = finder_camera.get_control("UNKNOWN_CONTROL")
         assert result == {"value": 0, "auto": False}
 
@@ -199,18 +485,91 @@ class TestDigitalTwinCapture:
 
     @pytest.fixture
     def finder_camera(self):
-        """Create finder camera instance."""
+        """Pytest fixture providing finder camera for capture tests.
+
+        Creates digital twin camera with synthetic star field
+        generation for capture testing (id=0, 1280x960).
+        Uses SYNTHETIC image source to generate realistic
+        test frames with stars and noise.
+
+        Args:
+            None (pytest fixture with implicit request parameter).
+
+        Returns:
+            DigitalTwinCameraInstance: Camera instance for camera 0.
+                Configured for synthetic star field generation,
+                returns JPEG-encoded image data from capture().
+
+        Raises:
+            None. DigitalTwin driver guaranteed to provide camera 0.
+
+        Example:
+            >>> def test_capture(finder_camera):
+            ...     data = finder_camera.capture(100000)
+            ...     assert len(data) > 0
+
+        Business Context:
+            Synthetic captures enable testing image processing
+            pipelines (star detection, plate solving) without
+            requiring real hardware or sky access. Validates
+            that capture interface produces correctly formatted
+            JPEG data matching camera resolution specifications.
+        """
         driver = DigitalTwinCameraDriver()
         return driver.open(0)
 
     @pytest.fixture
     def main_camera(self):
-        """Create main camera instance."""
+        """Pytest fixture providing main camera for capture tests.
+
+        Creates digital twin camera with synthetic star field
+        generation for capture testing (id=1, 1920x1080).
+        Uses SYNTHETIC image source for high-resolution
+        test frame generation.
+
+        Args:
+            None (pytest fixture with implicit request parameter).
+
+        Returns:
+            DigitalTwinCameraInstance: Camera instance for camera 1.
+                Configured for synthetic star field generation,
+                returns JPEG-encoded image data from capture().
+
+        Raises:
+            None. DigitalTwin driver guaranteed to provide camera 1.
+
+        Example:
+            >>> def test_capture(main_camera):
+            ...     data = main_camera.capture(100000)
+            ...     assert len(data) > 0
+
+        Business Context:
+            Main camera synthetic captures enable testing
+            high-resolution imaging workflows (guiding corrections,
+            focus analysis) without telescope hardware. Validates
+            that capture produces correctly sized JPEG matching
+            ASI482MC's 1920x1080 resolution specification.
+        """
         driver = DigitalTwinCameraDriver()
         return driver.open(1)
 
     def test_synthetic_capture_returns_jpeg(self, finder_camera):
-        """Synthetic capture returns valid JPEG data."""
+        """Verifies synthetic capture produces valid JPEG.
+
+        Arrangement:
+        1. Finder camera generates synthetic star field.
+        2. Exposure set to 100000μs (100ms).
+        3. Image encoded as JPEG for transmission.
+
+        Action:
+        Captures single frame.
+
+        Assertion Strategy:
+        Validates JPEG encoding by confirming:
+        - Data is bytes type.
+        - Length > 0 (non-empty).
+        - First 2 bytes = 0xFFD8 (JPEG SOI marker).
+        """
         data = finder_camera.capture(100000)
         assert isinstance(data, bytes)
         assert len(data) > 0
@@ -218,7 +577,21 @@ class TestDigitalTwinCapture:
         assert data[:2] == b"\xff\xd8"
 
     def test_synthetic_capture_correct_resolution_finder(self, finder_camera):
-        """Finder camera capture has correct resolution."""
+        """Verifies finder captures at correct resolution.
+
+        Arrangement:
+        1. Finder camera spec: 1280x960.
+        2. Capture produces JPEG bytes.
+        3. Decode JPEG to verify dimensions.
+
+        Action:
+        Captures frame and decodes with OpenCV.
+
+        Assertion Strategy:
+        Validates resolution by confirming:
+        - Image width = 1280 pixels.
+        - Image height = 960 pixels.
+        """
         data = finder_camera.capture(100000)
         # Decode JPEG
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
@@ -226,14 +599,42 @@ class TestDigitalTwinCapture:
         assert img.shape[0] == 960  # height
 
     def test_synthetic_capture_correct_resolution_main(self, main_camera):
-        """Main camera capture has correct resolution."""
+        """Verifies main camera captures at correct resolution.
+
+        Arrangement:
+        1. Main camera spec: 1920x1080.
+        2. Capture produces JPEG bytes.
+        3. Decode to verify dimensions.
+
+        Action:
+        Captures frame and decodes.
+
+        Assertion Strategy:
+        Validates resolution by confirming:
+        - Image width = 1920 pixels.
+        - Image height = 1080 pixels.
+        """
         data = main_camera.capture(100000)
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
         assert img.shape[1] == 1920  # width
         assert img.shape[0] == 1080  # height
 
     def test_capture_gain_affects_noise(self, finder_camera):
-        """Higher gain produces different (noisier) images."""
+        """Verifies gain parameter affects image noise.
+
+        Arrangement:
+        1. Capture at gain=0 (low noise).
+        2. Capture at gain=300 (high noise).
+        3. Synthetic noise increases with gain.
+
+        Action:
+        Captures two frames with different gain settings.
+
+        Assertion Strategy:
+        Validates gain simulation by confirming:
+        - data_low != data_high (different bytes).
+        - Higher gain produces different noise pattern.
+        """
         finder_camera.set_control("ASI_GAIN", 0)
         data_low = finder_camera.capture(100000)
 
@@ -249,7 +650,34 @@ class TestDigitalTwinFileSource:
 
     @pytest.fixture
     def temp_image(self):
-        """Create a temporary test image."""
+        """Pytest fixture creating temporary test image file.
+
+        Creates 640x480 test JPEG with "TEST" text overlay
+        for file-based camera source testing. Image is
+        automatically cleaned up after test completion.
+
+        Args:
+            None (pytest fixture with implicit request parameter).
+
+        Yields:
+            Path: Path object pointing to temporary JPEG file.
+                File contains 640x480 black image with white "TEST" text.
+
+        Raises:
+            None. Cleanup handles missing files gracefully.
+
+        Example:
+            >>> def test_file(temp_image):
+            ...     driver = create_file_camera(temp_image)
+            ...     assert driver.config.image_path == temp_image
+
+        Business Context:
+            File-based camera source enables replaying previously
+            captured images for regression testing and algorithm
+            development. Tests validate that driver correctly
+            loads, resizes, and serves static images as if they
+            were live camera captures.
+        """
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             # Create test image
             img = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -262,13 +690,41 @@ class TestDigitalTwinFileSource:
         Path(f.name).unlink(missing_ok=True)
 
     def test_create_file_camera(self, temp_image):
-        """create_file_camera returns configured driver."""
+        """Verifies create_file_camera configures file source.
+
+        Arrangement:
+        1. Temporary test image created.
+        2. create_file_camera() factory function.
+        3. Driver configured for FILE source mode.
+
+        Action:
+        Creates driver with file path.
+
+        Assertion Strategy:
+        Validates configuration by confirming:
+        - image_source = ImageSource.FILE.
+        - image_path matches provided path.
+        """
         driver = create_file_camera(temp_image)
         assert driver.config.image_source == ImageSource.FILE
         assert driver.config.image_path == temp_image
 
     def test_file_capture_resizes_to_camera(self, temp_image):
-        """File images are resized to match camera resolution."""
+        """Verifies file images resized to camera resolution.
+
+        Arrangement:
+        1. Test image is 640x480.
+        2. ASI120MC-S camera spec: 1280x960.
+        3. Driver must resize file to match camera.
+
+        Action:
+        Opens camera, captures frame from file.
+
+        Assertion Strategy:
+        Validates resizing by confirming:
+        - Output width = 1280 (camera spec).
+        - Output height = 960 (camera spec).
+        """
         driver = create_file_camera(temp_image)
         instance = driver.open(0)  # ASI120MC-S: 1280x960
 
@@ -285,7 +741,35 @@ class TestDigitalTwinDirectorySource:
 
     @pytest.fixture
     def temp_image_dir(self):
-        """Create a temporary directory with test images."""
+        """Pytest fixture creating temporary directory with test images.
+
+        Creates directory containing 3 test JPEGs (test_0.jpg,
+        test_1.jpg, test_2.jpg) with text overlays (IMG0, IMG1, IMG2)
+        for directory-based camera source testing. Directory and
+        contents automatically cleaned up after test.
+
+        Args:
+            None (pytest fixture with implicit request parameter).
+
+        Yields:
+            Path: Path object pointing to temporary directory containing
+                3 JPEG files (640x480 each with unique text labels).
+
+        Raises:
+            None. Automatic cleanup via tempfile.TemporaryDirectory.
+
+        Example:
+            >>> def test_dir(temp_image_dir):
+            ...     driver = create_directory_camera(temp_image_dir)
+            ...     assert driver.config.image_path == temp_image_dir
+
+        Business Context:
+            Directory-based camera source enables time-lapse replay
+            and sequence testing for astronomy workflows (drift
+            analysis, stack processing). Tests validate that driver
+            correctly cycles through image sequences, simulating
+            continuous observation sessions.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
             # Create multiple test images
@@ -304,14 +788,42 @@ class TestDigitalTwinDirectorySource:
             yield tmppath
 
     def test_create_directory_camera(self, temp_image_dir):
-        """create_directory_camera returns configured driver."""
+        """Verifies create_directory_camera configures dir source.
+
+        Arrangement:
+        1. Temporary directory with test images.
+        2. create_directory_camera() factory function.
+        3. Driver configured for DIRECTORY source mode.
+
+        Action:
+        Creates driver with directory path.
+
+        Assertion Strategy:
+        Validates configuration by confirming:
+        - image_source = ImageSource.DIRECTORY.
+        - image_path points to directory.
+        """
         driver = create_directory_camera(temp_image_dir)
         assert driver.config.image_source == ImageSource.DIRECTORY
         assert driver.config.image_path == temp_image_dir
         assert driver.config.cycle_images is True
 
     def test_directory_cycles_images(self, temp_image_dir):
-        """Directory source cycles through images."""
+        """Verifies directory source cycles through images.
+
+        Arrangement:
+        1. Directory contains 3 test images (IMG0, IMG1, IMG2).
+        2. Driver configured with cycle=True.
+        3. Captures should loop back to first image.
+
+        Action:
+        Captures 4 frames (more than 3 images available).
+
+        Assertion Strategy:
+        Validates cycling by confirming:
+        - Frame 4 differs from frames 1-3 (not frozen).
+        - Cycling back to start works.
+        """
         driver = create_directory_camera(temp_image_dir, cycle=True)
         instance = driver.open(0)
 
@@ -324,7 +836,25 @@ class TestDigitalTwinDirectorySource:
         assert len(captures[3]) > 0
 
     def test_directory_no_cycle(self, temp_image_dir):
-        """Directory source stops at last image when cycle=False."""
+        """Verifies directory source stops at last image without cycling.
+
+        Arrangement:
+        1. temp_image_dir contains 3 test images.
+        2. Driver created with cycle=False (no wrap).
+        3. Captures beyond image count should repeat last image.
+
+        Action:
+        Performs 5 captures from 3-image directory.
+
+        Assertion Strategy:
+        Validates no-cycle behavior by confirming:
+        - All 5 captures return valid data (non-empty).
+        - Captures 4-5 repeat image 3 (last image).
+
+        Testing Principle:
+        Validates cycle control, ensuring drivers can
+        hold on final image without looping.
+        """
         driver = create_directory_camera(temp_image_dir, cycle=False)
         instance = driver.open(0)
 
@@ -340,14 +870,50 @@ class TestDigitalTwinConfig:
     """Tests for DigitalTwinConfig."""
 
     def test_default_config(self):
-        """Default config uses synthetic source."""
+        """Verifies DigitalTwinConfig uses synthetic source by default.
+
+        Arrangement:
+        1. DigitalTwinConfig() with no arguments.
+        2. Expected defaults: SYNTHETIC source, no path, cycle=True.
+
+        Action:
+        Creates config and reads fields.
+
+        Assertion Strategy:
+        Validates default configuration by confirming:
+        - image_source = ImageSource.SYNTHETIC.
+        - image_path = None (no external file).
+        - cycle_images = True.
+
+        Testing Principle:
+        Validates default behavior, ensuring config works
+        out-of-box for synthetic star field generation.
+        """
         config = DigitalTwinConfig()
         assert config.image_source == ImageSource.SYNTHETIC
         assert config.image_path is None
         assert config.cycle_images is True
 
     def test_custom_config(self):
-        """Custom config values are preserved."""
+        """Verifies DigitalTwinConfig preserves custom values.
+
+        Arrangement:
+        1. Custom config: FILE source, /test/path, cycle=False.
+        2. All parameters explicitly set.
+
+        Action:
+        Creates config with custom values.
+
+        Assertion Strategy:
+        Validates custom configuration by confirming:
+        - image_source = ImageSource.FILE.
+        - image_path = Path("/test/path").
+        - cycle_images = False.
+
+        Testing Principle:
+        Validates configuration flexibility, ensuring all
+        parameters can be customized for different test scenarios.
+        """
         config = DigitalTwinConfig(
             image_source=ImageSource.FILE,
             image_path=Path("/test/path"),
@@ -367,20 +933,71 @@ class TestStubMotorController:
     """Tests for the stub motor controller."""
 
     def test_initial_position(self):
-        """Motors start at position 0."""
+        """Verifies motors start at position 0 on initialization.
+
+        Arrangement:
+        1. StubMotorController() created.
+        2. No move commands issued yet.
+        3. Both ALT and AZ motors should be at position 0.
+
+        Action:
+        Gets motor status after initialization.
+
+        Assertion Strategy:
+        Validates initial state by confirming:
+        - position_steps = 0 for ALTITUDE motor.
+
+        Testing Principle:
+        Validates initialization, ensuring motors start
+        at known home position for deterministic testing.
+        """
         controller = StubMotorController()
         status = controller.get_status(MotorType.ALTITUDE)
         assert status.position_steps == 0
 
     def test_move_updates_position(self):
-        """Move updates position correctly."""
+        """Verifies move command updates motor position correctly.
+
+        Arrangement:
+        1. Motor at position 0.
+        2. move() command with 100 steps.
+        3. Position should reflect command.
+
+        Action:
+        Moves ALTITUDE motor 100 steps, reads status.
+
+        Assertion Strategy:
+        Validates position tracking by confirming:
+        - position_steps = 100 after move.
+
+        Testing Principle:
+        Validates state updates, ensuring move commands
+        correctly update internal position tracking.
+        """
         controller = StubMotorController()
         controller.move(MotorType.ALTITUDE, 100)
         status = controller.get_status(MotorType.ALTITUDE)
         assert status.position_steps == 100
 
     def test_home_resets_position(self):
-        """Home resets position to 0."""
+        """Verifies home command resets motor to position 0.
+
+        Arrangement:
+        1. Motor moved to position 500.
+        2. home() command issued.
+        3. Position should reset to 0.
+
+        Action:
+        Moves AZIMUTH 500 steps, then homes it.
+
+        Assertion Strategy:
+        Validates homing by confirming:
+        - position_steps = 0 after home().
+
+        Testing Principle:
+        Validates homing functionality, ensuring motors
+        can return to known reference position.
+        """
         controller = StubMotorController()
         controller.move(MotorType.AZIMUTH, 500)
         controller.home(MotorType.AZIMUTH)
@@ -392,14 +1009,50 @@ class TestStubPositionSensor:
     """Tests for the stub position sensor."""
 
     def test_initial_position(self):
-        """Sensor has default position."""
+        """Verifies sensor starts with default position.
+
+        Arrangement:
+        1. StubPositionSensor() created.
+        2. Default position: altitude=45.0°, azimuth=180.0°.
+        3. No calibration performed yet.
+
+        Action:
+        Reads sensor position after initialization.
+
+        Assertion Strategy:
+        Validates default state by confirming:
+        - pos.altitude = 45.0 degrees.
+        - pos.azimuth = 180.0 degrees (south).
+
+        Testing Principle:
+        Validates initialization, ensuring sensor provides
+        reasonable default position for testing.
+        """
         sensor = StubPositionSensor()
         pos = sensor.read()
         assert pos.altitude == 45.0
         assert pos.azimuth == 180.0
 
     def test_calibrate_updates_position(self):
-        """Calibrate updates reported position."""
+        """Verifies calibrate updates reported position.
+
+        Arrangement:
+        1. Sensor at default position (45°, 180°).
+        2. calibrate() called with new position (30°, 90°).
+        3. Subsequent reads should reflect calibration.
+
+        Action:
+        Calibrates to (30.0°, 90.0°), then reads position.
+
+        Assertion Strategy:
+        Validates calibration by confirming:
+        - pos.altitude = 30.0 degrees.
+        - pos.azimuth = 90.0 degrees (east).
+
+        Testing Principle:
+        Validates calibration mechanism, ensuring sensor
+        can be set to known positions for testing.
+        """
         sensor = StubPositionSensor()
         sensor.calibrate(30.0, 90.0)
         pos = sensor.read()
