@@ -15,11 +15,12 @@ from telescope_mcp.web.app import create_app
 
 logger = get_logger(__name__)
 
-# Dashboard server thread
+# Dashboard server thread and uvicorn server instance
 _dashboard_thread: threading.Thread | None = None
+_dashboard_server: uvicorn.Server | None = None
 
 
-def create_server() -> Server:
+def create_server(mode: str = "digital_twin") -> Server:
     """Create and configure the MCP server for AI agent telescope control.
 
     Initializes the camera registry with the configured driver
@@ -31,7 +32,8 @@ def create_server() -> Server:
     telescope scheduling.
 
     Args:
-        None. Uses global driver configuration from config module.
+        mode: Driver mode - "hardware" for real cameras, "digital_twin" for simulation.
+            Defaults to "digital_twin" for safety.
 
     Returns:
         Configured MCP Server instance with all tools registered.
@@ -40,7 +42,7 @@ def create_server() -> Server:
         RuntimeError: If driver initialization or tool registration fails.
 
     Example:
-        >>> server = create_server()
+        >>> server = create_server(mode="hardware")
         >>> # Server now exposes tools: list_cameras, capture_frame,
         >>> # move_motors, get_position, start_session, etc.
     """
@@ -49,6 +51,14 @@ def create_server() -> Server:
     # Initialize camera registry with configured driver
     from telescope_mcp.devices import init_registry
     from telescope_mcp.drivers.config import get_factory
+
+    # Configure driver mode
+    if mode.lower() == "hardware":
+        from telescope_mcp.drivers.config import use_hardware
+        use_hardware()
+        logger.info("Using HARDWARE mode (real cameras)")
+    else:
+        logger.info("Using DIGITAL_TWIN mode (simulated cameras)")
 
     driver = get_factory().create_camera_driver()
     init_registry(driver)
@@ -89,6 +99,7 @@ def _run_dashboard(host: str, port: int) -> None:
         ... )
         >>> thread.start()
     """
+    global _dashboard_server
     app = create_app()
     config = uvicorn.Config(
         app,
@@ -96,8 +107,8 @@ def _run_dashboard(host: str, port: int) -> None:
         port=port,
         log_level="warning",  # Reduce noise in MCP mode
     )
-    server = uvicorn.Server(config)
-    server.run()
+    _dashboard_server = uvicorn.Server(config)
+    _dashboard_server.run()
 
 
 def start_dashboard(host: str = "127.0.0.1", port: int = 8080) -> None:
@@ -142,7 +153,40 @@ def start_dashboard(host: str = "127.0.0.1", port: int = 8080) -> None:
     logger.info(f"Dashboard started at http://{host}:{port}")
 
 
-async def run_server(dashboard_host: str | None, dashboard_port: int | None) -> None:
+def stop_dashboard() -> None:
+    """Stop the web dashboard server gracefully.
+
+    Triggers shutdown of the uvicorn server running in the background thread.
+    Safe to call even if dashboard is not running (no-op).
+
+    Business context: Ensures clean shutdown when MCP server terminates,
+    preventing orphaned web server processes. Critical for proper resource
+    cleanup in production deployments and preventing port conflicts on restart.
+
+    Args:
+        None.
+
+    Returns:
+        None. Dashboard shutdown is asynchronous.
+
+    Raises:
+        None. Errors during shutdown are logged but not raised.
+
+    Example:
+        >>> start_dashboard("127.0.0.1", 8080)
+        >>> # ... use dashboard ...
+        >>> stop_dashboard()  # Triggers graceful shutdown
+    """
+    global _dashboard_server
+    if _dashboard_server is not None:
+        logger.info("Stopping dashboard server")
+        _dashboard_server.should_exit = True
+        _dashboard_server = None
+
+
+async def run_server(
+    dashboard_host: str | None, dashboard_port: int | None, mode: str = "digital_twin"
+) -> None:
     """Run the MCP server over stdio for AI agent communication.
 
     Creates the MCP server, optionally starts the dashboard, then
@@ -151,6 +195,7 @@ async def run_server(dashboard_host: str | None, dashboard_port: int | None) -> 
     Args:
         dashboard_host: Host for dashboard, or None to disable dashboard.
         dashboard_port: Port for dashboard, or None to disable dashboard.
+        mode: Driver mode - "hardware" or "digital_twin" (default).
 
     Returns:
         None. Runs until stdin closes or process terminated.
@@ -159,12 +204,12 @@ async def run_server(dashboard_host: str | None, dashboard_port: int | None) -> 
         None. Errors are logged, registry cleanup always attempted.
 
     Example:
-        >>> # Run with dashboard
-        >>> await run_server("127.0.0.1", 8080)
-        >>> # Run without dashboard
-        >>> await run_server(None, None)
+        >>> # Run with dashboard and hardware mode
+        >>> await run_server("127.0.0.1", 8080, "hardware")
+        >>> # Run without dashboard, simulation mode
+        >>> await run_server(None, None, "digital_twin")
     """
-    server = create_server()
+    server = create_server(mode=mode)
 
     # Start dashboard if configured
     if dashboard_host and dashboard_port:
@@ -178,6 +223,9 @@ async def run_server(dashboard_host: str | None, dashboard_port: int | None) -> 
                 server.create_initialization_options(),
             )
     finally:
+        # Stop dashboard server
+        stop_dashboard()
+
         # Clean up camera registry on shutdown
         from telescope_mcp.devices import shutdown_registry
 
@@ -247,6 +295,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Directory to store session data (ASDF files)",
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["hardware", "digital_twin"],
+        default="digital_twin",
+        help="Driver mode: 'hardware' for real cameras, 'digital_twin' for simulation (default)",
+    )
     return parser.parse_args()
 
 
@@ -304,7 +359,7 @@ def main() -> None:
     manager.log("INFO", "Telescope MCP server starting", source="server")
 
     logger.info("Starting MCP server")
-    asyncio.run(run_server(args.dashboard_host, args.dashboard_port))
+    asyncio.run(run_server(args.dashboard_host, args.dashboard_port, args.mode))
 
 
 if __name__ == "__main__":

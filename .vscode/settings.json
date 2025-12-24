@@ -1,5 +1,6 @@
 {
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.pythonPath": "${workspaceFolder}/.venv/bin/python",
     "python.testing.pytestArgs": [
         "tests",
         "--cov-report=term-missing",
@@ -10,6 +11,12 @@
     "python.analysis.extraPaths": [
         "${workspaceFolder}/src"
     ],
-    "python-envs.defaultEnvManager": "ms-python.python:system",
-    "python-envs.pythonProjects": []
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "python-envs.pythonProjects": [
+        {
+            "path": "${workspaceFolder}",
+            "pythonEnvPath": "${workspaceFolder}/.venv",
+            "envManager": "ms-python.python:venv",
+        }
+    ]
 }

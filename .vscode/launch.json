@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug MCP Server (Hardware Mode + Dashboard)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "telescope_mcp.server",
+            "args": [
+                "--dashboard-host", "192.168.0.190",
+                "--dashboard-port", "8080",
+                "--mode", "hardware"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            },
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
