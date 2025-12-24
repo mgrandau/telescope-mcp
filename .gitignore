@@ -208,3 +208,4 @@ __marimo__/
 pdm.lock
 .ai_sessions/
 utils/*.json
+nohup.out
