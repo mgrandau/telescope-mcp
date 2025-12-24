@@ -17,6 +17,7 @@
             "path": "${workspaceFolder}",
             "pythonEnvPath": "${workspaceFolder}/.venv",
             "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
         }
     ]
 }
