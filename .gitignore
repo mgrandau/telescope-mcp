@@ -209,3 +209,4 @@ pdm.lock
 .ai_sessions/
 utils/*.json
 nohup.out
+.python-version
