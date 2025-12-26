@@ -19,6 +19,7 @@ repos:
         args: ['--maxkb=1000']
       - id: check-ast
       - id: check-json
+        exclude: \.vscode/.*\.json$
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
@@ -73,6 +74,12 @@ repos:
   # =============================================================================
   - repo: local
     hooks:
+      - id: check-jsonc
+        name: check jsonc (with comments)
+        entry: pdm run python3 -c "import sys, json5; [json5.load(open(f)) for f in sys.argv[1:]]"
+        language: system
+        files: \.vscode/.*\.json$
+        types: [file]
       - id: pytest-cov
         name: pytest with coverage
         entry: pdm run pytest --cov=telescope_mcp --cov-report=term-missing --cov-fail-under=54

@@ -5,9 +5,11 @@
       "args": [
         "-m",
         "telescope_mcp.server",
-        "--dashboard-host", "192.168.0.190",
+        "--dashboard-host", "127.0.0.1",
+        //"--dashboard-host", "192.168.0.190",
         "--dashboard-port", "8080",
-        "--mode", "hardware"
+        "--mode", "digital_twin"
+        // "--mode", "hardware"
       ]
     },
     "docscope-mcp": {
@@ -22,6 +24,7 @@
       "args": [
         "server",
         "--dashboard-host", "127.0.0.1",
+        // "--dashboard-host", "192.168.0.190",
         "--dashboard-port", "8000"
       ]
     }
