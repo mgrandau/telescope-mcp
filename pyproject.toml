@@ -33,6 +33,7 @@ dev = [
     "docscope-mcp @ git+https://github.com/mgrandau/docscope-mcp.git",
     "ipykernel>=7.1.0",
     "json5>=0.12.1",
+    "types-pyserial>=3.5.0.20251001",
 ]
 build = [
     "cython>=3.0.0",

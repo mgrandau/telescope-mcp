@@ -142,6 +142,121 @@ class StructuredLogger(logging.Logger):
         logger.info("User logged in", user_id=123, ip="192.168.1.1")
     """
 
+    def debug(
+        self,
+        msg: object,
+        *args: Any,
+        exc_info: Any = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Log debug message with optional structured data kwargs."""
+        if self.isEnabledFor(logging.DEBUG):
+            self._log(
+                logging.DEBUG,
+                msg,
+                args,
+                exc_info=exc_info,
+                extra=extra,
+                stack_info=stack_info,
+                stacklevel=stacklevel + 1,
+                **kwargs,
+            )
+
+    def info(
+        self,
+        msg: object,
+        *args: Any,
+        exc_info: Any = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Log info message with optional structured data kwargs."""
+        if self.isEnabledFor(logging.INFO):
+            self._log(
+                logging.INFO,
+                msg,
+                args,
+                exc_info=exc_info,
+                extra=extra,
+                stack_info=stack_info,
+                stacklevel=stacklevel + 1,
+                **kwargs,
+            )
+
+    def warning(
+        self,
+        msg: object,
+        *args: Any,
+        exc_info: Any = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Log warning message with optional structured data kwargs."""
+        if self.isEnabledFor(logging.WARNING):
+            self._log(
+                logging.WARNING,
+                msg,
+                args,
+                exc_info=exc_info,
+                extra=extra,
+                stack_info=stack_info,
+                stacklevel=stacklevel + 1,
+                **kwargs,
+            )
+
+    def error(
+        self,
+        msg: object,
+        *args: Any,
+        exc_info: Any = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Log error message with optional structured data kwargs."""
+        if self.isEnabledFor(logging.ERROR):
+            self._log(
+                logging.ERROR,
+                msg,
+                args,
+                exc_info=exc_info,
+                extra=extra,
+                stack_info=stack_info,
+                stacklevel=stacklevel + 1,
+                **kwargs,
+            )
+
+    def critical(
+        self,
+        msg: object,
+        *args: Any,
+        exc_info: Any = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Log critical message with optional structured data kwargs."""
+        if self.isEnabledFor(logging.CRITICAL):
+            self._log(
+                logging.CRITICAL,
+                msg,
+                args,
+                exc_info=exc_info,
+                extra=extra,
+                stack_info=stack_info,
+                stacklevel=stacklevel + 1,
+                **kwargs,
+            )
+
     def _log(
         self,
         level: int,
@@ -750,7 +865,7 @@ from typing import Protocol, runtime_checkable  # noqa: E402
 
 
 @runtime_checkable
-class SessionManagerProtocol(Protocol):
+class SessionManagerProtocol(Protocol):  # pragma: no cover
     """Protocol for session manager log method."""
 
     def log(

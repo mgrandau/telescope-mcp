@@ -96,12 +96,13 @@ This document outlines the steps needed to port functionality from `telescope-co
 ### 3.1 Evaluate Sensor Options
 - [ ] Review `telescope-control/notebooks/arduino-nano-ble33-sense.ipynb`
 - [ ] Review `telescope-control/notebooks/thunderboard-sense-2.ipynb`
-- [ ] Decide on sensor hardware (accelerometer/IMU vs encoder)
-- [ ] Document sensor selection in `docs/`
+- [x] Decide on sensor hardware (Arduino Nano BLE33 Sense IMU)
+- [x] Document sensor selection in `docs/architecture/sensor-calibration.md`
 
 ### 3.2 Implement Position Driver
-- [ ] Create concrete sensor implementation in `drivers/sensors/`
-- [ ] Implement `PositionSensor` protocol methods
+- [x] Create concrete sensor implementation in `drivers/sensors/`
+- [x] Implement `SensorDriver` protocol (DigitalTwin + Arduino drivers)
+- [x] Create high-level `Sensor` device abstraction
 - [ ] Add calibration storage/persistence
 - [ ] Add sensor fusion if using multiple sensors
 

@@ -443,34 +443,34 @@ class TestDriverFactory:
         controller = factory.create_motor_controller()
         assert isinstance(controller, StubMotorController)
 
-    def test_create_position_sensor_digital_twin(self):
-        """Verifies DriverFactory creates StubPositionSensor in simulation mode.
+    def test_create_sensor_driver_digital_twin(self):
+        """Verifies DriverFactory creates DigitalTwinSensorDriver in simulation mode.
 
-        Tests factory instantiation by requesting position sensor in
+        Tests factory instantiation by requesting sensor driver in
         DIGITAL_TWIN mode.
 
         Business context:
-        Enables telescope positioning tests without encoders by
-        providing simulated position feedback.
+        Enables telescope positioning tests without hardware by
+        providing simulated sensor feedback.
 
         Arrangement:
-        1. Import StubPositionSensor for type checking.
+        1. Import DigitalTwinSensorDriver for type checking.
         2. Create DriverFactory with DriverConfig(mode=DIGITAL_TWIN).
         3. Factory configured for simulation mode.
 
         Action:
-        Call factory.create_position_sensor() to instantiate sensor.
+        Call factory.create_sensor_driver() to instantiate driver.
 
         Assertion Strategy:
         Validates factory routing by confirming:
-        - Returned sensor is instance of StubPositionSensor.
-        - Factory creates stub for simulation mode.
+        - Returned driver is instance of DigitalTwinSensorDriver.
+        - Factory creates digital twin for simulation mode.
 
         Testing Principle:
         Validates factory completeness, ensuring all driver types
         support mode-based instantiation pattern."""
-        from telescope_mcp.drivers.sensors import StubPositionSensor
+        from telescope_mcp.drivers.sensors import DigitalTwinSensorDriver
 
         factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
-        sensor = factory.create_position_sensor()
-        assert isinstance(sensor, StubPositionSensor)
+        driver = factory.create_sensor_driver()
+        assert isinstance(driver, DigitalTwinSensorDriver)

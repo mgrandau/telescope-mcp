@@ -42,7 +42,7 @@ logger = get_logger(__name__)
 # =============================================================================
 
 
-class Clock(Protocol):
+class Clock(Protocol):  # pragma: no cover
     """Protocol for time functions (injectable for testing).
 
     Defines the interface for time-related operations used by Camera.
@@ -257,7 +257,7 @@ class SystemClock:
         time.sleep(seconds)
 
 
-class OverlayRenderer(Protocol):
+class OverlayRenderer(Protocol):  # pragma: no cover
     """Protocol for overlay rendering strategies.
 
     Implement this to create new overlay types without modifying Camera.
@@ -393,7 +393,7 @@ class NullRenderer:
         return image_data
 
 
-class RecoveryStrategy(Protocol):
+class RecoveryStrategy(Protocol):  # pragma: no cover
     """Protocol for camera disconnect recovery.
 
     Implement this to provide custom recovery behavior when

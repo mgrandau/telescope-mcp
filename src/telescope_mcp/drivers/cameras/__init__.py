@@ -19,7 +19,7 @@ from telescope_mcp.drivers.cameras.twin import (
 )
 
 
-class CameraInstance(Protocol):
+class CameraInstance(Protocol):  # pragma: no cover
     """Protocol for an opened camera instance.
 
     Represents a connection to a specific camera for capture and control.
@@ -289,7 +289,7 @@ class CameraInstance(Protocol):
         ...
 
 
-class CameraDriver(Protocol):
+class CameraDriver(Protocol):  # pragma: no cover
     """Protocol for camera drivers enabling hardware abstraction and testing.
 
     Defines the interface for camera discovery and connection, abstracting

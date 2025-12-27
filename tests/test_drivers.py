@@ -17,7 +17,7 @@ from telescope_mcp.drivers.cameras.twin import (
     create_file_camera,
 )
 from telescope_mcp.drivers.motors import MotorType, StubMotorController
-from telescope_mcp.drivers.sensors import StubPositionSensor
+from telescope_mcp.drivers.sensors import DigitalTwinSensorDriver
 
 # =============================================================================
 # Digital Twin Camera Driver Tests
@@ -1005,14 +1005,14 @@ class TestStubMotorController:
         assert status.position_steps == 0
 
 
-class TestStubPositionSensor:
-    """Tests for the stub position sensor."""
+class TestDigitalTwinSensorDriver:
+    """Tests for the digital twin sensor driver."""
 
     def test_initial_position(self):
         """Verifies sensor starts with default position.
 
         Arrangement:
-        1. StubPositionSensor() created.
+        1. DigitalTwinSensorDriver created and opened.
         2. Default position: altitude=45.0°, azimuth=180.0°.
         3. No calibration performed yet.
 
@@ -1021,17 +1021,20 @@ class TestStubPositionSensor:
 
         Assertion Strategy:
         Validates default state by confirming:
-        - pos.altitude = 45.0 degrees.
-        - pos.azimuth = 180.0 degrees (south).
+        - reading.altitude close to 45.0 degrees.
+        - reading.azimuth close to 180.0 degrees (south).
 
         Testing Principle:
         Validates initialization, ensuring sensor provides
         reasonable default position for testing.
         """
-        sensor = StubPositionSensor()
-        pos = sensor.read()
-        assert pos.altitude == 45.0
-        assert pos.azimuth == 180.0
+        driver = DigitalTwinSensorDriver()
+        instance = driver.open()
+        reading = instance.read()
+        # Allow for noise in digital twin
+        assert 40.0 <= reading.altitude <= 50.0
+        assert 175.0 <= reading.azimuth <= 185.0
+        driver.close()
 
     def test_calibrate_updates_position(self):
         """Verifies calibrate updates reported position.
@@ -1046,15 +1049,18 @@ class TestStubPositionSensor:
 
         Assertion Strategy:
         Validates calibration by confirming:
-        - pos.altitude = 30.0 degrees.
-        - pos.azimuth = 90.0 degrees (east).
+        - reading.altitude close to 30.0 degrees.
+        - reading.azimuth close to 90.0 degrees (east).
 
         Testing Principle:
         Validates calibration mechanism, ensuring sensor
         can be set to known positions for testing.
         """
-        sensor = StubPositionSensor()
-        sensor.calibrate(30.0, 90.0)
-        pos = sensor.read()
-        assert pos.altitude == 30.0
-        assert pos.azimuth == 90.0
+        driver = DigitalTwinSensorDriver()
+        instance = driver.open()
+        instance.calibrate(30.0, 90.0)
+        reading = instance.read()
+        # Allow for noise in digital twin
+        assert 25.0 <= reading.altitude <= 35.0
+        assert 85.0 <= reading.azimuth <= 95.0
+        driver.close()

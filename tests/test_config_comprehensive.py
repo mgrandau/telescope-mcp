@@ -280,31 +280,31 @@ class TestDriverFactory:
         assert controller is not None
         assert "Stub" in controller.__class__.__name__
 
-    def test_create_position_sensor_digital_twin(self):
-        """Verifies factory creates StubPositionSensor in simulation mode.
+    def test_create_sensor_driver_digital_twin(self):
+        """Verifies factory creates DigitalTwinSensorDriver in simulation mode.
 
-        Tests position sensor instantiation with DIGITAL_TWIN config.
+        Tests sensor driver instantiation with DIGITAL_TWIN config.
 
         Arrangement:
         1. Create DriverConfig with mode=DIGITAL_TWIN.
         2. Create DriverFactory with config.
 
         Action:
-        Call factory.create_position_sensor() to instantiate sensor.
+        Call factory.create_sensor_driver() to instantiate driver.
 
         Assertion Strategy:
-        Validates sensor type by confirming:
-        - Returned sensor is not None.
-        - Sensor class name contains "Stub".
+        Validates driver type by confirming:
+        - Returned driver is not None.
+        - Driver class name contains "DigitalTwin".
 
         Testing Principle:
         Validates factory completeness, ensuring all driver types
         support simulation mode creation."""
         config = DriverConfig(mode=DriverMode.DIGITAL_TWIN)
         factory = DriverFactory(config)
-        sensor = factory.create_position_sensor()
-        assert sensor is not None
-        assert "Stub" in sensor.__class__.__name__
+        driver = factory.create_sensor_driver()
+        assert driver is not None
+        assert "DigitalTwin" in driver.__class__.__name__
 
 
 class TestGlobalConfiguration:

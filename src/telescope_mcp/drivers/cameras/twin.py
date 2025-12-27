@@ -757,7 +757,7 @@ class DigitalTwinCameraInstance:
         # Simulate noise based on gain
         gain = self._controls["ASI_GAIN"]["value"]
         if gain > 0:
-            noise_level = gain // 10
+            noise_level = int(gain) // 10
             noise = np.random.randint(0, noise_level + 1, img.shape, dtype=np.uint8)
             img = cv2.add(img, noise)
 

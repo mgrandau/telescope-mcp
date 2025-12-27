@@ -8,8 +8,11 @@
         "--dashboard-host", "127.0.0.1",
         //"--dashboard-host", "192.168.0.190",
         "--dashboard-port", "8080",
-        "--mode", "digital_twin"
-        // "--mode", "hardware"
+        "--mode", "digital_twin",
+        // "--mode", "hardware",
+        "--latitude", "42.97990940",
+        "--longitude", "-89.53109220",
+        "--height", "291.23"
       ]
     },
     "docscope-mcp": {

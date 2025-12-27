@@ -55,6 +55,7 @@ repos:
           - numpy
           - pytest
           - types-requests
+          - types-pyserial
           - fastapi
         pass_filenames: false
         entry: mypy src/

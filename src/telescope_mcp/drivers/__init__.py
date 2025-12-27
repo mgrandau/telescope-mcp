@@ -7,6 +7,12 @@ Supports two modes:
 Use drivers.config to switch modes:
     from telescope_mcp.drivers import config
     config.use_digital_twin()  # or config.use_hardware()
+
+Serial Protocols:
+    SerialPort and PortEnumerator protocols enable testing of
+    serial-based drivers (sensors, motors) without hardware.
+
+    from telescope_mcp.drivers import SerialPort, PortEnumerator
 """
 
 from telescope_mcp.drivers import asi_sdk, config, motors, sensors
@@ -19,12 +25,15 @@ from telescope_mcp.drivers.config import (
     use_digital_twin,
     use_hardware,
 )
+from telescope_mcp.drivers.serial import PortEnumerator, SerialPort
 
 __all__ = [
+    # Submodules
     "asi_sdk",
     "motors",
     "sensors",
     "config",
+    # Configuration
     "DriverMode",
     "DriverConfig",
     "DriverFactory",
@@ -32,4 +41,7 @@ __all__ = [
     "configure",
     "use_digital_twin",
     "use_hardware",
+    # Serial protocols (for testing)
+    "SerialPort",
+    "PortEnumerator",
 ]

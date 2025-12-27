@@ -30,6 +30,11 @@ from telescope_mcp.devices.registry import (
     init_registry,
     shutdown_registry,
 )
+from telescope_mcp.devices.sensor import (
+    Sensor,
+    SensorConfig,
+    SensorInfo,
+)
 
 __all__ = [
     # Camera
@@ -61,4 +66,8 @@ __all__ = [
     "init_registry",
     "get_registry",
     "shutdown_registry",
+    # Sensor
+    "Sensor",
+    "SensorConfig",
+    "SensorInfo",
 ]

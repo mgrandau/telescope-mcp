@@ -55,6 +55,7 @@ def create_server(mode: str = "digital_twin") -> Server:
     # Configure driver mode
     if mode.lower() == "hardware":
         from telescope_mcp.drivers.config import use_hardware
+
         use_hardware()
         logger.info("Using HARDWARE mode (real cameras)")
     else:
@@ -300,7 +301,34 @@ def parse_args() -> argparse.Namespace:
         type=str,
         choices=["hardware", "digital_twin"],
         default="digital_twin",
-        help="Driver mode: 'hardware' for real cameras, 'digital_twin' for simulation (default)",
+        help=(
+            "Driver mode: 'hardware' for real cameras, "
+            "'digital_twin' for simulation (default)"
+        ),
+    )
+    parser.add_argument(
+        "--latitude",
+        type=float,
+        default=None,
+        help=(
+            "Observer latitude in degrees (e.g., 40.7128 for NYC). "
+            "Required for ALT/AZ calculation."
+        ),
+    )
+    parser.add_argument(
+        "--longitude",
+        type=float,
+        default=None,
+        help=(
+            "Observer longitude in degrees (e.g., -74.0060 for NYC). "
+            "Required for ALT/AZ calculation."
+        ),
+    )
+    parser.add_argument(
+        "--height",
+        type=float,
+        default=0.0,
+        help="Observer height above sea level in meters (default: 0).",
     )
     return parser.parse_args()
 
@@ -351,6 +379,22 @@ def main() -> None:
 
         set_data_dir(Path(args.data_dir))
         logger.info("Data directory configured", path=args.data_dir)
+
+    # Configure observer location if specified
+    if args.latitude is not None and args.longitude is not None:
+        from telescope_mcp.drivers.config import set_location
+
+        set_location(
+            lat=args.latitude,
+            lon=args.longitude,
+            alt=args.height,
+        )
+        logger.info(
+            "Observer location configured",
+            latitude=args.latitude,
+            longitude=args.longitude,
+            height=args.height,
+        )
 
     # Initialize session manager and log startup
     from telescope_mcp.drivers.config import get_session_manager

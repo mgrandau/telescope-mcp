@@ -17,7 +17,10 @@ from telescope_mcp.drivers.cameras import (
     DigitalTwinCameraDriver,
 )
 from telescope_mcp.drivers.motors import MotorController, StubMotorController
-from telescope_mcp.drivers.sensors import PositionSensor, StubPositionSensor
+from telescope_mcp.drivers.sensors import (
+    DigitalTwinSensorDriver,
+    SensorDriver,
+)
 from telescope_mcp.observability import get_logger
 
 if TYPE_CHECKING:
@@ -212,38 +215,35 @@ class DriverFactory:
         else:
             return StubMotorController()
 
-    def create_position_sensor(self) -> PositionSensor:
-        """Create position sensor for telescope encoder readings.
+    def create_sensor_driver(self) -> SensorDriver:
+        """Create sensor driver for telescope orientation sensing.
 
-        Factory method returning position sensor. HARDWARE mode raises
-        NotImplementedError (not yet implemented). DIGITAL_TWIN mode returns
-        StubPositionSensor providing simulated angles consistent with motor commands.
+        Factory method returning sensor driver. HARDWARE mode returns
+        ArduinoSensorDriver for real IMU hardware. DIGITAL_TWIN mode returns
+        DigitalTwinSensorDriver for simulated sensor data.
 
         Business context: Enables closed-loop position control and pointing
-        verification without physical encoders. Digital twin allows testing pointing
-        accuracy, goto convergence in CI/CD. Future hardware mode will integrate
-        absolute encoders (I2C, SPI). Essential for accurate pointing where open-loop
-        suffers from backlash.
+        verification. Digital twin allows testing pointing accuracy, goto
+        convergence in CI/CD. Hardware mode integrates Arduino Nano BLE33 Sense
+        IMU for real orientation data.
 
         Returns:
-            PositionSensor - StubPositionSensor in DIGITAL_TWIN mode with
-            get_altitude(), get_azimuth() returning angles in degrees.
-
-        Raises:
-            NotImplementedError: In HARDWARE mode (real sensor driver not
-                implemented yet).
+            SensorDriver - DigitalTwinSensorDriver in DIGITAL_TWIN mode,
+            ArduinoSensorDriver in HARDWARE mode.
 
         Example:
             >>> factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
-            >>> sensor = factory.create_position_sensor()
-            >>> alt, az = sensor.get_altitude(), sensor.get_azimuth()
-            >>> print(f"Alt={alt:.2f}°, Az={az:.2f}°")
+            >>> driver = factory.create_sensor_driver()
+            >>> instance = driver.open()
+            >>> reading = instance.read()
+            >>> print(f"Alt={reading.altitude:.2f}°, Az={reading.azimuth:.2f}°")
         """
         if self.config.mode == DriverMode.HARDWARE:
-            # TODO: Import and return real sensor driver
-            raise NotImplementedError("Hardware position sensor not yet implemented")
+            from telescope_mcp.drivers.sensors import ArduinoSensorDriver
+
+            return ArduinoSensorDriver()
         else:
-            return StubPositionSensor()
+            return DigitalTwinSensorDriver()
 
 
 # Global driver factory instance - can be reconfigured
