@@ -62,8 +62,26 @@ class RecoveryStrategy:
     def __init__(self, registry: CameraRegistry) -> None:
         """Create recovery strategy linked to registry.
 
+        Stores reference to registry for use during recovery attempts.
+        The registry provides access to the driver's device discovery.
+
+        Business context: Recovery strategies need registry access to
+        rescan for cameras after USB disconnects. Dependency injection
+        enables testing with mock registries.
+
         Args:
             registry: Registry to use for camera re-discovery.
+
+        Returns:
+            None. Strategy initialized.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> registry = CameraRegistry(driver)
+            >>> strategy = RecoveryStrategy(registry)
+            >>> registry.set_recovery_strategy(strategy)
         """
         self._registry = registry
 
@@ -205,11 +223,21 @@ class CameraRegistry:
         Call discover() to scan for cameras, then get() to create
         Camera instances.
 
+        Business context: The registry is the central coordinator for
+        camera lifecycle. It manages discovery, instance creation, and
+        cleanup. Dependencies are injected for testability.
+
         Args:
             driver: Camera driver for hardware access (ASI or DigitalTwin).
             renderer: Overlay renderer passed to created cameras.
             clock: Clock for timing (default: SystemClock).
             hooks: Event hooks passed to created cameras.
+
+        Returns:
+            None. Registry initialized, ready for discover().
+
+        Raises:
+            No exceptions raised.
 
         Example:
             from telescope_mcp.drivers.cameras import DigitalTwinCameraDriver
@@ -579,11 +607,25 @@ class CameraRegistry:
     def __enter__(self) -> CameraRegistry:
         """Enter context manager.
 
+        Enables 'with' statement for automatic resource cleanup.
+        Simply returns self; discovery must be called separately.
+
+        Implementation: No initialization performed on entry - registry
+        is already configured. Entry just enables cleanup on exit.
+
+        Args:
+            No arguments (context manager protocol).
+
         Returns:
             Self for use in with statement.
 
         Raises:
             None. Never raises during context entry.
+
+        Example:
+            >>> with CameraRegistry(driver) as registry:
+            ...     registry.discover()
+            ...     camera = registry.get(0)
         """
         return self
 
@@ -602,17 +644,45 @@ class CameraRegistry:
             exc_type: Exception type if raised, else None.
             exc_val: Exception value if raised, else None.
             exc_tb: Traceback if raised, else None.
+
+        Returns:
+            None. Does not suppress exceptions.
+
+        Raises:
+            No exceptions raised. Cleanup errors logged.
+
+        Example:
+            >>> with CameraRegistry(driver) as registry:
+            ...     registry.discover()
+            ...     camera = registry.get(0)
+            >>> # All cameras disconnected here
         """
         self.clear()
 
     def __repr__(self) -> str:
         """Return string representation of registry state.
 
+        Shows counts of discovered and active cameras for debugging.
+
+        Business context: Useful in REPL and logs for quick registry
+        status checks without calling multiple methods.
+
+        Args:
+            No arguments.
+
         Returns:
             String showing discovered and active camera counts.
 
         Raises:
             None. Never fails during string formatting.
+
+        Example:
+            >>> registry = CameraRegistry(driver)
+            >>> repr(registry)
+            '<CameraRegistry(discovered=0, active=0)>'
+            >>> registry.discover()
+            >>> repr(registry)
+            '<CameraRegistry(discovered=2, active=0)>'
         """
         discovered = len(self._discovery_cache) if self._discovery_cache else 0
         active = len(self._cameras)

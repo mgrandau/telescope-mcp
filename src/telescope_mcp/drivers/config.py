@@ -227,9 +227,16 @@ class DriverFactory:
         convergence in CI/CD. Hardware mode integrates Arduino Nano BLE33 Sense
         IMU for real orientation data.
 
+        Args:
+            No arguments. Mode determined by self.config.mode.
+
         Returns:
             SensorDriver - DigitalTwinSensorDriver in DIGITAL_TWIN mode,
             ArduinoSensorDriver in HARDWARE mode.
+
+        Raises:
+            No exceptions during factory call. Driver-specific errors
+            occur when opening connections.
 
         Example:
             >>> factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))

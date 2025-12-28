@@ -83,6 +83,12 @@ class Session:
             auto_rotate: Whether to auto-rotate idle sessions.
             rotate_interval_hours: Hours between auto-rotations.
 
+        Returns:
+            None. Session initialized and ready for logging.
+
+        Raises:
+            No exceptions raised during initialization.
+
         Example:
             session = Session(
                 SessionType.OBSERVATION,
@@ -132,14 +138,31 @@ class Session:
         )
 
     def _generate_session_id(self) -> str:
-        """Generate a unique session ID.
+        """Generate a unique session ID for ASDF filename.
 
         Creates an ID from session type, optional target, and timestamp.
         Format: '{type}_{target}_{YYYYMMDD_HHMMSS}' or '{type}_{YYYYMMDD_HHMMSS}'.
-        Used for ASDF filename and identification.
+        Target name is slugified (lowercase, spaces to underscores, max 20 chars).
+
+        Business context: Session IDs serve as both unique identifiers and
+        human-readable filenames. Including target enables easy identification
+        when browsing ASDF files. Timestamp ensures uniqueness even for
+        same-target observations.
+
+        Args:
+            No arguments. Uses self.session_type, self.target, self.start_time.
 
         Returns:
-            Unique session ID string.
+            str: Unique session ID like 'observation_m31_20251214_210000'
+                or 'alignment_20251214_203000'.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> session = Session(SessionType.OBSERVATION, Path("/data"), target="M31")
+            >>> session.session_id
+            'observation_m31_20251214_210000'
         """
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
 
@@ -357,8 +380,25 @@ class Session:
         observability) into the hierarchical structure expected by ASDF.
         Sets end_time and calculates duration.
 
+        Business context: ASDF files store telescope observation data in a
+        standardized format. This method structures in-memory data for
+        serialization, enabling post-session analysis with astropy tools.
+
+        Args:
+            No arguments. Uses internal state (_logs, _events, _cameras, etc.).
+
         Returns:
-            Dictionary representing the complete ASDF tree structure.
+            dict: Complete ASDF tree with keys: meta, cameras, telemetry,
+                calibration, observability. Ready for asdf.AsdfFile().
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> # Called internally by close()
+            >>> tree = session._build_asdf_tree()
+            >>> tree['meta']['session_type']
+            'observation'
         """
         self._end_time = datetime.now(UTC)
         duration_seconds = (self._end_time - self.start_time).total_seconds()
@@ -394,8 +434,24 @@ class Session:
         Organizes files by date: data_dir/YYYY/MM/DD/session_id.asdf.
         Creates directories if they don't exist.
 
+        Business context: Date-based directory structure enables easy
+        browsing and archival of observation data. Automatic directory
+        creation simplifies deployment without manual setup.
+
+        Args:
+            No arguments. Uses self.data_dir, self.start_time, self.session_id.
+
         Returns:
-            Path where the ASDF file will be written.
+            Path: Full path where ASDF file will be written, e.g.,
+                '/data/telescope/2025/12/14/observation_m31_20251214_210000.asdf'.
+
+        Raises:
+            No exceptions raised. Creates directories as needed.
+
+        Example:
+            >>> path = session._get_output_path()
+            >>> str(path)
+            '/data/telescope/2025/12/14/observation_m31_20251214_210000.asdf'
         """
         # Organize by date: data_dir/YYYY/MM/DD/session_id.asdf
         date_path = self.start_time.strftime("%Y/%m/%d")

@@ -152,7 +152,36 @@ class StructuredLogger(logging.Logger):
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Log debug message with optional structured data kwargs."""
+        """Log debug message with structured data for detailed diagnostics.
+
+        Emits DEBUG level message with optional structured key-value data that
+        appears in formatted output. Used for detailed diagnostic information
+        during development and troubleshooting.
+
+        Business context: Enables rich debugging of telescope operations with
+        context like camera_id, step counts, timing measurements. Structured
+        data is queryable in JSON format logs for production debugging.
+
+        Args:
+            msg: Log message, may contain %-style format placeholders.
+            *args: Arguments for %-style formatting of msg.
+            exc_info: Exception info tuple, True for current exception, or None.
+            stack_info: If True, include stack trace in log output.
+            stacklevel: Stack frames to skip for caller identification.
+            extra: Additional context dict for LogRecord (rarely needed).
+            **kwargs: Structured data as key=value pairs. Appears in output as
+                ` | key=value key2=value2`. Common: camera_id, duration_ms.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Logging methods never raise exceptions.
+
+        Example:
+            >>> logger.debug("Processing frame", frame=42, exposure_us=1000)
+            # Output: ... DEBUG - Processing frame | frame=42 exposure_us=1000
+        """
         if self.isEnabledFor(logging.DEBUG):
             self._log(
                 logging.DEBUG,
@@ -175,7 +204,36 @@ class StructuredLogger(logging.Logger):
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Log info message with optional structured data kwargs."""
+        """Log info message with structured data for operational events.
+
+        Emits INFO level message for normal operational events. The primary
+        logging level for telescope operations: session starts, frame captures,
+        motor movements, calibrations.
+
+        Business context: Standard operational logging for telescope control.
+        Structured data enables filtering session logs by camera, target, or
+        operation type. Stored in ASDF session files for observation provenance.
+
+        Args:
+            msg: Log message, may contain %-style format placeholders.
+            *args: Arguments for %-style formatting of msg.
+            exc_info: Exception info tuple, True for current exception, or None.
+            stack_info: If True, include stack trace in log output.
+            stacklevel: Stack frames to skip for caller identification.
+            extra: Additional context dict for LogRecord (rarely needed).
+            **kwargs: Structured data as key=value pairs. Common keys:
+                camera_id, session_id, target, exposure_us, frame_number.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Logging methods never raise exceptions.
+
+        Example:
+            >>> logger.info("Frame captured", camera_id=0, frame=1, exposure_us=5000)
+            # Output: ... INFO - Frame captured | camera_id=0 frame=1 exposure_us=5000
+        """
         if self.isEnabledFor(logging.INFO):
             self._log(
                 logging.INFO,
@@ -198,7 +256,36 @@ class StructuredLogger(logging.Logger):
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Log warning message with optional structured data kwargs."""
+        """Log warning message for recoverable issues requiring attention.
+
+        Emits WARNING level message for conditions that don't prevent operation
+        but indicate potential problems: high sensor drift, approaching limits,
+        retry situations, deprecated usage.
+
+        Business context: Alerts operators to conditions requiring attention
+        without halting observations. Warnings in session logs help diagnose
+        data quality issues post-observation.
+
+        Args:
+            msg: Log message, may contain %-style format placeholders.
+            *args: Arguments for %-style formatting of msg.
+            exc_info: Exception info tuple, True for current exception, or None.
+            stack_info: If True, include stack trace in log output.
+            stacklevel: Stack frames to skip for caller identification.
+            extra: Additional context dict for LogRecord (rarely needed).
+            **kwargs: Structured data as key=value pairs. Common keys:
+                error, retry_count, threshold, actual_value.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Logging methods never raise exceptions.
+
+        Example:
+            >>> logger.warning("Sensor drift high", drift_deg=0.5, threshold=0.3)
+            # Output: ... WARNING - Sensor drift high | drift_deg=0.5 threshold=0.3
+        """
         if self.isEnabledFor(logging.WARNING):
             self._log(
                 logging.WARNING,
@@ -221,7 +308,37 @@ class StructuredLogger(logging.Logger):
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Log error message with optional structured data kwargs."""
+        """Log error message for failures that impact operation.
+
+        Emits ERROR level message for conditions that prevent normal operation:
+        connection failures, hardware errors, invalid data. Operation may
+        continue in degraded mode or require intervention.
+
+        Business context: Critical for diagnosing telescope failures.
+        Error logs with structured data enable rapid troubleshooting of
+        equipment issues and software bugs during observation sessions.
+
+        Args:
+            msg: Log message, may contain %-style format placeholders.
+            *args: Arguments for %-style formatting of msg.
+            exc_info: Exception info tuple, True for current exception, or None.
+                Set True to include full traceback.
+            stack_info: If True, include stack trace in log output.
+            stacklevel: Stack frames to skip for caller identification.
+            extra: Additional context dict for LogRecord (rarely needed).
+            **kwargs: Structured data as key=value pairs. Common keys:
+                error, exception_type, camera_id, port, attempted_action.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Logging methods never raise exceptions.
+
+        Example:
+            >>> logger.error("Connection lost", port="/dev/ttyACM0", error=str(e))
+            # Output: ... ERROR - Connection lost | port=/dev/ttyACM0 error=...
+        """
         if self.isEnabledFor(logging.ERROR):
             self._log(
                 logging.ERROR,
@@ -244,7 +361,37 @@ class StructuredLogger(logging.Logger):
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Log critical message with optional structured data kwargs."""
+        """Log critical message for severe failures requiring immediate action.
+
+        Emits CRITICAL level message for catastrophic failures: system crashes,
+        data corruption, safety-critical equipment failures. Immediate operator
+        intervention typically required.
+
+        Business context: Highest severity for telescope emergencies. Used
+        sparingly for conditions like motor runaway, overheating, or tracking
+        system failure. May trigger automated alerts in monitoring systems.
+
+        Args:
+            msg: Log message, may contain %-style format placeholders.
+            *args: Arguments for %-style formatting of msg.
+            exc_info: Exception info tuple, True for current exception, or None.
+                Almost always set True for critical errors.
+            stack_info: If True, include stack trace in log output.
+            stacklevel: Stack frames to skip for caller identification.
+            extra: Additional context dict for LogRecord (rarely needed).
+            **kwargs: Structured data as key=value pairs. Include all context
+                needed for emergency response.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Logging methods never raise exceptions.
+
+        Example:
+            >>> logger.critical("Motor runaway", motor="altitude", exc_info=True)
+            # Output: ... CRITICAL - Motor runaway | motor=altitude
+        """
         if self.isEnabledFor(logging.CRITICAL):
             self._log(
                 logging.CRITICAL,
@@ -290,7 +437,9 @@ class StructuredLogger(logging.Logger):
             stacklevel: Stack frames to skip for determining caller info.
                 Incremented by 1 internally for accurate source location.
             **kwargs: Arbitrary key-value pairs to include as structured
-                data. Common keys: camera_id, exposure_us, duration_ms.
+                data. Common keys: camera_id, exposure_u        >>> import io
+        >>> buffer = io.StringIO()
+        >>> configs, duration_ms.
 
         Returns:
             None.
@@ -729,7 +878,37 @@ def _configure_logging_impl(
     stream: Any = None,
     include_structured: bool = True,
 ) -> None:
-    """Internal implementation of configure_logging (assumes lock is held)."""
+    """Internal implementation of configure_logging (lock must be held).
+
+    Sets up the telescope_mcp logger hierarchy with appropriate handlers
+    and formatters. Called by configure_logging() after acquiring the
+    configuration lock. Idempotent - subsequent calls are no-ops.
+
+    Business context: Centralizes logging configuration for consistent
+    output across all telescope-mcp modules. Supports both human-readable
+    and JSON formats for different deployment scenarios (development vs
+    production log aggregation).
+
+    Args:
+        level: Logging level as int (logging.INFO) or string ('INFO').
+            Controls minimum severity of logged messages.
+        json_format: If True, output structured JSON logs. If False,
+            use human-readable format with optional structured fields.
+        stream: Output stream for logs. Defaults to sys.stderr.
+            Can be file object or any stream with write() method.
+        include_structured: If True (and json_format=False), append
+            structured key=value pairs to log messages.
+
+    Returns:
+        None. Configures global logging state.
+
+    Raises:
+        No exceptions raised. Configuration is best-effort.
+
+    Example:
+        >>> with _logging_lock:
+        ...     _configure_logging_impl(logging.DEBUG, json_format=True)
+    """
     global _configured
 
     if _configured:
@@ -763,7 +942,31 @@ def _configure_logging_impl(
 
 
 def _reset_logging_impl() -> None:
-    """Internal implementation of reset_logging (assumes lock is held)."""
+    """Internal implementation of reset_logging (assumes lock is held).
+
+    Removes all handlers from telescope_mcp logger and clears configured
+    flag. Called by reset_logging() which handles locking.
+
+    Business context: Test isolation requires resetting logging between
+    tests to prevent handler accumulation and configuration bleed.
+
+    Implementation: Gets 'telescope_mcp' logger, iterates handlers copy,
+    removes each and calls close(). Sets _configured to False.
+
+    Args:
+        No arguments. Modifies global state.
+
+    Returns:
+        None. Logging state reset.
+
+    Raises:
+        No exceptions raised. Handler close errors ignored.
+
+    Example:
+        >>> # Called internally by reset_logging()
+        >>> with _config_lock:
+        ...     _reset_logging_impl()
+    """
     global _configured
 
     # Remove all handlers from telescope_mcp logger
@@ -866,7 +1069,16 @@ from typing import Protocol, runtime_checkable  # noqa: E402
 
 @runtime_checkable
 class SessionManagerProtocol(Protocol):  # pragma: no cover
-    """Protocol for session manager log method."""
+    """Protocol defining session manager log interface.
+
+    Enables type-safe dependency injection of session managers into the
+    logging system. Any class implementing this protocol can receive
+    forwarded log messages from SessionLogHandler.
+
+    Business context: Allows logging system to remain decoupled from
+    session storage implementation while enabling dual-write of logs
+    to both console and ASDF session files for observation provenance.
+    """
 
     def log(
         self,
@@ -875,7 +1087,37 @@ class SessionManagerProtocol(Protocol):  # pragma: no cover
         source: str,
         **kwargs: Any,
     ) -> None:
-        """Log a message to the session."""
+        """Log a message to the active session storage.
+
+        Records log messages in the session's ASDF file for observation
+        provenance and debugging. Called by SessionLogHandler when logs
+        are emitted through the standard logging system.
+
+        Business context: Creates permanent record of all telescope operations
+        within session files. Essential for post-observation analysis, debugging
+        equipment issues, and scientific data provenance. Enables correlating
+        logs with captured frames and events.
+
+        Args:
+            level: Log level string ("DEBUG", "INFO", "WARNING", "ERROR",
+                "CRITICAL"). Used for filtering and display.
+            message: Human-readable log message describing the event.
+            source: Logger name indicating origin module, e.g.,
+                "telescope_mcp.devices.camera". Used for filtering.
+            **kwargs: Structured data to include with log entry. Common keys:
+                camera_id, exposure_us, frame_number, error, duration_ms.
+
+        Returns:
+            None. Message stored in session's log buffer.
+
+        Raises:
+            None. Logging should never raise - errors are silently ignored
+            to prevent cascading failures.
+
+        Example:
+            >>> manager.log("INFO", "Frame captured", "camera", frame=1)
+            >>> manager.log("ERROR", "Connection lost", "motor", error=str(e))
+        """
         ...  # pragma: no cover
 
 

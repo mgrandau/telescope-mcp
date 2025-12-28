@@ -77,56 +77,191 @@ class SerialPort(Protocol):  # pragma: no cover
 
     @property
     def is_open(self) -> bool:
-        """Whether the port is currently open."""
+        """Check if serial port connection is currently active.
+
+        Indicates whether the serial port is open and available for I/O.
+        Used to verify connection state before operations and detect
+        disconnections.
+
+        Business context: Essential for robust error handling in telescope
+        hardware drivers. Checking is_open before operations prevents
+        cryptic errors and enables graceful reconnection.
+
+        Args:
+            No arguments (property accessor).
+
+        Returns:
+            True if port is open and ready for communication, False if
+            closed or disconnected.
+
+        Raises:
+            No exceptions raised. Safe to call in any state.
+
+        Example:
+            >>> if serial.is_open:
+            ...     serial.write(b"command")
+            ... else:
+            ...     raise RuntimeError("Port disconnected")
+        """
         ...
 
     @property
     def in_waiting(self) -> int:
-        """Number of bytes waiting to be read."""
+        """Get number of bytes available to read without blocking.
+
+        Returns count of bytes in the receive buffer. Used to check for
+        available data before reading, enabling non-blocking polling of
+        serial devices.
+
+        Business context: Enables efficient polling of Arduino sensors
+        without blocking. The background reader thread uses this to check
+        for new data at high frequency without stalling.
+
+        Args:
+            No arguments (property accessor).
+
+        Returns:
+            Number of bytes waiting in receive buffer. Zero if buffer empty.
+
+        Raises:
+            No exceptions raised. Returns 0 if port closed.
+
+        Example:
+            >>> if serial.in_waiting > 0:
+            ...     data = serial.readline()
+        """
         ...
 
     def read_until(self, expected: bytes = b"\n", size: int | None = None) -> bytes:
-        """Read until expected byte sequence or timeout.
+        """Read bytes until delimiter found or timeout occurs.
+
+        Reads from serial port until the expected byte sequence is found,
+        maximum size is reached, or the configured timeout expires.
+        Primary method for reading line-oriented serial protocols.
+
+        Business context: Arduino sensors and motor controllers use
+        line-based protocols with \\r\\n terminators. This method enables
+        reliable message framing regardless of timing variations.
 
         Args:
-            expected: Byte sequence to read until (default newline).
-            size: Maximum bytes to read (None for unlimited).
+            expected: Byte sequence marking end of message. Default b"\\n"
+                for newline. Arduino uses b"\\r\\n" typically.
+            size: Maximum bytes to read before returning. None (default)
+                means read until terminator or timeout.
 
         Returns:
-            Bytes read from port, including terminator if found.
+            Bytes read including the terminator sequence if found.
+            May be partial if timeout occurs before terminator.
+
+        Raises:
+            SerialException: If port is closed or hardware error occurs.
+
+        Example:
+            >>> line = serial.read_until(b\"\\r\\n\")
+            >>> values = line.decode().strip().split(\"\\t\")
         """
         ...
 
     def readline(self) -> bytes:
-        """Read a line (until \\n).
+        """Read a complete line ending with newline character.
+
+        Convenience method equivalent to read_until(b"\\n"). Reads until
+        newline character or timeout. Standard method for line-oriented
+        serial protocols.
+
+        Business context: Used by Arduino sensor driver for reading
+        continuous sensor output where each reading is one line of
+        tab-separated values.
 
         Returns:
-            Bytes up to and including newline character.
+            Bytes up to and including newline. May be empty or partial
+            if timeout occurs. Decode with .decode().strip() for string.
+
+        Raises:
+            SerialException: If port is closed or hardware error occurs.
+
+        Example:
+            >>> line = serial.readline()
+            >>> if line:
+            ...     reading = line.decode().strip()
         """
         ...
 
     def write(self, data: bytes) -> int | None:
-        """Write bytes to port.
+        """Write bytes to serial port for transmission.
+
+        Sends data to the connected device. For telescope hardware, this
+        sends commands to Arduino sensors or motor controllers.
+
+        Business context: Enables sending commands (RESET, STATUS,
+        CALIBRATE) to Arduino sensors and movement commands to motor
+        controllers. Thread-safe in pyserial but should be serialized
+        at driver level.
 
         Args:
-            data: Bytes to write.
+            data: Bytes to transmit. Commands typically end with b"\\n".
+                Example: b"STATUS\\n" for Arduino status query.
 
         Returns:
-            Number of bytes written, or None if write fails.
+            Number of bytes written if successful. None if write fails
+            (pyserial may return None on certain error conditions).
+
+        Raises:
+            SerialException: If port is closed or hardware error occurs.
+            SerialTimeoutError: If write times out (rare with USB serial).
+
+        Example:
+            >>> bytes_sent = serial.write(b\"RESET\\n\")
+            >>> if bytes_sent:
+            ...     response = serial.read_until(b\"\\r\\n\")
         """
         ...
 
     def reset_input_buffer(self) -> None:
-        """Clear the input buffer.
+        """Clear all data from the serial input buffer.
 
-        Discards any data waiting to be read.
+        Discards any bytes waiting to be read. Used before sending
+        commands to ensure response is fresh, not stale buffered data.
+
+        Business context: Essential for reliable command-response
+        protocols. Arduino sensors continuously output data; clearing
+        buffer before commands ensures the response matches the command.
+
+        Returns:
+            None.
+
+        Raises:
+            SerialException: If port is closed.
+
+        Example:
+            >>> serial.reset_input_buffer()  # Clear stale data
+            >>> serial.write(b\"STATUS\\n\")  # Send command
+            >>> response = serial.read_until()  # Get fresh response
         """
         ...
 
     def close(self) -> None:
-        """Close the port.
+        """Close the serial port and release system resources.
 
-        Releases the serial port resource.
+        Terminates the serial connection and releases the port for other
+        processes. Should be called when done with the device or during
+        cleanup.
+
+        Business context: Proper resource cleanup prevents port locking
+        issues common with USB serial devices. Essential for graceful
+        shutdown and reconnection scenarios.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Safe to call multiple times or on already-closed port.
+
+        Example:
+            >>> try:
+            ...     # Use serial port
+            ... finally:
+            ...     serial.close()
         """
         ...
 
@@ -150,10 +285,30 @@ class PortEnumerator(Protocol):  # pragma: no cover
     """
 
     def comports(self) -> list:
-        """Return list of available serial ports.
+        """Enumerate available serial ports on the system.
+
+        Scans system for serial ports (USB, hardware, virtual). Returns
+        list of port info objects with device paths and descriptions.
+        Used for discovering Arduino sensors and motor controllers.
+
+        Business context: Enables automatic discovery of telescope
+        hardware without manual configuration. Users don't need to know
+        port names - drivers scan and identify devices by description.
 
         Returns:
-            List of port info objects with 'device' and 'description' attrs.
+            List of port info objects. Each object has attributes:
+            - device: Port path (e.g., "/dev/ttyACM0", "COM3")
+            - description: Human-readable description (e.g., "Arduino Nano")
+            - hwid: Hardware ID for precise device identification
+
+        Raises:
+            None. Returns empty list if no ports found or on error.
+
+        Example:
+            >>> ports = enumerator.comports()
+            >>> for port in ports:
+            ...     if "Arduino" in port.description:
+            ...         print(f"Found: {port.device}")
         """
         ...
 

@@ -104,10 +104,16 @@ class SyncCaptureResult:
         >200ms (poor - may affect platesolving). Zero indicates perfect timing
         (rare - usually 1-20ms due to thread scheduling jitter).
 
+        Args:
+            No arguments (property accessor).
+
         Returns:
             Timing error in milliseconds as float. Range typically -500.0 to
             +500.0 (extreme cases), commonly -50.0 to +50.0 for well-tuned
             systems. Precision to 0.001ms (1 microsecond).
+
+        Raises:
+            No exceptions raised. Pure calculation on stored value.
 
         Example:
             >>> result = controller.sync_capture(config)
@@ -173,9 +179,19 @@ class CameraController:
         Initializes the controller with a collection of named cameras.
         The clock can be injected for deterministic timing in tests.
 
+        Business context: Multi-camera astrophotography requires coordinated
+        captures. This controller manages named cameras enabling sync
+        operations between finder and main imaging cameras.
+
         Args:
             cameras: Dict mapping camera names to Camera instances.
             clock: Clock implementation for timing (default: SystemClock).
+
+        Returns:
+            None. Controller initialized, ready for camera operations.
+
+        Raises:
+            No exceptions raised during initialization.
 
         Example:
             controller = CameraController({
@@ -503,6 +519,21 @@ class CameraController:
             (CaptureResult), primary_error (Exception), primary_start_mono
             (float), primary_start_wall (datetime). Thread executor ensures
             clean cleanup even on exception.
+
+            Args:
+                No arguments. Uses enclosing scope variables via nonlocal.
+
+            Returns:
+                None. Results stored in nonlocal variables (primary_result,
+                primary_error, primary_start_mono, primary_start_wall).
+
+            Raises:
+                No exceptions raised. Errors captured in primary_error for
+                main thread to handle after join().
+
+            Example:
+                >>> # Called internally by ThreadPoolExecutor
+                >>> executor.submit(capture_primary)  # Starts immediately
             """
             nonlocal \
                 primary_result, \
@@ -546,6 +577,17 @@ class CameraController:
             secondary_result (CaptureResult), secondary_error (Exception),
             secondary_start_mono (float), secondary_start_wall (datetime).
             Thread executor handles cleanup.
+
+            Args:
+                No arguments. Uses enclosing scope variables via nonlocal.
+
+            Returns:
+                None. Results stored in nonlocal variables (secondary_result,
+                secondary_error, secondary_start_mono, secondary_start_wall).
+
+            Raises:
+                No exceptions raised. Errors captured in secondary_error for
+                main thread to handle after join().
             """
             nonlocal \
                 secondary_result, \

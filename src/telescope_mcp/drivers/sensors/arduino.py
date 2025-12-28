@@ -74,14 +74,30 @@ class ArduinoSensorInstance:
     """
 
     def __init__(self, port: str, baudrate: int = 115200) -> None:
-        """Open serial connection to Arduino.
+        """Open serial connection to Arduino sensor.
+
+        Establishes serial connection, initializes state, and starts
+        background reader thread for continuous data streaming.
+
+        Business context: Arduino sensor provides telescope orientation
+        via IMU data. Serial connection enables continuous data streaming
+        for real-time position tracking.
 
         Args:
             port: Serial port (e.g., /dev/ttyACM0).
             baudrate: Serial baud rate (default 115200).
 
+        Returns:
+            None. Instance connected and reading data.
+
         Raises:
-            RuntimeError: If serial connection fails.
+            RuntimeError: If serial connection fails (port busy, pyserial
+                not installed, or hardware error).
+
+        Example:
+            >>> instance = ArduinoSensorInstance("/dev/ttyACM0")
+            >>> reading = instance.read()
+            >>> print(f"Alt: {reading.altitude:.1f}°")
         """
         try:
             import serial as serial_module
@@ -136,9 +152,35 @@ class ArduinoSensorInstance:
     def _init_with_serial(self, serial_port: SerialPort, port_name: str) -> None:
         """Initialize instance state with given serial port.
 
+        Sets up all instance variables needed for Arduino sensor operations.
+        Called by both __init__ (with real serial) and _create_with_serial
+        (with mock serial for testing).
+
+        Business context: Centralizes initialization logic so both production
+        and test code paths use identical setup. Ensures consistent state
+        for calibration parameters, reading buffers, and thread management.
+
+        Implementation: Initializes empty dicts for accelerometer/magnetometer,
+        zeroed calibration offsets/scales, and None for reader thread. Does
+        NOT start background reader - that's handled separately by caller
+        to allow test control over threading.
+
         Args:
-            serial_port: Serial port to use for communication.
-            port_name: Port name for identification.
+            serial_port: Serial port to use for communication. Must implement
+                SerialPort protocol (readline, write methods).
+            port_name: Port name for identification in logs.
+
+        Returns:
+            None. Instance state initialized, ready for _start_reader().
+
+        Raises:
+            No exceptions raised during initialization.
+
+        Example:
+            >>> # Called internally by factory methods
+            >>> instance = cls.__new__(cls)
+            >>> instance._init_with_serial(mock_serial, "/dev/mock")
+            >>> instance._start_reader()  # Optional for tests
         """
         self._serial: SerialPort = serial_port
         self._port = port_name
@@ -167,26 +209,73 @@ class ArduinoSensorInstance:
         self._reader_thread: threading.Thread | None = None
 
     def _start_reader(self) -> None:
-        """Start the background reader thread."""
+        """Start the background reader thread for continuous data.
+
+        Spawns daemon thread that continuously reads serial data and
+        updates internal sensor state. Must be called after serial
+        connection established.
+
+        Business context: Arduino streams sensor data continuously at
+        ~10Hz. Background thread ensures latest data is always available
+        without blocking the main thread on serial I/O.
+
+        Implementation: Creates Thread targeting _read_loop, sets as daemon
+        (exits when main program exits), and starts it. Thread reference
+        stored in _reader_thread.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None. Thread started in background.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> instance._init_with_serial(serial_port, port_name)
+            >>> instance._start_reader()  # Begin data collection
+        """
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
         self._reader_thread.start()
 
-    def parse_line(self, line: str) -> bool:
-        """Parse a single line of sensor data.
+    def _parse_line(self, line: str) -> bool:
+        """Parse a single line of sensor data from Arduino serial output.
 
-        Updates internal state if line is valid sensor data.
-        Useful for testing without background thread.
+        Updates internal state (accelerometer, magnetometer, temperature,
+        humidity) if line contains valid tab-separated sensor values.
+        Handles both 8-value (full format) and 6-value (legacy IMU-only)
+        data formats. Ignores command responses and malformed lines.
+
+        Business context: The Arduino streams sensor data continuously.
+        This method is the core parser that converts raw serial strings
+        into structured data. Direct use is primarily for testing - in
+        production, the background reader thread calls this automatically.
 
         Args:
-            line: Tab-separated sensor values string.
+            line: Tab-separated sensor values from Arduino serial output.
+                Full format (8 values): aX, aY, aZ, mX, mY, mZ, temp, humidity
+                Legacy format (6 values): aX, aZ, aY, mX, mZ, mY
+                Lines starting with INFO:, OK:, ERROR:, CMD: are skipped.
 
         Returns:
-            True if line was valid sensor data, False otherwise.
+            bool: True if line contained valid sensor data and internal
+                state was updated. False if line was empty, a command
+                response, or malformed.
+
+        Raises:
+            No exceptions raised. Malformed data silently skipped.
 
         Example:
-            instance = ArduinoSensorInstance._create_with_serial(mock_serial)
-            instance.parse_line("0.5\\t0.0\\t0.87\\t30.0\\t0.0\\t40.0\\t22.5\\t55.0")
-            reading = instance.read()
+            >>> instance = driver._open_with_serial(mock_serial)
+            >>> # Full format with environmental sensors
+            >>> valid = instance.parse_line(
+            ...     "0.50\t0.00\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0"
+            ... )
+            >>> assert valid is True
+            >>> # Command response - skipped
+            >>> valid = instance.parse_line("OK: CALIBRATE complete")
+            >>> assert valid is False
         """
         line = line.strip()
         if not line:
@@ -239,20 +328,74 @@ class ArduinoSensorInstance:
         return False
 
     def _read_loop(self) -> None:
-        """Background thread to continuously read sensor data."""
+        """Background thread loop for continuous sensor data reading.
+
+        Continuously reads lines from serial port and parses sensor data
+        until stop flag set or port closed. Updates internal state with
+        each valid reading.
+
+        Business context: Continuous reading ensures sensor data is always
+        fresh. Daemon thread terminates automatically when main program
+        exits, preventing resource leaks.
+
+        Implementation: Loops while _stop_reading is False and _is_open.
+        Reads until newline, decodes, and calls parse_line(). Catches
+        exceptions to prevent thread crash, logs warnings.
+
+        Args:
+            No arguments. Uses instance state.
+
+        Returns:
+            None. Runs until stopped.
+
+        Raises:
+            No exceptions raised. Errors logged and loop continues.
+
+        Example:
+            >>> # Started internally by _start_reader()
+            >>> # Thread runs: instance._read_loop()
+        """
         while not self._stop_reading and self._is_open:
             try:
                 line = self._serial.read_until(b"\r\n").decode().strip()
-                self.parse_line(line)
+                self._parse_line(line)
             except Exception as e:
                 if self._is_open:
                     logger.warning("Sensor read error", error=str(e))
 
     def get_info(self) -> dict:
-        """Get sensor information.
+        """Get Arduino sensor hardware information and capabilities.
+
+        Returns metadata describing the connected Arduino Nano BLE33 Sense
+        including sensor capabilities and serial port information. Used
+        by the Sensor device layer to populate SensorInfo.
+
+        Business context: The Arduino Nano BLE33 Sense provides a specific
+        set of sensors (LSM9DS1 IMU, HTS221 environmental). This method
+        enables clients to understand available measurements and configure
+        appropriate data collection.
 
         Returns:
-            Dict with sensor type, port, and capabilities.
+            dict: Sensor metadata containing:
+                - type (str): Always 'arduino_ble33'
+                - name (str): 'Arduino Nano BLE33 Sense'
+                - port (str): Serial port path (e.g., '/dev/ttyACM0')
+                - has_accelerometer (bool): True - 3-axis LSM9DS1
+                - has_magnetometer (bool): True - 3-axis LSM9DS1
+                - has_temperature (bool): True - HTS221 sensor
+                - has_humidity (bool): True - HTS221 sensor
+                - sample_rate_hz (float): 10.0 Hz default streaming rate
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> instance = driver.open("/dev/ttyACM0")
+            >>> info = instance.get_info()
+            >>> print(f"{info['name']} on {info['port']}")
+            Arduino Nano BLE33 Sense on /dev/ttyACM0
+            >>> if info['has_magnetometer']:
+            ...     print("Compass available")
         """
         return {
             "type": "arduino_ble33",
@@ -266,12 +409,34 @@ class ArduinoSensorInstance:
         }
 
     def _calculate_altitude(self) -> float:
-        """Calculate altitude from accelerometer data.
+        """Calculate altitude from accelerometer tilt data.
 
-        Uses tilt calculation from accelerometer X, Y, Z values.
+        Uses 3-axis accelerometer to compute telescope altitude (elevation)
+        via trigonometric tilt calculation. Applies calibration scaling
+        and offset for accurate readings.
+
+        Business context: Telescope altitude determines which objects are
+        visible. Accelerometer-based tilt sensing provides altitude without
+        requiring encoder feedback from the mount.
+
+        Implementation: Uses formula: atan(aX / sqrt(aY² + aZ²)) converted
+        to degrees. Applies tilt calibration (m, b) then altitude transform
+        (scale, offset). Returns 0 if accelerometer data is zero.
+
+        Args:
+            No arguments. Uses internal _accelerometer dict and calibration.
 
         Returns:
-            Altitude in degrees (0-90).
+            float: Altitude in degrees (0-90), after calibration applied.
+
+        Raises:
+            No exceptions raised. Returns 0.0 on missing data.
+
+        Example:
+            >>> instance._accelerometer = {'aX': 0.5, 'aY': 0.0, 'aZ': 0.87}
+            >>> alt = instance._calculate_altitude()
+            >>> 25 < alt < 35  # ~30 degrees
+            True
         """
         ax = self._accelerometer.get("aX", 0)
         ay = self._accelerometer.get("aY", 0)
@@ -291,12 +456,33 @@ class ArduinoSensorInstance:
         return self._cal_alt_scale * calibrated + self._cal_alt_offset
 
     def _calculate_azimuth(self) -> float:
-        """Calculate azimuth from magnetometer data.
+        """Calculate azimuth from magnetometer compass data.
 
-        Uses atan2 of magnetometer Y, X values.
+        Uses 2-axis magnetometer reading to compute telescope azimuth
+        (heading/bearing). Applies calibration scaling and offset.
+
+        Business context: Telescope azimuth determines east-west pointing.
+        Magnetometer provides absolute heading reference independent of
+        mount mechanics.
+
+        Implementation: Uses atan2(mY, mX) for heading, normalizes to 0-360,
+        then applies azimuth transform (scale, offset) with modulo 360.
+        Returns 0 if magnetometer data is zero.
+
+        Args:
+            No arguments. Uses internal _magnetometer dict and calibration.
 
         Returns:
-            Azimuth in degrees (0-360).
+            float: Azimuth in degrees (0-360), north=0, east=90.
+
+        Raises:
+            No exceptions raised. Returns 0.0 on missing data.
+
+        Example:
+            >>> instance._magnetometer = {'mX': 30.0, 'mY': 0.0, 'mZ': 40.0}
+            >>> az = instance._calculate_azimuth()
+            >>> az == 0.0  # Pointing magnetic north
+            True
         """
         mx = self._magnetometer.get("mX", 0)
         my = self._magnetometer.get("mY", 0)
@@ -315,15 +501,40 @@ class ArduinoSensorInstance:
         return (self._cal_az_scale * heading + self._cal_az_offset) % 360
 
     def read(self) -> SensorReading:
-        """Read current sensor values.
+        """Read current sensor values from the background reader cache.
 
-        Returns latest values from background reader thread.
+        Returns the latest IMU and environmental data collected by the
+        background reader thread. Does not block for new data - returns
+        immediately with cached values.
+
+        Business context: Core sensor operation for telescope orientation.
+        Values are continuously updated by background thread at sensor's
+        native rate (~10Hz). Callers get latest available data without
+        serial I/O latency.
+
+        Args:
+            No arguments.
 
         Returns:
-            SensorReading with all sensor data.
+            SensorReading: Dataclass containing:
+                - accelerometer: dict with aX, aY, aZ in g's
+                - magnetometer: dict with mX, mY, mZ in µT
+                - altitude: Calibrated altitude (0-90°)
+                - azimuth: Calibrated azimuth (0-360°)
+                - temperature: Ambient temperature (°C)
+                - humidity: Relative humidity (%)
+                - timestamp: datetime of reading (UTC)
+                - raw_values: Original sensor data string
 
         Raises:
-            RuntimeError: If sensor is closed or no data available.
+            RuntimeError: If sensor is closed or no data received yet.
+                Wait briefly after open() for first data.
+
+        Example:
+            >>> instance = driver.open("/dev/ttyACM0")
+            >>> time.sleep(0.2)  # Wait for first data
+            >>> reading = instance.read()
+            >>> print(f"Alt: {reading.altitude:.1f}° Az: {reading.azimuth:.1f}°")
         """
         if not self._is_open:
             raise RuntimeError("Sensor is closed")
@@ -347,14 +558,37 @@ class ArduinoSensorInstance:
         true_altitude: float,
         true_azimuth: float,
     ) -> None:
-        """Calibrate sensor to known true position.
+        """Calibrate sensor to match a known true telescope position.
 
-        Sets calibration transform so that current reading maps to
-        the provided true position.
+        Computes offset values so that the current calculated position
+        maps to the provided true position. Uses a simple offset model:
+        corrected = calculated + offset. Calibration persists until reset.
+
+        Business context: IMU-derived positions contain systematic errors
+        from sensor mounting orientation, magnetic declination, and local
+        interference. Calibration against a plate-solved image or known
+        star position corrects these errors for accurate Go-To pointing.
 
         Args:
-            true_altitude: Known true altitude in degrees.
-            true_azimuth: Known true azimuth in degrees.
+            true_altitude: Known true altitude in degrees (0-90).
+                Obtained from plate solving, star catalog lookup,
+                or manual verification at known landmark.
+            true_azimuth: Known true azimuth in degrees (0-360).
+                0° = North, 90° = East, 180° = South, 270° = West.
+
+        Returns:
+            None. Calibration offsets stored in _cal_alt_offset and
+            _cal_az_offset instance variables.
+
+        Raises:
+            RuntimeError: If sensor is closed.
+
+        Example:
+            >>> instance = driver.open("/dev/ttyACM0")
+            >>> # Point telescope at Polaris (known position)
+            >>> instance.calibrate(89.26, 0.0)  # Polaris at pole
+            >>> # Subsequent reads return calibrated positions
+            >>> reading = instance.read()
         """
         # Get current calculated values (before transform)
         current_alt = self._calculate_altitude()
@@ -370,14 +604,35 @@ class ArduinoSensorInstance:
             az_offset=self._cal_az_offset,
         )
 
-    def set_tilt_calibration(self, slope: float, intercept: float) -> None:
-        """Set tilt calibration parameters.
+    def _set_tilt_calibration(self, slope: float, intercept: float) -> None:
+        """Set linear calibration parameters for tilt (altitude) calculation.
 
-        Linear calibration: corrected = slope * raw + intercept
+        Applies linear correction: corrected = slope * raw + intercept.
+        This compensates for sensor mounting angle and systematic accelerometer bias.
+
+        Business context: Physical sensor mounting rarely achieves perfect
+        alignment. This linear calibration corrects for consistent offset
+        (intercept) and scaling errors (slope) in the tilt measurement.
+        Parameters typically determined through multi-point calibration.
 
         Args:
-            slope: Scale factor (m in y = mx + b).
-            intercept: Offset (b in y = mx + b).
+            slope: Scale factor (m in y = mx + b). Typically 0.9-1.1.
+                Values <1 compress range, >1 expand range.
+                1.0 = no scaling correction.
+            intercept: Offset in degrees (b in y = mx + b).
+                Positive = add degrees, negative = subtract.
+                0.0 = no offset correction.
+
+        Returns:
+            None. Parameters stored in _tilt_m and _tilt_b.
+
+        Raises:
+            No exceptions raised. Invalid values may produce bad readings.
+
+        Example:
+            >>> instance.set_tilt_calibration(1.02, -2.5)
+            >>> # Raw 45° becomes: 1.02 * 45 - 2.5 = 43.4°
+            >>> # Typically determined from calibration fixture
         """
         self._tilt_m = slope
         self._tilt_b = intercept
@@ -387,7 +642,7 @@ class ArduinoSensorInstance:
             intercept=intercept,
         )
 
-    def send_command(
+    def _send_command(
         self,
         command: str,
         wait_response: bool = True,
@@ -395,13 +650,45 @@ class ArduinoSensorInstance:
     ) -> str:
         """Send command to Arduino and optionally wait for response.
 
+        Provides serial command interface for controlling Arduino sensor behavior.
+        Commands control sensor output, reset hardware, or query status. The Arduino
+        responds with multi-line text including status information or confirmation.
+
+        Business context: Enables runtime control of sensor behavior without
+        reconnection. Used for calibration workflows, diagnostics, and graceful
+        shutdown. Essential for telescope alignment procedures requiring sensor
+        reset or recalibration mid-session.
+
         Args:
-            command: Command string (RESET, STATUS, CALIBRATE, STOP, START).
-            wait_response: Whether to wait for response.
-            timeout: Seconds to wait for response.
+            command: Command string to send. Valid commands:
+                - RESET: Reinitialize sensors and clear calibration
+                - STATUS: Query current sensor state and configuration
+                - CALIBRATE: Trigger magnetometer calibration mode
+                - STOP: Pause continuous sensor output
+                - START: Resume continuous sensor output
+            wait_response: If True (default), blocks until response received
+                or timeout. If False, returns immediately after sending.
+            timeout: Maximum seconds to wait for response. Default 5.0.
+                Longer timeouts needed for RESET (~5s) and CALIBRATE (~10s).
 
         Returns:
-            Response string from Arduino (or empty if not waiting).
+            Response string from Arduino. Multi-line responses joined with newlines.
+            Empty string if wait_response=False. Typical responses:
+            - "OK: command" for success
+            - "ERROR: message" for failures
+            - Multi-line status for STATUS command
+
+        Raises:
+            RuntimeError: If sensor connection is closed.
+            SerialTimeoutError: If response not received within timeout.
+
+        Example:
+            >>> instance.send_command("STATUS")
+            'Sensor: LSM9DS1\\nTemp: 22.5C\\nOK: STATUS'
+            >>> instance.send_command("STOP", wait_response=False)
+            ''
+            >>> instance.send_command("RESET", timeout=10.0)
+            'OK: RESET'
         """
         # Clear input buffer
         self._serial.reset_input_buffer()
@@ -434,16 +721,65 @@ class ArduinoSensorInstance:
         return response
 
     def reset(self) -> None:
-        """Reset/reinitialize the Arduino sensors."""
-        self.send_command("RESET", timeout=5.0)
+        """Reset/reinitialize the Arduino sensors.
 
-    def get_status(self) -> dict:
-        """Get sensor status from Arduino.
+        Sends RESET command to Arduino to reinitialize all sensors and
+        clear any calibration state. Blocks until reset completes.
+
+        Business context: Recovery mechanism for sensor issues. Use when
+        sensor readings become erratic, after power interruption, or to
+        clear calibration and start fresh.
+
+        Args:
+            No arguments.
 
         Returns:
-            Dict with parsed status information.
+            None. Sensor reinitialized on Arduino.
+
+        Raises:
+            RuntimeError: If sensor connection closed.
+            serial.SerialTimeoutError: If reset doesn't complete in 5s.
+
+        Example:
+            >>> instance.reset()  # Reinitialize sensors
+            >>> instance.calibrate(45.0, 180.0)  # Recalibrate
         """
-        response = self.send_command("STATUS", timeout=3.0)
+        self._send_command("RESET", timeout=5.0)
+
+    def get_status(self) -> dict:
+        """Get current Arduino sensor status including calibration state.
+
+        Sends STATUS command to Arduino and returns parsed response along
+        with connection state and calibration information. Useful for
+        health monitoring and diagnostics.
+
+        Business context: Long-running observatory sessions need real-time
+        sensor health data. This method exposes both Python-side state
+        (connection, calibration) and Arduino-reported status for
+        comprehensive monitoring.
+
+        Returns:
+            dict: Status dictionary containing:
+                - connected (bool): True if serial connection open
+                - type (str): Always 'arduino_ble33'
+                - port (str): Serial port path
+                - last_update (str | None): ISO timestamp of last reading
+                - raw_status (str): Raw response from Arduino STATUS cmd
+                - calibrated (bool): True if position calibration applied
+
+        Raises:
+            serial.SerialException: If serial communication fails.
+
+        Example:
+            >>> status = instance.get_status()
+            >>> print(f"Connected: {status['connected']}")
+            Connected: True
+            >>> print(f"Last update: {status['last_update']}")
+            Last update: 2025-12-26T22:30:00+00:00
+            >>> if not status['calibrated']:
+            ...     print("Sensor needs calibration")
+        """
+        response = self._send_command("STATUS", timeout=3.0)
 
         return {
             "connected": self._is_open,
@@ -454,26 +790,119 @@ class ArduinoSensorInstance:
             "calibrated": self._cal_alt_offset != 0 or self._cal_az_offset != 0,
         }
 
-    def calibrate_magnetometer(self) -> str:
-        """Run Arduino magnetometer calibration routine.
+    def _calibrate_magnetometer(self) -> str:
+        """Run Arduino magnetometer hard-iron calibration routine.
 
-        User should rotate sensor during calibration (~10 seconds).
+        Triggers the Arduino's built-in magnetometer calibration. During
+        calibration (~10-15 seconds), the user should slowly rotate the
+        sensor through all orientations to sample the full magnetic sphere.
+
+        Business context: Magnetometer readings suffer from hard-iron
+        distortion caused by nearby ferrous materials (screws, motors).
+        Calibration computes offsets to center the magnetic field sphere.
+        Should be performed after mounting sensor on telescope and whenever
+        the magnetic environment changes.
+
+        Args:
+            No arguments required.
 
         Returns:
-            Response from Arduino with calibration results.
+            str: Response from Arduino containing calibration results.
+                Typically includes computed offsets and status.
+                Format: 'OK: CALIBRATE\nOffsetX: 12.3\nOffsetY: -5.2...'
+
+        Raises:
+            serial.SerialException: If serial communication fails.
+            serial.SerialTimeoutError: If calibration doesn't complete
+                within 15 second timeout.
+
+        Example:
+            >>> print("Rotate sensor slowly in all directions...")
+            >>> result = instance.calibrate_magnetometer()
+            >>> print(result)
+            OK: CALIBRATE
+            OffsetX: 12.3
+            OffsetY: -5.2
+            OffsetZ: 8.1
         """
-        return self.send_command("CALIBRATE", timeout=15.0)
+        return self._send_command("CALIBRATE", timeout=15.0)
 
-    def stop_output(self) -> None:
-        """Stop sensor output stream."""
-        self.send_command("STOP", wait_response=False)
+    def _stop_output(self) -> None:
+        """Stop the continuous sensor data output stream.
 
-    def start_output(self) -> None:
-        """Resume sensor output stream."""
-        self.send_command("START", wait_response=False)
+        Sends STOP command to Arduino to pause sensor data streaming.
+        Background reader will receive no new data until start_output().
+
+        Business context: Useful during calibration or configuration when
+        continuous data stream interferes with command responses. Also
+        reduces power consumption when readings not needed.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None. Does not wait for response.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> instance.stop_output()  # Pause streaming
+            >>> # Do calibration...
+            >>> instance.start_output()  # Resume streaming
+        """
+        self._send_command("STOP", wait_response=False)
+
+    def _start_output(self) -> None:
+        """Resume the continuous sensor data output stream.
+
+        Sends START command to Arduino to resume sensor data streaming
+        after it was paused with stop_output().
+
+        Business context: Resumes normal operation after calibration or
+        configuration tasks. Stream provides continuous ~10Hz updates
+        for real-time tracking.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None. Does not wait for response.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> instance.stop_output()
+            >>> # Do configuration...
+            >>> instance.start_output()  # Resume data stream
+        """
+        self._send_command("START", wait_response=False)
 
     def close(self) -> None:
-        """Close the serial connection."""
+        """Close the serial connection and stop background reader.
+
+        Signals background reader thread to stop, waits for it to exit,
+        and closes the serial port. Safe to call multiple times.
+
+        Business context: Proper cleanup essential for serial port release.
+        Unreleased ports prevent reconnection. Always close before
+        application exit or switching sensors.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None. Connection and thread cleaned up.
+
+        Raises:
+            No exceptions raised. Errors during close are logged.
+
+        Example:
+            >>> instance = driver.open("/dev/ttyACM0")
+            >>> reading = instance.read()
+            >>> instance.close()  # Release serial port
+        """
         self._stop_reading = True
         self._is_open = False
 
@@ -518,10 +947,32 @@ class ArduinoSensorDriver:
     """
 
     def __init__(self, baudrate: int = 115200) -> None:
-        """Initialize driver with baud rate.
+        """Initialize Arduino sensor driver with baud rate.
+
+        Sets up driver configuration without opening any serial ports.
+        Call open() or get_available_sensors() to interact with hardware.
+
+        Business context: The driver manages lifecycle of serial connections
+        to Arduino sensors. Baud rate stored for consistent port opening.
+
+        Implementation: Stores baudrate, initializes _instance to None.
+        No hardware interaction during init.
 
         Args:
             baudrate: Serial baud rate for Arduino communication.
+                Defaults to 115200 (Arduino Nano BLE33 default).
+
+        Returns:
+            None. Driver initialized, ready for open().
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> driver = ArduinoSensorDriver(baudrate=115200)
+            >>> sensors = driver.get_available_sensors()
+            >>> if sensors:
+            ...     instance = driver.open(sensors[0]['port'])
         """
         self._baudrate = baudrate
         self._instance: ArduinoSensorInstance | None = None
@@ -535,15 +986,38 @@ class ArduinoSensorDriver:
         serial_factory: type | None = None,
         baudrate: int = 115200,
     ) -> ArduinoSensorDriver:
-        """Create driver with injected dependencies (for testing).
+        """Create driver with injected dependencies for testing.
+
+        Factory method that injects custom port enumerator and optional
+        serial factory, enabling tests without real hardware.
+
+        Business context: Hardware-independent testing enables CI/CD
+        and development without Arduino. Mock enumerators control device
+        discovery, serial factories control communication behavior.
 
         Args:
-            port_enumerator: Object with comports() method.
-            serial_factory: Optional factory to create serial ports.
-            baudrate: Serial baud rate.
+            port_enumerator: Object with comports() method returning list
+                of port objects with device and description attributes.
+            serial_factory: Optional class for creating serial connections.
+                Defaults to None (uses real pyserial).
+            baudrate: Serial baud rate. Defaults to 115200.
 
         Returns:
-            Configured ArduinoSensorDriver.
+            ArduinoSensorDriver: Configured driver using injected
+                dependencies for get_available_sensors().
+
+        Raises:
+            No exceptions during creation.
+
+        Example:
+            >>> class MockPort:
+            ...     device = "/dev/ttyMOCK0"
+            ...     description = "Arduino Nano"
+            >>> class MockEnumerator:
+            ...     @staticmethod
+            ...     def comports():
+            ...         return [MockPort()]
+            >>> driver = ArduinoSensorDriver._create_with_enumerator(MockEnumerator())
         """
         driver = cls.__new__(cls)
         driver._baudrate = baudrate
@@ -553,12 +1027,38 @@ class ArduinoSensorDriver:
         return driver
 
     def get_available_sensors(self) -> list[dict]:
-        """List available Arduino sensors on serial ports.
+        """Discover Arduino sensors available on serial ports.
 
-        Scans serial ports for potential Arduino devices.
+        Scans system serial ports for devices matching Arduino signatures
+        (Arduino in description, ACM devices, USB serial adapters, CH340).
+        Does not open connections - only enumerates potential devices.
+
+        Business context: Users may have multiple Arduino devices connected
+        for different purposes. This method enables device selection UI
+        and auto-discovery workflows. Called by MCP tools to let clients
+        enumerate sensors without prior configuration.
 
         Returns:
-            List of sensor info dicts with id, type, name, port.
+            list[dict]: List of sensor descriptors, each containing:
+                - id (int): Index for use with open()
+                - type (str): Always 'arduino_ble33'
+                - name (str): Human-readable name with port
+                - port (str): Serial port path (e.g., '/dev/ttyACM0')
+                - description (str): OS-provided device description
+            Empty list if no compatible devices found or pyserial
+            not installed.
+
+        Raises:
+            No exceptions raised. Errors logged and empty list returned.
+
+        Example:
+            >>> driver = ArduinoSensorDriver()
+            >>> sensors = driver.get_available_sensors()
+            >>> for s in sensors:
+            ...     print(f"{s['name']} on {s['port']}")
+            Arduino Sensor (/dev/ttyACM0) on /dev/ttyACM0
+            >>> if sensors:
+            ...     instance = driver.open(sensors[0]['port'])
         """
         # Use injected enumerator or real pyserial
         if self._port_enumerator is not None:
@@ -591,18 +1091,45 @@ class ArduinoSensorDriver:
         return sensors
 
     def open(self, sensor_id: int | str = 0) -> ArduinoSensorInstance:
-        """Open connection to Arduino sensor.
+        """Open connection to an Arduino sensor.
+
+        Creates a serial connection to the specified Arduino and starts
+        the background reader thread. The sensor begins streaming data
+        immediately after connection.
+
+        Business context: This is the primary entry point for connecting
+        to physical Arduino Nano BLE33 Sense hardware. The returned
+        instance provides all sensor reading and calibration operations.
+        Only one instance can be open at a time per driver.
 
         Args:
-            sensor_id: Either port path string (e.g., /dev/ttyACM0) or
-                sensor index from get_available_sensors(). If int, looks
-                up the port from available sensors list.
+            sensor_id: Either a port path string (e.g., '/dev/ttyACM0')
+                or an integer index from get_available_sensors().
+                If int, looks up the port from the available sensors list.
+                Defaults to 0 (first available sensor).
 
         Returns:
-            ArduinoSensorInstance for reading sensor data.
+            ArduinoSensorInstance: Connected sensor instance ready for
+                reading. Background thread automatically starts
+                collecting data.
 
         Raises:
-            RuntimeError: If connection fails or sensor not found.
+            RuntimeError: If sensor already open, sensor_id index out
+                of range, or serial connection fails.
+            serial.SerialException: If port cannot be opened (permissions,
+                device not found, etc.).
+
+        Example:
+            >>> driver = ArduinoSensorDriver()
+            >>> # Open by port path
+            >>> instance = driver.open("/dev/ttyACM0")
+            >>> reading = instance.read()
+            >>> driver.close()
+            >>>
+            >>> # Open by index
+            >>> sensors = driver.get_available_sensors()
+            >>> if sensors:
+            ...     instance = driver.open(0)  # First sensor
         """
         if self._instance is not None and self._instance._is_open:
             raise RuntimeError("Sensor already open")
@@ -634,6 +1161,15 @@ class ArduinoSensorDriver:
 
         Returns:
             ArduinoSensorInstance configured with mock serial.
+
+        Raises:
+            RuntimeError: If sensor already open.
+
+        Example:
+            >>> driver = ArduinoSensorDriver()
+            >>> mock = MockSerialPort(data=["1.0\\t2.0\\t3.0\\t..."])
+            >>> instance = driver._open_with_serial(mock)
+            >>> instance.parse_line("1.0\\t2.0\\t3.0\\t4.0\\t5.0\\t6.0\\t25.0\\t50.0")
         """
         if self._instance is not None and self._instance._is_open:
             raise RuntimeError("Sensor already open")
@@ -644,7 +1180,30 @@ class ArduinoSensorDriver:
         return self._instance
 
     def close(self) -> None:
-        """Close the current sensor instance."""
+        """Close the current sensor instance and release resources.
+
+        Closes the underlying ArduinoSensorInstance if open, stopping
+        background reader and releasing serial port. Safe to call when
+        no instance open.
+
+        Business context: Driver-level cleanup for proper resource
+        management. Should be called when done with sensor operations.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None. Instance reference cleared.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> driver = ArduinoSensorDriver()
+            >>> instance = driver.open("/dev/ttyACM0")
+            >>> reading = instance.read()
+            >>> driver.close()  # Release serial port
+        """
         if self._instance is not None:
             self._instance.close()
             self._instance = None

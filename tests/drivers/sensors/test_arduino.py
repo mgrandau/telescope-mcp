@@ -228,7 +228,7 @@ class TestLineParsing:
         """Parse full 8-field format: aX, aY, aZ, mX, mY, mZ, temp, humidity."""
         line = "0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0"
 
-        result = arduino_instance.parse_line(line)
+        result = arduino_instance._parse_line(line)
 
         assert result is True
         assert arduino_instance._accelerometer == {"aX": 0.5, "aY": 0.0, "aZ": 0.87}
@@ -244,7 +244,7 @@ class TestLineParsing:
         """Parse legacy 6-field format: aX, aZ, aY, mX, mZ, mY."""
         line = "0.5\t0.87\t0.0\t30.0\t40.0\t0.0"
 
-        result = arduino_instance.parse_line(line)
+        result = arduino_instance._parse_line(line)
 
         assert result is True
         # Note: Legacy format has different order!
@@ -253,48 +253,48 @@ class TestLineParsing:
 
     def test_parse_empty_line(self, arduino_instance: ArduinoSensorInstance) -> None:
         """Empty lines should be ignored."""
-        result = arduino_instance.parse_line("")
+        result = arduino_instance._parse_line("")
         assert result is False
 
-        result = arduino_instance.parse_line("   ")
+        result = arduino_instance._parse_line("   ")
         assert result is False
 
     def test_parse_command_response_info(
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
         """INFO: lines should be skipped."""
-        result = arduino_instance.parse_line("INFO: Sensor initialized")
+        result = arduino_instance._parse_line("INFO: Sensor initialized")
         assert result is False
 
     def test_parse_command_response_ok(
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
         """OK: lines should be skipped."""
-        result = arduino_instance.parse_line("OK: Command successful")
+        result = arduino_instance._parse_line("OK: Command successful")
         assert result is False
 
     def test_parse_command_response_error(
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
         """ERROR: lines should be skipped."""
-        result = arduino_instance.parse_line("ERROR: Invalid command")
+        result = arduino_instance._parse_line("ERROR: Invalid command")
         assert result is False
 
     def test_parse_separator_line(
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
         """Separator lines (===, ---) should be skipped."""
-        result = arduino_instance.parse_line("===")
+        result = arduino_instance._parse_line("===")
         assert result is False
 
-        result = arduino_instance.parse_line("---")
+        result = arduino_instance._parse_line("---")
         assert result is False
 
     def test_parse_malformed_values(
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
         """Malformed values should be handled gracefully."""
-        result = arduino_instance.parse_line(
+        result = arduino_instance._parse_line(
             "abc\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0"
         )
         assert result is False
@@ -304,11 +304,11 @@ class TestLineParsing:
     ) -> None:
         """Wrong number of fields should be ignored."""
         # 5 fields - not valid
-        result = arduino_instance.parse_line("0.5\t0.0\t0.87\t30.0\t0.0")
+        result = arduino_instance._parse_line("0.5\t0.0\t0.87\t30.0\t0.0")
         assert result is False
 
         # 7 fields - not valid
-        result = arduino_instance.parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5")
+        result = arduino_instance._parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5")
         assert result is False
 
     def test_parse_with_carriage_return(
@@ -317,7 +317,7 @@ class TestLineParsing:
         """Lines with \\r\\n should be handled."""
         line = "0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0\r\n"
 
-        result = arduino_instance.parse_line(line)
+        result = arduino_instance._parse_line(line)
 
         assert result is True
         assert arduino_instance._accelerometer == {"aX": 0.5, "aY": 0.0, "aZ": 0.87}
@@ -384,7 +384,7 @@ class TestAltitudeCalculation:
         arduino_instance._accelerometer = {"aX": 0.0, "aY": 0.0, "aZ": 1.0}
 
         # Set calibration: corrected = 2.0 * raw + 10.0
-        arduino_instance.set_tilt_calibration(slope=2.0, intercept=10.0)
+        arduino_instance._set_tilt_calibration(slope=2.0, intercept=10.0)
 
         alt = arduino_instance._calculate_altitude()
 
@@ -513,7 +513,7 @@ class TestCalibration:
         raw_alt = arduino_instance._calculate_altitude()
 
         # Apply slope of 0.5 (halve the angle)
-        arduino_instance.set_tilt_calibration(slope=0.5, intercept=0.0)
+        arduino_instance._set_tilt_calibration(slope=0.5, intercept=0.0)
 
         scaled_alt = arduino_instance._calculate_altitude()
 
@@ -528,7 +528,7 @@ class TestCalibration:
 
         # Raw is ~0°
         # Apply offset of 5°
-        arduino_instance.set_tilt_calibration(slope=1.0, intercept=5.0)
+        arduino_instance._set_tilt_calibration(slope=1.0, intercept=5.0)
 
         alt = arduino_instance._calculate_altitude()
 
@@ -547,7 +547,7 @@ class TestSensorReading:
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
         """read() should return a SensorReading with all data."""
-        arduino_instance.parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0")
+        arduino_instance._parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0")
 
         reading = arduino_instance.read()
 
@@ -569,7 +569,7 @@ class TestSensorReading:
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
         """read() should raise RuntimeError when sensor is closed."""
-        arduino_instance.parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0")
+        arduino_instance._parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0")
         arduino_instance._is_open = False
 
         with pytest.raises(RuntimeError, match="Sensor is closed"):
@@ -580,7 +580,7 @@ class TestSensorReading:
     ) -> None:
         """read() should include calculated altitude and azimuth."""
         # Level, pointing north
-        arduino_instance.parse_line("0.0\t0.0\t1.0\t1.0\t0.0\t0.0\t20.0\t50.0")
+        arduino_instance._parse_line("0.0\t0.0\t1.0\t1.0\t0.0\t0.0\t20.0\t50.0")
 
         reading = arduino_instance.read()
 
@@ -606,7 +606,7 @@ class TestCommandHandling:
         # Queue a response
         mock_serial.queue_line("OK: Reset complete")
 
-        arduino_instance.send_command("RESET", wait_response=False)
+        arduino_instance._send_command("RESET", wait_response=False)
 
         commands = mock_serial.get_written_commands()
         assert "RESET" in commands
@@ -620,7 +620,7 @@ class TestCommandHandling:
         mock_serial.queue_line("OK: Status response")
         mock_serial._in_waiting = 100
 
-        response = arduino_instance.send_command(
+        response = arduino_instance._send_command(
             "STATUS", wait_response=True, timeout=0.1
         )
 
@@ -646,7 +646,7 @@ class TestCommandHandling:
         mock_serial: MockSerialPort,
     ) -> None:
         """stop_output() should send STOP command."""
-        arduino_instance.stop_output()
+        arduino_instance._stop_output()
 
         commands = mock_serial.get_written_commands()
         assert "STOP" in commands
@@ -657,7 +657,7 @@ class TestCommandHandling:
         mock_serial: MockSerialPort,
     ) -> None:
         """start_output() should send START command."""
-        arduino_instance.start_output()
+        arduino_instance._start_output()
 
         commands = mock_serial.get_written_commands()
         assert "START" in commands
@@ -707,7 +707,7 @@ class TestSensorInfo:
     ) -> None:
         """get_status() should show calibrated=True after calibration."""
         # Set up and calibrate
-        arduino_instance.parse_line("0.0\t0.0\t1.0\t1.0\t0.0\t0.0\t20.0\t50.0")
+        arduino_instance._parse_line("0.0\t0.0\t1.0\t1.0\t0.0\t0.0\t20.0\t50.0")
         arduino_instance.calibrate(true_altitude=30.0, true_azimuth=45.0)
 
         mock_serial.queue_line("OK: Status")
@@ -899,7 +899,7 @@ class TestEdgeCases:
         """Should handle negative sensor values."""
         line = "-0.5\t-0.3\t-0.87\t-30.0\t-10.0\t-40.0\t-5.0\t0.0"
 
-        result = arduino_instance.parse_line(line)
+        result = arduino_instance._parse_line(line)
 
         assert result is True
         assert arduino_instance._accelerometer["aX"] == -0.5
@@ -912,7 +912,7 @@ class TestEdgeCases:
         """Should handle scientific notation values."""
         line = "1.5e-2\t0.0\t1.0\t3.0e1\t0.0\t4.0e1\t2.25e1\t5.5e1"
 
-        result = arduino_instance.parse_line(line)
+        result = arduino_instance._parse_line(line)
 
         assert result is True
         assert abs(arduino_instance._accelerometer["aX"] - 0.015) < 0.001
@@ -922,10 +922,10 @@ class TestEdgeCases:
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
         """Should update values on each parse."""
-        arduino_instance.parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0")
+        arduino_instance._parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5\t55.0")
         first_ax = arduino_instance._accelerometer["aX"]
 
-        arduino_instance.parse_line("0.7\t0.1\t0.71\t35.0\t5.0\t45.0\t23.0\t60.0")
+        arduino_instance._parse_line("0.7\t0.1\t0.71\t35.0\t5.0\t45.0\t23.0\t60.0")
         second_ax = arduino_instance._accelerometer["aX"]
 
         assert first_ax == 0.5

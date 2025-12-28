@@ -58,11 +58,21 @@ class SessionManager:
         All telescope operations should go through the SessionManager to
         ensure logs and data are captured.
 
+        Business context: SessionManager is the central coordinator for
+        observation data persistence. It ensures continuous logging via
+        idle sessions and proper ASDF file organization.
+
         Args:
             data_dir: Base directory for ASDF file storage.
             location: Default observer location {lat, lon, alt} in degrees/meters.
             auto_rotate_idle: Whether to auto-rotate idle sessions periodically.
             idle_rotate_hours: Hours between idle session rotations.
+
+        Returns:
+            None. Manager initialized with idle session active.
+
+        Raises:
+            No exceptions raised. Directory created if missing.
 
         Example:
             sessions = SessionManager(
@@ -88,6 +98,28 @@ class SessionManager:
         Internal method that maintains the "always have a session" invariant.
         Called after session end and during operations that require a session.
         Idle sessions capture logs when no observation is in progress.
+
+        Business context: The telescope system should always have an active
+        session for logging. Idle sessions capture background activity,
+        system health, and environmental data between observations.
+
+        Implementation: Checks _active_session and creates new IDLE session
+        with default location and rotation settings from manager config.
+
+        Args:
+            No arguments. Uses manager configuration.
+
+        Returns:
+            None. Sets _active_session to new idle Session.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> # Called internally after end_session()
+            >>> manager._ensure_idle_session()
+            >>> manager.current_session.session_type
+            SessionType.IDLE
         """
         if self._active_session is None:
             self._active_session = Session(

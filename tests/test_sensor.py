@@ -104,7 +104,7 @@ class TestDigitalTwinSensorInstance:
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
 
-        instance.set_position(altitude=60.0, azimuth=270.0)
+        instance._set_position(altitude=60.0, azimuth=270.0)
         reading = instance.read()
 
         # Should be close to set position (with noise)
@@ -182,7 +182,7 @@ class TestDigitalTwinSensorInstance:
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
 
-        result = instance.calibrate_magnetometer()
+        result = instance._calibrate_magnetometer()
 
         assert "offset_x" in result
         assert "offset_y" in result

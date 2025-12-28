@@ -142,9 +142,40 @@ class Sensor:
     ) -> None:
         """Initialize Sensor with driver and optional configuration.
 
+        Creates a new Sensor device wrapper around a driver implementation.
+        Sets up internal state for connection tracking, statistics collection,
+        and reading history. Optionally auto-connects if configured.
+
+        Business context: The Sensor class is the primary interface for
+        telescope orientation data. It wraps hardware-specific drivers
+        (Arduino, DigitalTwin) with a consistent API for MCP tools and
+        automation scripts. Dependency injection enables testing and
+        hardware abstraction.
+
+        Implementation: Initializes tracking variables (_read_count,
+        _error_count, _last_reading, _connect_time) to defaults. If
+        config.auto_connect is True, calls connect() immediately which
+        may raise RuntimeError if no sensor available.
+
         Args:
             driver: SensorDriver implementation (DigitalTwin or Arduino).
-            config: Optional sensor configuration.
+                Must implement get_available_sensors() and open() methods.
+            config: Optional sensor configuration. If None, uses defaults
+                (auto_connect=False, reconnect_on_error=True).
+
+        Returns:
+            None. Instance initialized but not connected unless auto_connect.
+
+        Raises:
+            RuntimeError: If auto_connect enabled and connection fails.
+
+        Example:
+            >>> driver = ArduinoSensorDriver()
+            >>> config = SensorConfig(auto_connect=False)
+            >>> sensor = Sensor(driver, config)
+            >>> sensor.connected
+            False
+            >>> sensor.connect()
         """
         self._driver = driver
         self._config = config or SensorConfig()
@@ -163,38 +194,143 @@ class Sensor:
 
     @property
     def connected(self) -> bool:
-        """Whether sensor is currently connected.
+        """Check whether the sensor is currently connected and operational.
+
+        Indicates if the sensor hardware is connected and the driver instance
+        is active. This property should be checked before attempting read
+        operations to avoid RuntimeError exceptions.
+
+        Business context: Telescope orientation tracking requires continuous
+        sensor connectivity. UI components and automation scripts use this
+        property to display connection status and gate sensor operations.
+
+        Args:
+            No arguments (property accessor).
 
         Returns:
-            True if connected and ready for reading.
+            bool: True if both the internal connected flag is set AND a valid
+                driver instance exists. False if disconnected, connection
+                failed, or instance was cleaned up.
+
+        Raises:
+            No exceptions raised. Safe to call in any state.
+
+        Example:
+            >>> sensor = Sensor(driver, config)
+            >>> sensor.connected
+            False
+            >>> sensor.connect()
+            >>> sensor.connected
+            True
+            >>> if sensor.connected:
+            ...     reading = sensor.read()
         """
         return self._connected and self._instance is not None
 
     @property
     def info(self) -> SensorInfo | None:
-        """Get sensor information.
+        """Get detailed information about the connected sensor hardware.
+
+        Returns cached sensor metadata populated during connect(). Includes
+        sensor type, name, available measurement capabilities (accelerometer,
+        magnetometer, temperature, humidity), sample rate, and port info.
+
+        Business context: Sensor capabilities vary between hardware models.
+        The Arduino Nano BLE33 Sense provides IMU and environmental sensors,
+        while other devices may have different feature sets. This info enables
+        UI to display appropriate controls and data fields.
+
+        Args:
+            No arguments (property accessor).
 
         Returns:
-            SensorInfo if connected, None otherwise.
+            SensorInfo: Dataclass with sensor metadata if connected:
+                - type: Hardware type identifier (e.g., 'arduino_nano_ble33')
+                - name: Human-readable sensor name
+                - has_accelerometer, has_magnetometer: IMU capabilities
+                - has_temperature, has_humidity: Environmental sensors
+                - sample_rate_hz: Maximum polling rate
+                - port: Serial port or connection identifier
+                - extra: Additional driver-specific metadata
+            None: If sensor is not connected.
+
+        Raises:
+            No exceptions raised. Returns None if not connected.
+
+        Example:
+            >>> sensor.connect()
+            >>> info = sensor.info
+            >>> print(f"Connected to {info.name} on {info.port}")
+            Connected to Arduino Nano 33 BLE Sense on /dev/ttyACM0
+            >>> if info.has_magnetometer:
+            ...     # Enable compass features
+            ...     pass
         """
         return self._info
 
     def get_available_sensors(self) -> list[dict]:
-        """List available sensors from the driver.
+        """Enumerate all sensors available through the configured driver.
+
+        Queries the driver for discoverable sensor hardware. For serial-based
+        sensors like Arduino, this scans available COM/tty ports. For the
+        digital twin driver, returns simulated sensor definitions.
+
+        Business context: Users may have multiple sensors connected (e.g.,
+        orientation sensor and environmental monitor). This method enables
+        device selection UI and auto-discovery workflows. Called by MCP
+        tools to let clients enumerate available hardware.
 
         Returns:
-            List of sensor info dicts with id, type, name, port.
+            list[dict]: List of sensor descriptors, each containing:
+                - id (int | str): Unique sensor identifier for connect()
+                - type (str): Sensor type (e.g., 'arduino_nano_ble33')
+                - name (str): Human-readable name
+                - port (str): Connection port or address
+                Additional driver-specific fields may be included.
+                Empty list if no sensors found.
+
+        Raises:
+            RuntimeError: If driver fails to enumerate (e.g., permission
+                denied on serial ports, driver not initialized).
+
+        Example:
+            >>> sensor = Sensor(driver, config)
+            >>> available = sensor.get_available_sensors()
+            >>> for s in available:
+            ...     print(f"{s['name']} on {s['port']}")
+            Arduino Nano 33 BLE Sense on /dev/ttyACM0
+            >>> sensor.connect(available[0]['id'])
         """
         return self._driver.get_available_sensors()
 
     def connect(self, sensor_id: int | str | None = None) -> None:
-        """Connect to a sensor.
+        """Connect to a sensor and initialize for reading.
+
+        Opens connection to specified sensor (or first available), retrieves
+        sensor info, and prepares for read operations. Must be called before
+        read(), calibrate(), or other sensor operations.
+
+        Business context: Telescope orientation tracking requires explicit
+        sensor connection. This method handles device discovery, connection
+        establishment, and capability detection. Supports both ID-based
+        selection (for multi-sensor setups) and auto-discovery.
 
         Args:
             sensor_id: Specific sensor ID or port. Uses config default if None.
+                Can be int (index from get_available_sensors) or str (port path).
+
+        Returns:
+            None. Connection state updated, sensor info populated.
 
         Raises:
             RuntimeError: If already connected or connection fails.
+
+        Example:
+            >>> sensor = Sensor(ArduinoSensorDriver())
+            >>> available = sensor.get_available_sensors()
+            >>> sensor.connect(available[0]['id'])  # Connect to first
+            >>> sensor.connected
+            True
         """
         if self._connected:
             raise RuntimeError("Sensor already connected. Call disconnect() first.")
@@ -248,9 +384,35 @@ class Sensor:
             raise RuntimeError(f"Failed to connect to sensor: {e}") from e
 
     def disconnect(self) -> None:
-        """Disconnect from the sensor.
+        """Disconnect from the sensor and release hardware resources.
 
-        Safe to call even if not connected.
+        Closes the driver instance connection and clears internal state.
+        Safe to call even if already disconnected or never connected.
+        After disconnecting, connect() must be called before reading again.
+
+        Business context: Proper resource cleanup is essential for shared
+        hardware. Serial ports must be released for other applications.
+        Called during session shutdown, error recovery, and when switching
+        sensors.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None. Connection state reset regardless of outcome.
+
+        Raises:
+            No exceptions raised. Errors during close are logged but
+            suppressed to ensure cleanup completes.
+
+        Example:
+            >>> sensor.connect()
+            >>> reading = sensor.read()
+            >>> sensor.disconnect()  # Release serial port
+            >>> sensor.connected
+            False
+            >>> # Safe to call again
+            >>> sensor.disconnect()  # No-op if already disconnected
         """
         if self._instance is not None:
             try:
@@ -265,14 +427,42 @@ class Sensor:
         logger.info("Sensor disconnected")
 
     def read(self) -> SensorReading:
-        """Read current sensor values.
+        """Read current sensor values from the connected hardware.
+
+        Polls the sensor driver for current IMU and environmental data.
+        Updates internal statistics (read_count) and caches the reading
+        in last_reading. May trigger automatic reconnection if configured.
+
+        Business context: Core sensor operation for telescope orientation.
+        Returns calibrated position data for pointing calculations.
+        Called by MCP tools and UI polling loops for real-time display.
+
+        Args:
+            No arguments. Uses current calibration state.
 
         Returns:
-            SensorReading with accelerometer, magnetometer, position,
-            temperature, and humidity data.
+            SensorReading: Dataclass containing:
+                - accelerometer: dict with aX, aY, aZ in g's
+                - magnetometer: dict with mX, mY, mZ in µT
+                - altitude: Calibrated altitude in degrees (0-90)
+                - azimuth: Calibrated azimuth in degrees (0-360)
+                - temperature: Ambient temperature in °C (if available)
+                - humidity: Relative humidity % (if available)
+                - timestamp: datetime of reading (UTC)
+                - raw_values: Original sensor data string
 
         Raises:
-            RuntimeError: If not connected.
+            RuntimeError: If sensor not connected. Call connect() first.
+            Exception: Driver-specific errors if read fails and
+                reconnect_on_error is False.
+
+        Example:
+            >>> sensor.connect()
+            >>> reading = sensor.read()
+            >>> print(f"Alt {reading.altitude:.1f}°, Az {reading.azimuth:.1f}°")
+            Alt 45.2°, Az 180.5°
+            >>> print(f"Temp: {reading.temperature:.1f}°C")
+            Temp: 22.3°C
         """
         if not self._connected or self._instance is None:
             raise RuntimeError("Sensor not connected. Call connect() first.")
@@ -299,19 +489,38 @@ class Sensor:
         true_altitude: float,
         true_azimuth: float,
     ) -> None:
-        """Calibrate sensor to known true position.
+        """Calibrate sensor to a known true telescope position.
 
-        Sets calibration transform so that current reading maps to
-        the provided true position. Should be called when telescope
-        is pointed at a known position (e.g., from plate solving).
+        Sets calibration offsets so subsequent readings map to the provided
+        true position. Point the telescope at a known object (plate-solved
+        star, landmark) and call this with the true coordinates.
+
+        Business context: IMU-derived positions contain systematic errors from
+        mounting orientation and magnetic interference. Calibration against
+        a plate-solved image or known star corrects these errors. Essential
+        for accurate Go-To pointing. Should be performed at session start.
 
         Args:
-            true_altitude: Known true altitude in degrees (0-90).
-            true_azimuth: Known true azimuth in degrees (0-360).
+            true_altitude: Known true altitude in degrees.
+                Valid range: 0.0 (horizon) to 90.0 (zenith).
+                Obtained from plate solving or star catalog.
+            true_azimuth: Known true azimuth in degrees.
+                Valid range: 0.0 to 360.0.
+                0° = North, 90° = East, 180° = South, 270° = West.
+
+        Returns:
+            None. Calibration offsets stored in driver instance.
 
         Raises:
-            RuntimeError: If not connected.
-            ValueError: If position values out of range.
+            RuntimeError: If sensor not connected.
+            ValueError: If altitude not 0-90 or azimuth not 0-360.
+
+        Example:
+            >>> # Point telescope at Polaris, plate solve shows (89.26, 0.0)
+            >>> sensor.calibrate(89.26, 0.0)
+            >>> # Now readings are calibrated to true position
+            >>> reading = sensor.read()
+            >>> print(f"Calibrated: {reading.altitude:.2f}, {reading.azimuth:.2f}")
         """
         if not self._connected or self._instance is None:
             raise RuntimeError("Sensor not connected. Call connect() first.")
@@ -331,12 +540,34 @@ class Sensor:
         self._instance.calibrate(true_altitude, true_azimuth)
 
     def reset(self) -> None:
-        """Reset sensor to initial state.
+        """Reset sensor to initial state clearing calibration.
 
-        Clears calibration and reinitializes sensor.
+        Clears all calibration data (tilt, magnetometer offsets) and
+        reinitializes the sensor to factory defaults. Use when calibration
+        has drifted or before starting fresh alignment procedure.
+
+        Business context: Telescope alignment workflows may need to restart
+        calibration if conditions change (temperature drift, magnetic
+        interference). Reset provides clean slate without full reconnection.
+
+        Implementation: Delegates to driver instance's reset() method which
+        clears internal calibration state. Does not affect connection or
+        collected statistics.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None. Calibration cleared, sensor reinitialized.
 
         Raises:
             RuntimeError: If not connected.
+
+        Example:
+            >>> sensor.calibrate(45.0, 180.0)  # Set calibration
+            >>> # ... calibration drifted ...
+            >>> sensor.reset()  # Clear and start over
+            >>> sensor.calibrate(45.2, 180.1)  # Recalibrate
         """
         if not self._connected or self._instance is None:
             raise RuntimeError("Sensor not connected. Call connect() first.")
@@ -345,10 +576,40 @@ class Sensor:
         logger.info("Sensor reset")
 
     def get_status(self) -> dict:
-        """Get comprehensive sensor status.
+        """Get comprehensive sensor status including connection and statistics.
+
+        Combines device-level metadata with driver-reported status to provide
+        a complete picture of sensor health. Includes connection state,
+        timing information, usage statistics, and calibration status.
+
+        Business context: Telescope control systems need real-time health
+        monitoring. This method powers status dashboards, diagnostic tools,
+        and automated health checks. MCP tools expose this for remote
+        monitoring of observatory equipment.
 
         Returns:
-            Dict with connection state, calibration, statistics, etc.
+            dict: Status dictionary containing:
+                - connected (bool): Current connection state
+                - type (str | None): Sensor type if connected
+                - name (str | None): Sensor name if connected
+                - connect_time (str | None): ISO timestamp of connection
+                - read_count (int): Total successful readings
+                - error_count (int): Total read errors
+                - calibrated (bool): From driver if connected
+                - last_calibration (str): From driver if connected
+                - status_error (str): If driver status query fails
+
+        Raises:
+            No exceptions raised; errors captured in status_error field.
+
+        Example:
+            >>> status = sensor.get_status()
+            >>> print(f"Connected: {status['connected']}")
+            Connected: True
+            >>> print(f"Reads: {status['read_count']}, Errors: {status['error_count']}")
+            Reads: 1523, Errors: 2
+            >>> if status.get('calibrated'):
+            ...     print(f"Calibrated at {status['last_calibration']}")
         """
         base_status = {
             "connected": self._connected,
@@ -372,19 +633,85 @@ class Sensor:
 
     @property
     def last_reading(self) -> SensorReading | None:
-        """Get the most recent sensor reading.
+        """Get the most recent sensor reading without polling hardware.
+
+        Returns the cached result from the last successful read() call.
+        Useful for accessing recent data without triggering new hardware
+        communication, which is important for high-frequency UI updates.
+
+        Business context: Telescope pointing displays need frequent updates
+        but shouldn't overwhelm the sensor with requests. Components can
+        poll last_reading for cached data while a background task performs
+        actual sensor reads at the appropriate sample rate.
+
+        Args:
+            No arguments (property accessor).
 
         Returns:
-            Last SensorReading or None if no readings taken.
+            SensorReading: The most recent reading containing:
+                - timestamp: When reading was taken
+                - accelerometer: 3-axis acceleration (g)
+                - magnetometer: 3-axis magnetic field (µT)
+                - altitude, azimuth: Computed position (degrees)
+                - temperature: Ambient temp (°C) if available
+                - humidity: Relative humidity (%) if available
+            None: If no readings have been taken since connection,
+                or if never connected.
+
+        Raises:
+            No exceptions raised. Returns None if no cached reading.
+
+        Example:
+            >>> sensor.connect()
+            >>> sensor.read()  # Populate cache
+            >>> reading = sensor.last_reading
+            >>> if reading:
+            ...     print(f"Alt: {reading.altitude:.1f}° Az: {reading.azimuth:.1f}°")
+            Alt: 45.2° Az: 180.5°
+            >>> # Can access repeatedly without new hardware calls
+            >>> same_reading = sensor.last_reading
         """
         return self._last_reading
 
     @property
     def statistics(self) -> dict:
-        """Get sensor usage statistics.
+        """Get sensor usage and reliability statistics.
+
+        Computes operational metrics including read counts, error rates,
+        and connection uptime. Statistics reset when sensor is reconnected.
+
+        Business context: Long-running observatory sessions need reliability
+        monitoring. High error rates may indicate hardware issues, loose
+        connections, or environmental interference. These metrics help
+        diagnose problems and validate sensor health over time.
+
+        Args:
+            No arguments (property accessor).
 
         Returns:
-            Dict with read count, error count, uptime, etc.
+            dict: Statistics dictionary containing:
+                - read_count (int): Total successful sensor reads
+                - error_count (int): Total failed read attempts
+                - uptime_seconds (float | None): Seconds since connect(),
+                    None if never connected
+                - error_rate (float): Ratio of errors to total reads,
+                    computed as error_count / max(1, read_count) to
+                    avoid division by zero
+
+        Raises:
+            No exceptions raised. Safe to call in any state.
+
+        Example:
+            >>> sensor.connect()
+            >>> for _ in range(100):
+            ...     sensor.read()
+            >>> stats = sensor.statistics
+            >>> print(f"Uptime: {stats['uptime_seconds']:.0f}s")
+            Uptime: 45s
+            >>> print(f"Error rate: {stats['error_rate']:.1%}")
+            Error rate: 0.0%
+            >>> if stats['error_rate'] > 0.05:
+            ...     print("Warning: High error rate detected")
         """
         uptime = None
         if self._connect_time:
@@ -398,9 +725,34 @@ class Sensor:
         }
 
     def _attempt_reconnect(self) -> None:
-        """Attempt to reconnect to the sensor.
+        """Attempt to reconnect to the sensor after connection failure.
 
-        Called automatically on read errors if reconnect_on_error is True.
+        Tries multiple reconnection attempts with the configured sensor_id.
+        Disconnects first, then reconnects. Called automatically by read()
+        when reconnect_on_error is enabled and a read fails.
+
+        Business context: Long-running telescope sessions may experience
+        transient USB disconnects. Automatic reconnection maintains sensor
+        data flow without operator intervention during overnight observations.
+
+        Implementation: Loops max_reconnect_attempts times, calling
+        disconnect() then connect(sensor_id) each attempt. Logs each
+        attempt and result. Raises RuntimeError if all attempts fail.
+
+        Args:
+            No arguments. Uses _config.sensor_id and max_reconnect_attempts.
+
+        Returns:
+            None. Sensor reconnected on success.
+
+        Raises:
+            RuntimeError: If all reconnection attempts fail.
+
+        Example:
+            >>> # Called internally by read() on error
+            >>> sensor._attempt_reconnect()
+            >>> sensor.connected
+            True
         """
         sensor_id = self._config.sensor_id
 
@@ -429,10 +781,31 @@ class Sensor:
         )
 
     def __enter__(self) -> Sensor:
-        """Context manager entry - connect to sensor.
+        """Enter context manager, connecting sensor if not already connected.
+
+        Enables 'with' statement usage for automatic resource management.
+        Connects to sensor on entry if not already connected, ensuring
+        sensor is ready for operations within the context block.
+
+        Implementation: Checks _connected flag and calls connect() only
+        if needed. Returns self to allow 'as sensor' binding in with
+        statement. Connection uses config defaults (sensor_id from config).
+
+        Args:
+            No arguments (context manager protocol).
 
         Returns:
-            Self for use in with statement.
+            Sensor: Self reference for use in with statement binding.
+
+        Raises:
+            RuntimeError: If connection fails (no sensor available,
+                port in use, or hardware error).
+
+        Example:
+            >>> with Sensor(driver, config) as sensor:
+            ...     reading = sensor.read()
+            ...     print(f"Altitude: {reading.altitude}")
+            >>> # Automatically disconnected here
         """
         if not self._connected:
             self.connect()
@@ -441,14 +814,64 @@ class Sensor:
     def __exit__(
         self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object
     ) -> None:
-        """Context manager exit - disconnect from sensor."""
+        """Context manager exit - disconnect sensor and release resources.
+
+        Called automatically when exiting a 'with' block. Ensures proper
+        cleanup regardless of whether an exception occurred.
+
+        Args:
+            exc_type: Exception type if an exception was raised, else None.
+            exc_val: Exception instance if raised, else None.
+            exc_tb: Traceback object if exception raised, else None.
+
+        Returns:
+            None. Does not suppress exceptions (returns None/False).
+
+        Raises:
+            No exceptions raised. Cleanup errors logged but suppressed.
+
+        Example:
+            >>> with Sensor(driver, config) as sensor:
+            ...     reading = sensor.read()
+            ...     process(reading)
+            >>> # sensor.disconnect() called automatically here
+            >>> sensor.connected
+            False
+        """
         self.disconnect()
 
     def __repr__(self) -> str:
-        """String representation of Sensor.
+        """Return string representation showing sensor type and connection state.
+
+        Generates a developer-friendly string for debugging and logging.
+        Includes sensor type (from info) when available, always shows
+        connection status.
+
+        Business context: Useful for debugging sensor issues in logs and
+        REPL sessions. Quickly shows what type of sensor and whether
+        it's ready for operations.
+
+        Implementation: Checks if _info is populated (set during connect).
+        If available, includes type field. Always includes _connected flag.
+        Uses !r for proper string quoting of type value.
+
+        Args:
+            No arguments.
 
         Returns:
-            String showing connection state and sensor type.
+            str: Representation like "Sensor(type='arduino_ble33', connected=True)"
+                or "Sensor(connected=False)" if not yet connected.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> sensor = Sensor(driver)
+            >>> repr(sensor)
+            "Sensor(connected=False)"
+            >>> sensor.connect()
+            >>> repr(sensor)
+            "Sensor(type='arduino_ble33', connected=True)"
         """
         if self._info:
             return f"Sensor(type={self._info.type!r}, connected={self._connected})"

@@ -57,11 +57,18 @@ def _utc_now() -> datetime:
     All timestamps in telescope-mcp statistics use UTC to avoid
     timezone confusion in observation logs.
 
+    Business context: Astronomical observations are recorded in UTC
+    for standardization. This helper ensures consistent timezone
+    handling throughout the statistics module.
+
     Args:
         None.
 
     Returns:
         Current datetime with UTC timezone attached.
+
+    Raises:
+        No exceptions raised.
 
     Example:
         >>> ts = _utc_now()

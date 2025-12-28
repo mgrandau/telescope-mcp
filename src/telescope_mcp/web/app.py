@@ -43,6 +43,10 @@ def _init_sdk() -> None:
     operations. Uses the SDK library path from the driver configuration.
     Thread-safe via global flag; subsequent calls are no-ops.
 
+    Business context: ZWO ASI cameras require SDK initialization before
+    use. The web app initializes lazily on first camera access, allowing
+    startup without cameras connected.
+
     This function is idempotent and safe to call multiple times.
     Initialization failures are logged but not raised, allowing the
     application to start even without cameras connected.
@@ -55,6 +59,10 @@ def _init_sdk() -> None:
 
     Raises:
         None. Exceptions are caught and logged as warnings.
+
+    Example:
+        >>> _init_sdk()  # First call initializes
+        >>> _init_sdk()  # Subsequent calls are no-ops
     """
     global _sdk_initialized
     if not _sdk_initialized:
