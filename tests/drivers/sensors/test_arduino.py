@@ -1002,6 +1002,39 @@ class TestAltitudeCalculation:
         # Raw altitude is ~0°, so calibrated should be ~10°
         assert 9 < alt < 11
 
+    def test_altitude_none_accelerometer(
+        self, arduino_instance: ArduinoSensorInstance
+    ) -> None:
+        """Verifies None accelerometer returns 0.0 safely.
+
+        Tests error handling when accelerometer data hasn't been received yet.
+
+        Business context:
+        Before the first sensor reading arrives, _accelerometer is None.
+        The calculation must return a safe default (0.0) rather than
+        raising an AttributeError or returning NaN.
+
+        Arrangement:
+        1. Ensure _accelerometer is None (initial state after open).
+
+        Action:
+        Call _calculate_altitude() before any readings.
+
+        Assertion Strategy:
+        Validates early exit by confirming:
+        - Returns 0.0 (safe default).
+        - No exceptions raised.
+
+        Testing Principle:
+        Validates initialization safety, ensuring calculations
+        work before sensor data is available.
+        """
+        arduino_instance._accelerometer = None
+
+        alt = arduino_instance._calculate_altitude()
+
+        assert alt == 0.0
+
 
 # =============================================================================
 # Azimuth Calculation Tests
@@ -1178,6 +1211,39 @@ class TestAzimuthCalculation:
         az = arduino_instance._calculate_azimuth()
 
         assert 0 <= az < 360
+
+    def test_azimuth_none_magnetometer(
+        self, arduino_instance: ArduinoSensorInstance
+    ) -> None:
+        """Verifies None magnetometer returns 0.0 safely.
+
+        Tests error handling when magnetometer data hasn't been received yet.
+
+        Business context:
+        Before the first sensor reading arrives, _magnetometer is None.
+        The calculation must return a safe default (0.0) rather than
+        raising an AttributeError or returning NaN.
+
+        Arrangement:
+        1. Ensure _magnetometer is None (initial state after open).
+
+        Action:
+        Call _calculate_azimuth() before any readings.
+
+        Assertion Strategy:
+        Validates early exit by confirming:
+        - Returns 0.0 (safe default).
+        - No exceptions raised.
+
+        Testing Principle:
+        Validates initialization safety, ensuring calculations
+        work before sensor data is available.
+        """
+        arduino_instance._magnetometer = None
+
+        az = arduino_instance._calculate_azimuth()
+
+        assert az == 0.0
 
 
 # =============================================================================
