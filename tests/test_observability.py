@@ -574,10 +574,12 @@ class TestFormatValue:
         Structured log values must be formatted for human-readable
         key=value output while preserving parseability.
 
-        Args:
-            input_val: Value to format.
-            expected: Expected string output.
-            description: Human-readable test case description.
+        Arrangement:
+        1. Parametrized test cases provide input/expected pairs.
+        2. Simple types: None, strings, integers, floats, booleans.
+
+        Action:
+        Call _format_value() with input value to get string output.
 
         Assertion Strategy:
         Validates formatting by confirming output equals expected string.
@@ -603,10 +605,12 @@ class TestFormatValue:
         Complex structured data (dicts, lists) must be JSON-encoded
         to preserve structure in log output.
 
-        Args:
-            input_val: Collection to format.
-            expected_parsed: Expected value after JSON parsing result.
-            description: Human-readable test case description.
+        Arrangement:
+        1. Parametrized test cases provide collection inputs.
+        2. Expected values are the original structures after JSON round-trip.
+
+        Action:
+        Call _format_value() then JSON parse to verify serialization.
 
         Assertion Strategy:
         Validates JSON serialization by parsing output and comparing.
@@ -1801,11 +1805,12 @@ class TestPercentile:
         Percentile calculations are used for latency analysis (P95, P99)
         in camera capture statistics and SLA monitoring.
 
-        Args:
-            data: Input data list.
-            percentile: Percentile to compute (0-100).
-            expected: Expected exact result.
-            description: Human-readable test case description.
+        Arrangement:
+        1. Parametrized test cases provide data lists and percentiles.
+        2. Edge cases include empty, single, and boundary percentiles.
+
+        Action:
+        Call _percentile() with data and percentile to compute result.
 
         Assertion Strategy:
         Validates percentile calculation by confirming exact match.
