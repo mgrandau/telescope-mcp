@@ -14,8 +14,8 @@ Example:
         is_open = True
         in_waiting = 0
 
-        def read_until(self, expected=b"\\n", size=None):
-            return b"test data\\r\\n"
+        def read_until(self, expected=b"\n", size=None):
+            return b"test data\r\n"
 
         def write(self, data):
             return len(data)
@@ -36,9 +36,10 @@ Testing:
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
+@runtime_checkable
 class SerialPort(Protocol):  # pragma: no cover
     """Protocol for serial port operations.
 
@@ -52,6 +53,10 @@ class SerialPort(Protocol):  # pragma: no cover
         is_open: Whether the port is currently open.
         in_waiting: Number of bytes waiting to be read.
 
+    Note:
+        pyserial's Serial is thread-safe for read/write operations.
+        Mock implementations should document their threading guarantees.
+
     Example:
         class MockSerial:
             is_open = True
@@ -62,7 +67,7 @@ class SerialPort(Protocol):  # pragma: no cover
                 self._buffer += data
                 self.in_waiting = len(self._buffer)
 
-            def read_until(self, expected=b"\\n", size=None):
+            def read_until(self, expected=b"\n", size=None):
                 data = self._buffer
                 self._buffer = b""
                 self.in_waiting = 0
@@ -266,6 +271,7 @@ class SerialPort(Protocol):  # pragma: no cover
         ...
 
 
+@runtime_checkable
 class PortEnumerator(Protocol):  # pragma: no cover
     """Protocol for enumerating serial ports.
 
@@ -284,7 +290,7 @@ class PortEnumerator(Protocol):  # pragma: no cover
         driver = SomeDriver._create_with_enumerator(MockPortEnumerator())
     """
 
-    def comports(self) -> list:
+    def comports(self) -> list[Any]:
         """Enumerate available serial ports on the system.
 
         Scans system for serial ports (USB, hardware, virtual). Returns
@@ -313,7 +319,40 @@ class PortEnumerator(Protocol):  # pragma: no cover
         ...
 
 
+def list_serial_ports() -> list[Any]:  # pragma: no cover
+    """List available serial ports on the system.
+
+    Wrapper around pyserial's list_ports.comports() that handles
+    ImportError gracefully. Use this instead of direct pyserial import
+    to enable testing without pyserial installed.
+
+    Business context: Provides a single point of control for port
+    enumeration. Tests can mock this function rather than dealing
+    with pyserial import mechanics.
+
+    Returns:
+        List of port info objects with device/description attributes.
+        Empty list if pyserial not installed.
+
+    Raises:
+        No exceptions raised. Returns empty list on ImportError.
+
+    Example:
+        >>> from telescope_mcp.drivers.serial import list_serial_ports
+        >>> ports = list_serial_ports()
+        >>> for p in ports:
+        ...     print(f"{p.device}: {p.description}")
+    """
+    try:
+        import serial.tools.list_ports
+
+        return list(serial.tools.list_ports.comports())
+    except ImportError:
+        return []
+
+
 __all__ = [
     "SerialPort",
     "PortEnumerator",
+    "list_serial_ports",
 ]

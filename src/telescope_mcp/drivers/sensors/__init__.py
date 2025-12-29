@@ -29,7 +29,7 @@ Example:
         reading = instance.read()
 """
 
-# Base types (no circular import issues - import first)
+# Import order: types first (avoid circular imports), then implementations
 # Driver implementations
 from telescope_mcp.drivers.sensors.arduino import (
     ArduinoSensorDriver,
@@ -41,9 +41,11 @@ from telescope_mcp.drivers.sensors.twin import (
     DigitalTwinSensorInstance,
 )
 from telescope_mcp.drivers.sensors.types import (
+    AvailableSensor,
     SensorDriver,
     SensorInstance,
     SensorReading,
+    validate_position,
 )
 
 # Serial protocols (re-exported from parent for convenience)
@@ -55,6 +57,10 @@ __all__ = [
     # Protocols
     "SensorInstance",
     "SensorDriver",
+    # Type definitions
+    "AvailableSensor",
+    # Validation helpers
+    "validate_position",
     # Serial protocols (re-exported from drivers.serial)
     "SerialPort",
     "PortEnumerator",

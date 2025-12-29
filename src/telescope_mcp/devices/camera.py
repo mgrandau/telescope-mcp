@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from telescope_mcp.observability import CameraStats, get_logger
 
@@ -42,6 +42,7 @@ logger = get_logger(__name__)
 # =============================================================================
 
 
+@runtime_checkable
 class Clock(Protocol):  # pragma: no cover
     """Protocol for time functions (injectable for testing).
 
@@ -257,6 +258,7 @@ class SystemClock:
         time.sleep(seconds)
 
 
+@runtime_checkable
 class OverlayRenderer(Protocol):  # pragma: no cover
     """Protocol for overlay rendering strategies.
 
@@ -393,6 +395,7 @@ class NullRenderer:
         return image_data
 
 
+@runtime_checkable
 class RecoveryStrategy(Protocol):  # pragma: no cover
     """Protocol for camera disconnect recovery.
 

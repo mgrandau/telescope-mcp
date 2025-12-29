@@ -62,6 +62,7 @@ from telescope_mcp.observability import get_logger
 
 if TYPE_CHECKING:
     from telescope_mcp.drivers.sensors import (
+        AvailableSensor,
         SensorDriver,
         SensorInstance,
         SensorReading,
@@ -268,7 +269,7 @@ class Sensor:
         """
         return self._info
 
-    def get_available_sensors(self) -> list[dict]:
+    def get_available_sensors(self) -> list[AvailableSensor]:
         """Enumerate all sensors available through the configured driver.
 
         Queries the driver for discoverable sensor hardware. For serial-based
@@ -347,14 +348,14 @@ class Sensor:
             # Get sensor info
             raw_info = self._instance.get_info()
             self._info = SensorInfo(
-                type=raw_info.get("type", "unknown"),
-                name=raw_info.get("name", "Unknown Sensor"),
-                has_accelerometer=raw_info.get("has_accelerometer", True),
-                has_magnetometer=raw_info.get("has_magnetometer", True),
-                has_temperature=raw_info.get("has_temperature", True),
-                has_humidity=raw_info.get("has_humidity", True),
-                sample_rate_hz=raw_info.get("sample_rate_hz", 10.0),
-                port=raw_info.get("port"),
+                type=str(raw_info.get("type", "unknown")),
+                name=str(raw_info.get("name", "Unknown Sensor")),
+                has_accelerometer=bool(raw_info.get("has_accelerometer", True)),
+                has_magnetometer=bool(raw_info.get("has_magnetometer", True)),
+                has_temperature=bool(raw_info.get("has_temperature", True)),
+                has_humidity=bool(raw_info.get("has_humidity", True)),
+                sample_rate_hz=10.0,  # Default; TypedDict doesn't include this field
+                port=str(raw_info.get("port")) if raw_info.get("port") else None,
                 extra={
                     k: v
                     for k, v in raw_info.items()
@@ -625,7 +626,9 @@ class Sensor:
         if self._connected and self._instance is not None:
             try:
                 driver_status = self._instance.get_status()
-                base_status.update(driver_status)
+                # Merge driver status into base status
+                for key, value in driver_status.items():
+                    base_status[key] = value  # type: ignore[assignment]
             except Exception as e:
                 base_status["status_error"] = str(e)
 

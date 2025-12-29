@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 class MotorType(Enum):
@@ -45,6 +45,7 @@ class MotorStatus:
     speed: int = 0
 
 
+@runtime_checkable
 class MotorController(Protocol):  # pragma: no cover
     """Protocol for motor controller implementations.
 

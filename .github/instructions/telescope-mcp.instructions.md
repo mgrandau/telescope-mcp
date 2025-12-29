@@ -27,6 +27,12 @@ When defining settings in server.py or config:
 - `tools/` = MCP tool definitions
 - Inject drivers into devices (DI pattern)
 
+## Type Safety
+- **Protocols** = interfaces. Always `@runtime_checkable`
+- **TypedDict** for all dict returns (mypy --strict)
+- Expose TypedDicts in `__all__` for consumer use
+- `total=False` for optional fields
+
 ## Documentation (AI-Optimized)
 Heavy docs on **all** functions (including `_private()` and tests):
 - Google-style: Args, Returns, Raises, Example

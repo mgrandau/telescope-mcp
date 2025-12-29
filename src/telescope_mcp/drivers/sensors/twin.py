@@ -20,15 +20,82 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from types import TracebackType
+from typing import TypedDict
 
-from telescope_mcp.drivers.sensors.types import SensorReading
+from telescope_mcp.drivers.sensors.types import (
+    AvailableSensor,
+    SensorInfo,
+    SensorInstance,
+    SensorReading,
+    SensorStatus,
+    validate_position,
+)
 from telescope_mcp.observability import get_logger
 
-if TYPE_CHECKING:
-    pass
-
 logger = get_logger(__name__)
+
+__all__ = [
+    "DigitalTwinSensorConfig",
+    "DigitalTwinSensorInstance",
+    "DigitalTwinSensorDriver",
+    "TwinSensorInfo",
+    "TwinSensorStatus",
+    "MagCalibrationOffsets",
+    "AvailableTwinSensor",
+]
+
+# Physics simulation constants
+_ACCEL_NOISE_XY = 0.01  # g - accelerometer XY noise
+_ACCEL_NOISE_Z = 0.05  # g - accelerometer Z noise
+_ACCEL_Y_FACTOR = 0.95  # gravity Y-axis attenuation factor
+_MAG_FIELD_STRENGTH = 45.0  # µT - typical Earth's magnetic field
+_MAG_NOISE_XY = 1.0  # µT - magnetometer XY noise
+_MAG_VERTICAL = 30.0  # µT - typical vertical component
+_MAG_VERTICAL_NOISE = 2.0  # µT - vertical component noise
+_MAG_OFFSET_RANGE = 5.0  # µT - typical hard-iron offset range for calibration
+
+
+class TwinSensorInfo(TypedDict):
+    """Type for digital twin sensor hardware information."""
+
+    type: str
+    name: str
+    has_accelerometer: bool
+    has_magnetometer: bool
+    has_temperature: bool
+    has_humidity: bool
+    sample_rate_hz: float
+    noise_std_alt: float
+    noise_std_az: float
+
+
+class TwinSensorStatus(TypedDict):
+    """Type for digital twin sensor operational status."""
+
+    connected: bool
+    type: str
+    calibrated: bool
+    mag_calibrated: bool
+    sample_rate_hz: float
+    uptime_seconds: float
+
+
+class MagCalibrationOffsets(TypedDict):
+    """Type for magnetometer calibration offsets."""
+
+    offset_x: float
+    offset_y: float
+    offset_z: float
+
+
+class AvailableTwinSensor(TypedDict):
+    """Type for discovered twin sensor descriptor."""
+
+    id: int
+    type: str
+    name: str
+    port: str
 
 
 @dataclass
@@ -44,6 +111,8 @@ class DigitalTwinSensorConfig:
         drift_rate_az: Azimuth drift rate (degrees/hour).
         temperature: Simulated temperature in Celsius.
         humidity: Simulated humidity in %RH.
+        temp_noise_std: Standard deviation of temperature noise (°C).
+        humidity_noise_std: Standard deviation of humidity noise (%RH).
         sample_rate_hz: Simulated sensor sample rate.
     """
 
@@ -55,7 +124,41 @@ class DigitalTwinSensorConfig:
     drift_rate_az: float = 0.0  # degrees per hour
     temperature: float = 20.0  # Celsius
     humidity: float = 50.0  # %RH
+    temp_noise_std: float = 0.1  # °C - temperature noise
+    humidity_noise_std: float = 0.5  # %RH - humidity noise
     sample_rate_hz: float = 10.0
+
+    def __repr__(self) -> str:
+        """Return concise config representation for logging and debugging.
+
+        Creates a human-readable string showing key configuration values.
+        Useful for log messages and interactive debugging sessions.
+
+        Business context: When troubleshooting simulation behavior, seeing
+        the actual configuration values in logs helps identify mismatches
+        between expected and actual test setup.
+
+        Args:
+            self: The config dataclass instance (implicit).
+
+        Returns:
+            str: Formatted string showing initial altitude, azimuth, and
+                noise level. Example: "DigitalTwinSensorConfig(alt=45.0°,
+                az=180.0°, noise=±0.1°)"
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> config = DigitalTwinSensorConfig(initial_altitude=30.0)
+            >>> print(config)
+            DigitalTwinSensorConfig(alt=30.0°, az=45.0°, noise=±0.1°)
+            >>> logger.info("Using config", config=repr(config))
+        """
+        return (
+            f"DigitalTwinSensorConfig(alt={self.initial_altitude}°, "
+            f"az={self.initial_azimuth}°, noise=±{self.noise_std_alt}°)"
+        )
 
 
 class DigitalTwinSensorInstance:
@@ -63,6 +166,10 @@ class DigitalTwinSensorInstance:
 
     Provides sensor readings with configurable noise, drift, and
     environmental data. Simulates BLE33 Sense IMU behavior.
+
+    Note:
+        This class is NOT thread-safe. For concurrent access,
+        use external synchronization.
     """
 
     def __init__(self, config: DigitalTwinSensorConfig) -> None:
@@ -114,13 +221,13 @@ class DigitalTwinSensorInstance:
 
         self._is_open = True
 
-        logger.info(
+        logger.debug(
             "Digital twin sensor initialized",
             altitude=self._true_altitude,
             azimuth=self._true_azimuth,
         )
 
-    def get_info(self) -> dict:
+    def get_info(self) -> SensorInfo:
         """Get sensor hardware information and capabilities.
 
         Returns metadata describing this digital twin sensor including
@@ -133,7 +240,7 @@ class DigitalTwinSensorInstance:
         to help developers understand simulation accuracy.
 
         Returns:
-            dict: Sensor metadata containing:
+            TwinSensorInfo: TypedDict containing:
                 - type (str): Always 'digital_twin'
                 - name (str): Human-readable sensor name
                 - has_accelerometer (bool): True - 3-axis supported
@@ -155,17 +262,11 @@ class DigitalTwinSensorInstance:
             >>> print(f"Noise: ±{info['noise_std_alt']:.2f}° altitude")
             Noise: ±0.10° altitude
         """
-        return {
-            "type": "digital_twin",
-            "name": "Digital Twin IMU Sensor",
-            "has_accelerometer": True,
-            "has_magnetometer": True,
-            "has_temperature": True,
-            "has_humidity": True,
-            "sample_rate_hz": self._config.sample_rate_hz,
-            "noise_std_alt": self._config.noise_std_alt,
-            "noise_std_az": self._config.noise_std_az,
-        }
+        return SensorInfo(
+            type="digital_twin",
+            name="Digital Twin IMU Sensor",
+            port="simulated",
+        )
 
     def read(self) -> SensorReading:
         """Read simulated sensor values with noise and drift.
@@ -224,26 +325,25 @@ class DigitalTwinSensorInstance:
         # At altitude=0, gravity is in Y direction
         # At altitude=90, gravity is in X direction
         alt_rad = math.radians(raw_altitude)
-        ax = math.sin(alt_rad) + random.gauss(0, 0.01)
-        ay = math.cos(alt_rad) * random.gauss(0.95, 0.01)
-        az = random.gauss(0, 0.05)
+        ax = math.sin(alt_rad) + random.gauss(0, _ACCEL_NOISE_XY)
+        ay = math.cos(alt_rad) * random.gauss(_ACCEL_Y_FACTOR, _ACCEL_NOISE_XY)
+        az = random.gauss(0, _ACCEL_NOISE_Z)
 
         # Generate magnetometer values from azimuth
         # Simplified: assume horizontal field, magnetic north = 0°
         az_rad = math.radians(raw_azimuth)
-        field_strength = 45.0  # µT typical
-        mx = field_strength * math.cos(az_rad) + random.gauss(0, 1.0)
-        my = field_strength * math.sin(az_rad) + random.gauss(0, 1.0)
-        mz = random.gauss(30, 2.0)  # Vertical component
+        mx = _MAG_FIELD_STRENGTH * math.cos(az_rad) + random.gauss(0, _MAG_NOISE_XY)
+        my = _MAG_FIELD_STRENGTH * math.sin(az_rad) + random.gauss(0, _MAG_NOISE_XY)
+        mz = random.gauss(_MAG_VERTICAL, _MAG_VERTICAL_NOISE)
 
         # Apply mag calibration
         mx -= self._mag_offset_x
         my -= self._mag_offset_y
         mz -= self._mag_offset_z
 
-        # Environmental noise
-        temp = self._config.temperature + random.gauss(0, 0.1)
-        hum = self._config.humidity + random.gauss(0, 0.5)
+        # Environmental noise (configurable)
+        temp = self._config.temperature + random.gauss(0, self._config.temp_noise_std)
+        hum = self._config.humidity + random.gauss(0, self._config.humidity_noise_std)
 
         # Build raw string (matching Arduino output format)
         raw = (
@@ -262,7 +362,7 @@ class DigitalTwinSensorInstance:
             raw_values=raw,
         )
 
-    def _set_position(self, altitude: float, azimuth: float) -> None:
+    def set_position(self, altitude: float, azimuth: float) -> None:
         """Set the true simulated telescope position for testing.
 
         Directly sets the underlying 'true' position that the digital twin
@@ -286,8 +386,12 @@ class DigitalTwinSensorInstance:
             None. Position is stored internally.
 
         Raises:
-            No exceptions raised. Out-of-range values accepted for
-            edge case testing.
+            No exceptions raised.
+
+        Note:
+            Unlike calibrate(), this method accepts out-of-range values
+            intentionally to support edge case testing (negative altitudes,
+            extreme positions).
 
         Example:
             >>> twin = driver.open()
@@ -331,7 +435,8 @@ class DigitalTwinSensorInstance:
             None. Calibration offsets stored internally.
 
         Raises:
-            RuntimeError: If sensor is closed (in twin, always open).
+            RuntimeError: If sensor is closed.
+            ValueError: If altitude not in 0-90° or azimuth not in 0-360°.
 
         Example:
             >>> twin = driver.open()
@@ -340,6 +445,12 @@ class DigitalTwinSensorInstance:
             >>> reading = twin.read()
             >>> assert abs(reading.altitude - 45.0) < 0.5
         """
+        if not self._is_open:
+            raise RuntimeError("Sensor is closed")
+
+        # Validate input ranges using shared helper
+        validate_position(true_altitude, true_azimuth)
+
         # Get current raw reading
         reading = self.read()
 
@@ -347,13 +458,13 @@ class DigitalTwinSensorInstance:
         self._cal_alt_offset = true_altitude - reading.altitude
         self._cal_az_offset = true_azimuth - reading.azimuth
 
-        logger.info(
+        logger.debug(
             "Sensor calibrated",
             alt_offset=self._cal_alt_offset,
             az_offset=self._cal_az_offset,
         )
 
-    def _calibrate_magnetometer(self) -> dict:
+    def calibrate_magnetometer(self) -> MagCalibrationOffsets:
         """Simulate magnetometer hard-iron calibration.
 
         Generates random calibration offsets to simulate the magnetometer
@@ -369,7 +480,7 @@ class DigitalTwinSensorInstance:
             No arguments required.
 
         Returns:
-            dict: Calibration offsets containing:
+            MagCalibrationOffsets: TypedDict containing:
                 - offset_x (float): X-axis offset in µT (typically -5 to +5)
                 - offset_y (float): Y-axis offset in µT
                 - offset_z (float): Z-axis offset in µT
@@ -386,22 +497,22 @@ class DigitalTwinSensorInstance:
             >>> # Subsequent reads use calibrated values
         """
         # Simulate collecting samples and finding center
-        self._mag_offset_x = random.gauss(0, 5)
-        self._mag_offset_y = random.gauss(0, 5)
-        self._mag_offset_z = random.gauss(0, 5)
+        self._mag_offset_x = random.gauss(0, _MAG_OFFSET_RANGE)
+        self._mag_offset_y = random.gauss(0, _MAG_OFFSET_RANGE)
+        self._mag_offset_z = random.gauss(0, _MAG_OFFSET_RANGE)
 
-        logger.info(
+        logger.debug(
             "Magnetometer calibrated",
             offset_x=self._mag_offset_x,
             offset_y=self._mag_offset_y,
             offset_z=self._mag_offset_z,
         )
 
-        return {
-            "offset_x": self._mag_offset_x,
-            "offset_y": self._mag_offset_y,
-            "offset_z": self._mag_offset_z,
-        }
+        return MagCalibrationOffsets(
+            offset_x=self._mag_offset_x,
+            offset_y=self._mag_offset_y,
+            offset_z=self._mag_offset_z,
+        )
 
     def reset(self) -> None:
         """Reset sensor to initial uncalibrated state.
@@ -437,9 +548,9 @@ class DigitalTwinSensorInstance:
         self._mag_offset_z = 0.0
         self._start_time = time.monotonic()
 
-        logger.info("Sensor reset")
+        logger.debug("Sensor reset")
 
-    def get_status(self) -> dict:
+    def get_status(self) -> SensorStatus:
         """Get current sensor status and calibration state.
 
         Returns operational status including connection state, calibration
@@ -452,7 +563,7 @@ class DigitalTwinSensorInstance:
         particularly important for assessing position accuracy.
 
         Returns:
-            dict: Status dictionary containing:
+            TwinSensorStatus: TypedDict containing:
                 - connected (bool): True if sensor is open
                 - type (str): Always 'digital_twin'
                 - calibrated (bool): True if position calibration applied
@@ -473,18 +584,11 @@ class DigitalTwinSensorInstance:
             >>> instance.calibrate(45.0, 180.0)
             >>> assert instance.get_status()['calibrated'] is True
         """
-        return {
-            "connected": self._is_open,
-            "type": "digital_twin",
-            "calibrated": self._cal_alt_offset != 0 or self._cal_az_offset != 0,
-            "mag_calibrated": (
-                self._mag_offset_x != 0
-                or self._mag_offset_y != 0
-                or self._mag_offset_z != 0
-            ),
-            "sample_rate_hz": self._config.sample_rate_hz,
-            "uptime_seconds": time.monotonic() - self._start_time,
-        }
+        return SensorStatus(
+            connected=self._is_open,
+            calibrated=self._cal_alt_offset != 0 or self._cal_az_offset != 0,
+            is_open=self._is_open,
+        )
 
     def close(self) -> None:
         """Close the simulated sensor connection.
@@ -511,7 +615,42 @@ class DigitalTwinSensorInstance:
             >>> twin.read()  # Raises RuntimeError
         """
         self._is_open = False
-        logger.info("Digital twin sensor closed")
+        logger.debug("Digital twin sensor closed")
+
+    @property
+    def is_open(self) -> bool:
+        """Return True if sensor connection is open and ready for operations.
+
+        Property accessor for connection state. Provides read-only access
+        to the sensor's open/closed status for conditional logic and
+        validation before operations.
+
+        Business context: Code should check is_open before calling read()
+        or other operations to provide better error messages or handle
+        disconnection gracefully. Also used by driver's _ensure_not_open()
+        to prevent double-open scenarios.
+
+        Args:
+            self: The sensor instance (implicit).
+
+        Returns:
+            bool: True if sensor is open and ready for read(), calibrate(),
+                and other operations. False if closed or never opened.
+
+        Raises:
+            No exceptions raised. Always returns a valid boolean.
+
+        Example:
+            >>> sensor = driver.open()
+            >>> sensor.is_open
+            True
+            >>> sensor.close()
+            >>> sensor.is_open
+            False
+            >>> if sensor.is_open:
+            ...     reading = sensor.read()
+        """
+        return self._is_open
 
 
 class DigitalTwinSensorDriver:
@@ -558,7 +697,38 @@ class DigitalTwinSensorDriver:
         self._config = config or DigitalTwinSensorConfig()
         self._instance: DigitalTwinSensorInstance | None = None
 
-    def get_available_sensors(self) -> list[dict]:
+    def _ensure_not_open(self) -> None:
+        """Ensure no sensor is currently open before opening a new one.
+
+        Validates that the driver doesn't have an active sensor instance.
+        This prevents resource leaks by enforcing single-instance semantics
+        consistent with real hardware drivers.
+
+        Business context: Although digital twin doesn't have real resource
+        constraints, it mirrors Arduino driver behavior for API consistency.
+        Tests written against digital twin should work identically with
+        real hardware.
+
+        Args:
+            None. Checks internal driver state.
+
+        Returns:
+            None. Method returns normally if no sensor is open.
+
+        Raises:
+            RuntimeError: If a sensor instance is already open. Close the
+                existing sensor with close() before opening another.
+
+        Example:
+            >>> driver = DigitalTwinSensorDriver()
+            >>> driver.open()
+            >>> driver._ensure_not_open()  # Raises RuntimeError
+            RuntimeError: Sensor already open
+        """
+        if self._instance is not None and self._instance.is_open:
+            raise RuntimeError("Sensor already open")
+
+    def get_available_sensors(self) -> list[AvailableSensor]:
         """List available sensors from this driver.
 
         For the digital twin driver, always returns a single simulated
@@ -572,7 +742,7 @@ class DigitalTwinSensorDriver:
         enumeration workflows.
 
         Returns:
-            list[dict]: Single-element list containing sensor descriptor:
+            list[AvailableTwinSensor]: Single-element list containing sensor descriptor:
                 - id (int): Always 0
                 - type (str): Always 'digital_twin'
                 - name (str): Human-readable name
@@ -590,15 +760,15 @@ class DigitalTwinSensorDriver:
             Digital Twin IMU Sensor
         """
         return [
-            {
-                "id": 0,
-                "type": "digital_twin",
-                "name": "Digital Twin IMU Sensor",
-                "port": "simulated",
-            }
+            AvailableSensor(
+                id=0,
+                type="digital_twin",
+                name="Digital Twin IMU Sensor",
+                port="simulated",
+            )
         ]
 
-    def open(self, sensor_id: int | str = 0) -> DigitalTwinSensorInstance:
+    def open(self, sensor_id: int | str = 0) -> SensorInstance:
         """Open a simulated digital twin sensor instance.
 
         Creates a new DigitalTwinSensorInstance with the configured
@@ -631,11 +801,10 @@ class DigitalTwinSensorDriver:
             Altitude: 45.0°
             >>> driver.close()
         """
-        if self._instance is not None and self._instance._is_open:
-            raise RuntimeError("Sensor already open")
+        self._ensure_not_open()
 
         self._instance = DigitalTwinSensorInstance(self._config)
-        logger.info("Digital twin sensor opened")
+        logger.debug("Digital twin sensor opened")
         return self._instance
 
     def close(self) -> None:
@@ -665,3 +834,71 @@ class DigitalTwinSensorDriver:
         if self._instance is not None:
             self._instance.close()
             self._instance = None
+
+    def __enter__(self) -> DigitalTwinSensorInstance:
+        """Enter context manager, opening simulated sensor.
+
+        Enables the driver to be used as a context manager for automatic
+        resource cleanup. Opens the digital twin sensor and returns the
+        instance for reading.
+
+        Business context: Provides identical API to ArduinoSensorDriver,
+        allowing test code to swap between real and simulated sensors
+        without code changes. Context manager pattern ensures cleanup.
+
+        Args:
+            self: The driver instance (implicit).
+
+        Returns:
+            DigitalTwinSensorInstance: Open sensor instance ready for
+                read() and calibrate() operations.
+
+        Raises:
+            RuntimeError: If a sensor is already open on this driver.
+
+        Example:
+            >>> with DigitalTwinSensorDriver() as sensor:
+            ...     reading = sensor.read()
+            ...     print(f"ALT: {reading.altitude:.1f}°")
+            ALT: 45.1°
+        """
+        instance = self.open()
+        # Cast is safe - open() always returns DigitalTwinSensorInstance internally
+        assert isinstance(instance, DigitalTwinSensorInstance)
+        return instance
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit context manager, closing simulated sensor.
+
+        Called automatically when exiting a `with` block, ensuring proper
+        cleanup regardless of whether an exception occurred. Closes the
+        sensor instance and resets driver state.
+
+        Business context: Maintains API parity with ArduinoSensorDriver.
+        Although digital twin has no real resources to release, consistent
+        behavior allows seamless switching between real and simulated sensors.
+
+        Args:
+            exc_type: Exception type if an exception was raised in the
+                with block, None otherwise.
+            exc_val: Exception instance if raised, None otherwise.
+            exc_tb: Exception traceback if raised, None otherwise.
+
+        Returns:
+            None. Exceptions are not suppressed (returns None, not True).
+
+        Raises:
+            No exceptions raised. Cleanup always succeeds for digital twin.
+
+        Example:
+            >>> with DigitalTwinSensorDriver() as sensor:
+            ...     reading = sensor.read()
+            ...     raise ValueError("test")  # __exit__ still called
+            # Sensor properly closed despite exception
+        """
+        self.close()

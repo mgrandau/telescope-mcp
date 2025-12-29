@@ -51,16 +51,97 @@ import math
 import threading
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from types import TracebackType
+from typing import TypedDict
 
-from telescope_mcp.drivers.sensors.types import SensorReading
-from telescope_mcp.drivers.serial import PortEnumerator, SerialPort
+from telescope_mcp.drivers.sensors.types import (
+    AccelerometerData,
+    AvailableSensor,
+    MagnetometerData,
+    SensorInfo,
+    SensorInstance,
+    SensorReading,
+    SensorStatus,
+    validate_position,
+)
+
+__all__ = [
+    "ArduinoSensorInstance",
+    "ArduinoSensorDriver",
+    "ArduinoSensorInfo",
+    "ArduinoSensorStatus",
+    "ArduinoAvailableSensor",
+]
+from telescope_mcp.drivers.serial import PortEnumerator, SerialPort, list_serial_ports
 from telescope_mcp.observability import get_logger
 
-if TYPE_CHECKING:
-    pass
-
 logger = get_logger(__name__)
+
+# Protocol constants for Arduino serial data format
+_FULL_FORMAT_FIELDS = 8  # aX, aY, aZ, mX, mY, mZ, temp, humidity
+_LEGACY_FORMAT_FIELDS = 6  # aX, aZ, aY, mX, mZ, mY (note different order)
+
+
+class ArduinoSensorInfo(TypedDict):
+    """Type for Arduino sensor hardware information.
+
+    Keys:
+        type: Sensor type string (always "arduino_ble33").
+        name: Human-readable sensor name.
+        port: Serial port path (e.g., "/dev/ttyACM0").
+        has_accelerometer: True (BLE33 always has IMU).
+        has_magnetometer: True (BLE33 always has IMU).
+        has_temperature: True (BLE33 has HTS221).
+        has_humidity: True (BLE33 has HTS221).
+        sample_rate_hz: Current sample rate (typically 10.0).
+    """
+
+    type: str
+    name: str
+    port: str
+    has_accelerometer: bool
+    has_magnetometer: bool
+    has_temperature: bool
+    has_humidity: bool
+    sample_rate_hz: float
+
+
+class ArduinoSensorStatus(TypedDict):
+    """Type for Arduino sensor operational status.
+
+    Keys:
+        connected: Whether serial connection is open.
+        type: Sensor type (always "arduino_ble33").
+        port: Serial port path.
+        last_update: ISO timestamp of last reading, or None.
+        raw_status: Raw STATUS response from Arduino.
+        calibrated: Whether calibration offsets are non-zero.
+    """
+
+    connected: bool
+    type: str
+    port: str
+    last_update: str | None
+    raw_status: str
+    calibrated: bool
+
+
+class ArduinoAvailableSensor(TypedDict):
+    """Type for discovered Arduino sensor descriptor.
+
+    Keys:
+        id: Integer index for selection.
+        type: Sensor type (always "arduino_ble33").
+        name: Human-readable name.
+        port: Serial port path (e.g., "/dev/ttyACM0").
+        description: Hardware description from serial driver.
+    """
+
+    id: int
+    type: str
+    name: str
+    port: str
+    description: str
 
 
 class ArduinoSensorInstance:
@@ -73,7 +154,13 @@ class ArduinoSensorInstance:
     Use `_create_with_serial()` class method for testing.
     """
 
-    def __init__(self, port: str, baudrate: int = 115200) -> None:
+    def __init__(
+        self,
+        port: str,
+        baudrate: int = 115200,
+        *,
+        startup_delay: float = 0.5,
+    ) -> None:
         """Open serial connection to Arduino sensor.
 
         Establishes serial connection, initializes state, and starts
@@ -86,6 +173,8 @@ class ArduinoSensorInstance:
         Args:
             port: Serial port (e.g., /dev/ttyACM0).
             baudrate: Serial baud rate (default 115200).
+            startup_delay: Seconds to wait for first reading after
+                connection (default 0.5). Set to 0 for faster tests.
 
         Returns:
             None. Instance connected and reading data.
@@ -112,7 +201,8 @@ class ArduinoSensorInstance:
 
         # Start background reader and wait for first reading
         self._start_reader()
-        time.sleep(0.5)
+        if startup_delay > 0:
+            time.sleep(startup_delay)
 
         logger.info("Arduino sensor connected", port=port)
 
@@ -186,9 +276,12 @@ class ArduinoSensorInstance:
         self._port = port_name
         self._is_open = True
 
-        # Latest readings (updated by background thread)
-        self._accelerometer: dict[str, float] = {}
-        self._magnetometer: dict[str, float] = {}
+        # Thread synchronization for shared state
+        self._lock = threading.Lock()
+
+        # Latest readings (updated by background thread, protected by _lock)
+        self._accelerometer: AccelerometerData | None = None
+        self._magnetometer: MagnetometerData | None = None
         self._temperature: float = 0.0
         self._humidity: float = 0.0
         self._raw_values: str = ""
@@ -288,38 +381,46 @@ class ArduinoSensorInstance:
         values = line.split("\t")
 
         try:
-            if len(values) == 8:
+            if len(values) == _FULL_FORMAT_FIELDS:
                 # Full format: aX, aY, aZ, mX, mY, mZ, temp, humidity
-                self._accelerometer = {
+                accel: AccelerometerData = {
                     "aX": float(values[0]),
                     "aY": float(values[1]),
                     "aZ": float(values[2]),
                 }
-                self._magnetometer = {
+                mag: MagnetometerData = {
                     "mX": float(values[3]),
                     "mY": float(values[4]),
                     "mZ": float(values[5]),
                 }
-                self._temperature = float(values[6])
-                self._humidity = float(values[7])
-                self._raw_values = line
-                self._last_update = datetime.now(UTC)
+                temp = float(values[6])
+                humidity = float(values[7])
+                with self._lock:
+                    self._accelerometer = accel
+                    self._magnetometer = mag
+                    self._temperature = temp
+                    self._humidity = humidity
+                    self._raw_values = line
+                    self._last_update = datetime.now(UTC)
                 return True
 
-            elif len(values) == 6:
+            elif len(values) == _LEGACY_FORMAT_FIELDS:
                 # Legacy format: aX, aZ, aY, mX, mZ, mY (note different order)
-                self._accelerometer = {
+                legacy_accel: AccelerometerData = {
                     "aX": float(values[0]),
                     "aZ": float(values[1]),
                     "aY": float(values[2]),
                 }
-                self._magnetometer = {
+                legacy_mag: MagnetometerData = {
                     "mX": float(values[3]),
                     "mZ": float(values[4]),
                     "mY": float(values[5]),
                 }
-                self._raw_values = line
-                self._last_update = datetime.now(UTC)
+                with self._lock:
+                    self._accelerometer = legacy_accel
+                    self._magnetometer = legacy_mag
+                    self._raw_values = line
+                    self._last_update = datetime.now(UTC)
                 return True
 
         except (ValueError, UnicodeDecodeError):
@@ -363,7 +464,7 @@ class ArduinoSensorInstance:
                 if self._is_open:
                     logger.warning("Sensor read error", error=str(e))
 
-    def get_info(self) -> dict:
+    def get_info(self) -> SensorInfo:
         """Get Arduino sensor hardware information and capabilities.
 
         Returns metadata describing the connected Arduino Nano BLE33 Sense
@@ -376,7 +477,7 @@ class ArduinoSensorInstance:
         appropriate data collection.
 
         Returns:
-            dict: Sensor metadata containing:
+            ArduinoSensorInfo: TypedDict containing:
                 - type (str): Always 'arduino_ble33'
                 - name (str): 'Arduino Nano BLE33 Sense'
                 - port (str): Serial port path (e.g., '/dev/ttyACM0')
@@ -397,16 +498,11 @@ class ArduinoSensorInstance:
             >>> if info['has_magnetometer']:
             ...     print("Compass available")
         """
-        return {
-            "type": "arduino_ble33",
-            "name": "Arduino Nano BLE33 Sense",
-            "port": self._port,
-            "has_accelerometer": True,
-            "has_magnetometer": True,
-            "has_temperature": True,
-            "has_humidity": True,
-            "sample_rate_hz": 10.0,
-        }
+        return SensorInfo(
+            type="arduino_ble33",
+            name="Arduino Nano BLE33 Sense",
+            port=self._port,
+        )
 
     def _calculate_altitude(self) -> float:
         """Calculate altitude from accelerometer tilt data.
@@ -438,9 +534,12 @@ class ArduinoSensorInstance:
             >>> 25 < alt < 35  # ~30 degrees
             True
         """
-        ax = self._accelerometer.get("aX", 0)
-        ay = self._accelerometer.get("aY", 0)
-        az = self._accelerometer.get("aZ", 0)
+        if self._accelerometer is None:
+            return 0.0
+
+        ax = self._accelerometer["aX"]
+        ay = self._accelerometer["aY"]
+        az = self._accelerometer["aZ"]
 
         if ay == 0 and az == 0:
             return 0.0
@@ -484,8 +583,11 @@ class ArduinoSensorInstance:
             >>> az == 0.0  # Pointing magnetic north
             True
         """
-        mx = self._magnetometer.get("mX", 0)
-        my = self._magnetometer.get("mY", 0)
+        if self._magnetometer is None:
+            return 0.0
+
+        mx = self._magnetometer["mX"]
+        my = self._magnetometer["mY"]
 
         if mx == 0 and my == 0:
             return 0.0
@@ -539,19 +641,20 @@ class ArduinoSensorInstance:
         if not self._is_open:
             raise RuntimeError("Sensor is closed")
 
-        if not self._accelerometer:
-            raise RuntimeError("No sensor data available yet")
+        with self._lock:
+            if self._accelerometer is None or self._magnetometer is None:
+                raise RuntimeError("No sensor data available yet")
 
-        return SensorReading(
-            accelerometer=self._accelerometer.copy(),
-            magnetometer=self._magnetometer.copy(),
-            altitude=self._calculate_altitude(),
-            azimuth=self._calculate_azimuth(),
-            temperature=self._temperature,
-            humidity=self._humidity,
-            timestamp=self._last_update or datetime.now(UTC),
-            raw_values=self._raw_values,
-        )
+            return SensorReading(
+                accelerometer=self._accelerometer,
+                magnetometer=self._magnetometer,
+                altitude=self._calculate_altitude(),
+                azimuth=self._calculate_azimuth(),
+                temperature=self._temperature,
+                humidity=self._humidity,
+                timestamp=self._last_update or datetime.now(UTC),
+                raw_values=self._raw_values,
+            )
 
     def calibrate(
         self,
@@ -582,6 +685,7 @@ class ArduinoSensorInstance:
 
         Raises:
             RuntimeError: If sensor is closed.
+            ValueError: If altitude not in 0-90° or azimuth not in 0-360°.
 
         Example:
             >>> instance = driver.open("/dev/ttyACM0")
@@ -590,6 +694,12 @@ class ArduinoSensorInstance:
             >>> # Subsequent reads return calibrated positions
             >>> reading = instance.read()
         """
+        if not self._is_open:
+            raise RuntimeError("Sensor is closed")
+
+        # Validate input ranges using shared helper
+        validate_position(true_altitude, true_azimuth)
+
         # Get current calculated values (before transform)
         current_alt = self._calculate_altitude()
         current_az = self._calculate_azimuth()
@@ -746,7 +856,7 @@ class ArduinoSensorInstance:
         """
         self._send_command("RESET", timeout=5.0)
 
-    def get_status(self) -> dict:
+    def get_status(self) -> SensorStatus:
         """Get current Arduino sensor status including calibration state.
 
         Sends STATUS command to Arduino and returns parsed response along
@@ -759,7 +869,7 @@ class ArduinoSensorInstance:
         comprehensive monitoring.
 
         Returns:
-            dict: Status dictionary containing:
+            ArduinoSensorStatus: TypedDict containing:
                 - connected (bool): True if serial connection open
                 - type (str): Always 'arduino_ble33'
                 - port (str): Serial port path
@@ -768,7 +878,7 @@ class ArduinoSensorInstance:
                 - calibrated (bool): True if position calibration applied
 
         Raises:
-            serial.SerialException: If serial communication fails.
+            RuntimeError: If serial communication fails.
 
         Example:
             >>> status = instance.get_status()
@@ -779,18 +889,19 @@ class ArduinoSensorInstance:
             >>> if not status['calibrated']:
             ...     print("Sensor needs calibration")
         """
-        response = self._send_command("STATUS", timeout=3.0)
+        # Send status command to verify Arduino is responding
+        self._send_command("STATUS", timeout=3.0)
 
-        return {
-            "connected": self._is_open,
-            "type": "arduino_ble33",
-            "port": self._port,
-            "last_update": self._last_update.isoformat() if self._last_update else None,
-            "raw_status": response,
-            "calibrated": self._cal_alt_offset != 0 or self._cal_az_offset != 0,
-        }
+        # Return protocol-compatible SensorStatus
+        # Store extra Arduino-specific info for internal use
+        return SensorStatus(
+            connected=self._is_open,
+            calibrated=self._cal_alt_offset != 0 or self._cal_az_offset != 0,
+            is_open=self._is_open,
+            error=None if self._is_open else "Connection closed",
+        )
 
-    def _calibrate_magnetometer(self) -> str:
+    def calibrate_magnetometer(self) -> str:
         """Run Arduino magnetometer hard-iron calibration routine.
 
         Triggers the Arduino's built-in magnetometer calibration. During
@@ -812,9 +923,8 @@ class ArduinoSensorInstance:
                 Format: 'OK: CALIBRATE\nOffsetX: 12.3\nOffsetY: -5.2...'
 
         Raises:
-            serial.SerialException: If serial communication fails.
-            serial.SerialTimeoutError: If calibration doesn't complete
-                within 15 second timeout.
+            RuntimeError: If serial communication fails or times out
+                during the 15 second calibration window.
 
         Example:
             >>> print("Rotate sensor slowly in all directions...")
@@ -827,7 +937,7 @@ class ArduinoSensorInstance:
         """
         return self._send_command("CALIBRATE", timeout=15.0)
 
-    def _stop_output(self) -> None:
+    def stop_output(self) -> None:
         """Stop the continuous sensor data output stream.
 
         Sends STOP command to Arduino to pause sensor data streaming.
@@ -844,7 +954,7 @@ class ArduinoSensorInstance:
             None. Does not wait for response.
 
         Raises:
-            No exceptions raised.
+            RuntimeError: If serial communication fails.
 
         Example:
             >>> instance.stop_output()  # Pause streaming
@@ -853,7 +963,7 @@ class ArduinoSensorInstance:
         """
         self._send_command("STOP", wait_response=False)
 
-    def _start_output(self) -> None:
+    def start_output(self) -> None:
         """Resume the continuous sensor data output stream.
 
         Sends START command to Arduino to resume sensor data streaming
@@ -870,7 +980,7 @@ class ArduinoSensorInstance:
             None. Does not wait for response.
 
         Raises:
-            No exceptions raised.
+            RuntimeError: If serial communication fails.
 
         Example:
             >>> instance.stop_output()
@@ -1026,7 +1136,38 @@ class ArduinoSensorDriver:
         driver._serial_factory = serial_factory
         return driver
 
-    def get_available_sensors(self) -> list[dict]:
+    def _ensure_not_open(self) -> None:
+        """Ensure no sensor is currently open before opening a new one.
+
+        Validates that the driver doesn't have an active sensor instance.
+        This prevents resource leaks and serial port conflicts by enforcing
+        single-instance semantics.
+
+        Business context: Arduino sensors occupy exclusive serial port access.
+        Opening a second sensor without closing the first would either fail
+        (port busy) or leak the first connection. This guard ensures clean
+        resource management.
+
+        Args:
+            None. Checks internal driver state.
+
+        Returns:
+            None. Method returns normally if no sensor is open.
+
+        Raises:
+            RuntimeError: If a sensor instance is already open. Close the
+                existing sensor with close() before opening another.
+
+        Example:
+            >>> driver = ArduinoSensorDriver()
+            >>> driver.open("/dev/ttyACM0")
+            >>> driver._ensure_not_open()  # Raises RuntimeError
+            RuntimeError: Sensor already open
+        """
+        if self._instance is not None and self._instance._is_open:
+            raise RuntimeError("Sensor already open")
+
+    def get_available_sensors(self) -> list[AvailableSensor]:
         """Discover Arduino sensors available on serial ports.
 
         Scans system serial ports for devices matching Arduino signatures
@@ -1060,37 +1201,34 @@ class ArduinoSensorDriver:
             >>> if sensors:
             ...     instance = driver.open(sensors[0]['port'])
         """
-        # Use injected enumerator or real pyserial
+        # Use injected enumerator or wrapper function
         if self._port_enumerator is not None:
             ports = self._port_enumerator.comports()
         else:
-            try:
-                import serial.tools.list_ports
-            except ImportError:
-                logger.warning("pyserial not installed, cannot scan ports")
-                return []
-            ports = serial.tools.list_ports.comports()
+            ports = list_serial_ports()
+            if not ports:
+                logger.debug("No serial ports found (pyserial may not be installed)")
 
-        sensors = []
+        sensors: list[AvailableSensor] = []
 
         for i, port in enumerate(ports):
             # Check for Arduino-like devices
             desc = port.description.lower()
             if any(x in desc for x in ["arduino", "acm", "usb serial", "ch340"]):
                 sensors.append(
-                    {
-                        "id": i,
-                        "type": "arduino_ble33",
-                        "name": f"Arduino Sensor ({port.device})",
-                        "port": port.device,
-                        "description": port.description,
-                    }
+                    AvailableSensor(
+                        id=i,
+                        type="arduino_ble33",
+                        name=f"Arduino Sensor ({port.device})",
+                        port=port.device,
+                        description=port.description,
+                    )
                 )
 
         logger.debug("Found sensors", count=len(sensors))
         return sensors
 
-    def open(self, sensor_id: int | str = 0) -> ArduinoSensorInstance:
+    def open(self, sensor_id: int | str = 0) -> SensorInstance:
         """Open connection to an Arduino sensor.
 
         Creates a serial connection to the specified Arduino and starts
@@ -1131,8 +1269,7 @@ class ArduinoSensorDriver:
             >>> if sensors:
             ...     instance = driver.open(0)  # First sensor
         """
-        if self._instance is not None and self._instance._is_open:
-            raise RuntimeError("Sensor already open")
+        self._ensure_not_open()
 
         # Resolve sensor_id to port string
         if isinstance(sensor_id, int):
@@ -1207,3 +1344,76 @@ class ArduinoSensorDriver:
         if self._instance is not None:
             self._instance.close()
             self._instance = None
+
+    def __enter__(self) -> ArduinoSensorInstance:  # pragma: no cover
+        """Enter context manager, opening first available sensor.
+
+        Enables the driver to be used as a context manager for automatic
+        resource cleanup. Opens the first available Arduino sensor and
+        returns the instance for reading.
+
+        Business context: Context managers ensure serial ports are properly
+        released even if exceptions occur during sensor operations. This
+        prevents port lockup that would require device disconnect/reconnect.
+
+        Args:
+            self: The driver instance (implicit).
+
+        Returns:
+            ArduinoSensorInstance: Open sensor instance ready for read()
+                and calibrate() operations.
+
+        Raises:
+            RuntimeError: If no Arduino sensors are available, or if
+                a sensor is already open on this driver.
+            serial.SerialException: If the serial port cannot be opened
+                (permissions, device disconnected, etc.).
+
+        Example:
+            >>> with ArduinoSensorDriver() as sensor:
+            ...     reading = sensor.read()
+            ...     print(f"ALT: {reading.altitude:.1f}°")
+            ALT: 45.2°
+        """
+        instance = self.open()
+        # Cast is safe - open() always returns ArduinoSensorInstance internally
+        assert isinstance(instance, ArduinoSensorInstance)
+        return instance
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit context manager, closing sensor and releasing serial port.
+
+        Called automatically when exiting a `with` block, ensuring proper
+        cleanup regardless of whether an exception occurred. Closes the
+        sensor instance and releases the serial port for other processes.
+
+        Business context: Serial ports are exclusive resources. Failing to
+        close them blocks future connections until process termination or
+        device reset. Context manager exit guarantees cleanup.
+
+        Args:
+            exc_type: Exception type if an exception was raised in the
+                with block, None otherwise.
+            exc_val: Exception instance if raised, None otherwise.
+            exc_tb: Exception traceback if raised, None otherwise.
+
+        Returns:
+            None. Exceptions are not suppressed (returns None, not True).
+
+        Raises:
+            No exceptions raised. Cleanup is best-effort; errors during
+            close() are logged but not re-raised to avoid masking the
+            original exception.
+
+        Example:
+            >>> with ArduinoSensorDriver() as sensor:
+            ...     reading = sensor.read()
+            ...     raise ValueError("test")  # __exit__ still called
+            # Serial port released even though exception raised
+        """
+        self.close()

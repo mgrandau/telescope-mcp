@@ -126,6 +126,41 @@ class TestDigitalTwinSensorDriver:
 
         driver.close()
 
+    def test_close_without_open_is_safe(self) -> None:
+        """Verifies close() is safe to call when no instance is open.
+
+        Tests defensive close behavior for robust lifecycle management.
+
+        Business context:
+        Cleanup code often calls close() unconditionally in finally blocks
+        or teardown methods. Drivers must handle close() gracefully when
+        no instance was ever opened, avoiding exceptions during cleanup.
+
+        Arrangement:
+        1. Create DigitalTwinSensorDriver without opening.
+
+        Action:
+        Call close() on driver that was never opened.
+
+        Assertion Strategy:
+        Validates safe close by confirming:
+        - No exception raised.
+        - Driver remains in valid state for potential future open().
+
+        Testing Principle:
+        Validates defensive programming, ensuring drivers handle
+        edge cases gracefully without requiring caller state tracking.
+        """
+        driver = DigitalTwinSensorDriver()
+
+        # Should not raise - close() when _instance is None
+        driver.close()
+
+        # Driver should still be usable after safe close
+        instance = driver.open()
+        assert instance is not None
+        driver.close()
+
     def test_custom_config(self) -> None:
         """Verifies custom configuration affects simulated sensor readings.
 
@@ -240,13 +275,13 @@ class TestDigitalTwinSensorInstance:
         driver.close()
 
     def test_set_position(self) -> None:
-        """Verifies _set_position updates simulated telescope position.
+        """Verifies set_position updates simulated telescope position.
 
         Tests internal position control for deterministic testing.
 
         Business context:
         Integration tests need to simulate telescope movement. This
-        private method sets the "true" position that the digital twin
+        method sets the "true" position that the digital twin
         reports, enabling tests for calibration and tracking.
 
         Arrangement:
@@ -268,7 +303,7 @@ class TestDigitalTwinSensorInstance:
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
 
-        instance._set_position(altitude=60.0, azimuth=270.0)
+        instance.set_position(altitude=60.0, azimuth=270.0)
         reading = instance.read()
 
         # Should be close to set position (with noise)
@@ -373,7 +408,7 @@ class TestDigitalTwinSensorInstance:
 
         Business context:
         Observatory software needs sensor health data. Status includes
-        connection state, sensor type, calibration state, and uptime
+        connection state, calibration state, and open state
         for monitoring dashboards and health checks.
 
         Arrangement:
@@ -383,11 +418,10 @@ class TestDigitalTwinSensorInstance:
         Call get_status() to retrieve current sensor state.
 
         Assertion Strategy:
-        Validates status completeness by confirming:
+        Validates status per SensorStatus protocol by confirming:
         - Connected is True (instance is open).
-        - Type is 'digital_twin' for identification.
         - Calibrated is False (no calibration applied yet).
-        - Uptime_seconds exists for runtime tracking.
+        - is_open is True.
 
         Testing Principle:
         Validates observability, ensuring sensor state is
@@ -399,9 +433,8 @@ class TestDigitalTwinSensorInstance:
         status = instance.get_status()
 
         assert status["connected"] is True
-        assert status["type"] == "digital_twin"
         assert status["calibrated"] is False
-        assert "uptime_seconds" in status
+        assert status["is_open"] is True
 
         driver.close()
 
@@ -452,7 +485,7 @@ class TestDigitalTwinSensorInstance:
         1. Create and open DigitalTwinSensorDriver.
 
         Action:
-        Call _calibrate_magnetometer() to run simulated calibration.
+        Call calibrate_magnetometer() to run simulated calibration.
 
         Assertion Strategy:
         Validates calibration output by confirming:
@@ -467,7 +500,7 @@ class TestDigitalTwinSensorInstance:
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
 
-        result = instance._calibrate_magnetometer()
+        result = instance.calibrate_magnetometer()
 
         assert "offset_x" in result
         assert "offset_y" in result

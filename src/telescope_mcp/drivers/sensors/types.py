@@ -25,7 +25,138 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, TypedDict, runtime_checkable
+
+__all__ = [
+    "AccelerometerData",
+    "MagnetometerData",
+    "SensorReading",
+    "SensorInfo",
+    "SensorStatus",
+    "AvailableSensor",
+    "SensorInstance",
+    "SensorDriver",
+    "validate_position",
+]
+
+
+class AccelerometerData(TypedDict):
+    """3-axis accelerometer readings in g units.
+
+    Keys:
+        aX: X-axis acceleration (-2 to +2 g typical).
+        aY: Y-axis acceleration (-2 to +2 g typical).
+        aZ: Z-axis acceleration (-2 to +2 g typical).
+    """
+
+    aX: float
+    aY: float
+    aZ: float
+
+
+class MagnetometerData(TypedDict):
+    """3-axis magnetometer readings in microtesla (µT).
+
+    Keys:
+        mX: X-axis magnetic field (-100 to +100 µT typical).
+        mY: Y-axis magnetic field (-100 to +100 µT typical).
+        mZ: Z-axis magnetic field (-100 to +100 µT typical).
+    """
+
+    mX: float
+    mY: float
+    mZ: float
+
+
+class SensorInfo(TypedDict, total=False):
+    """Type for sensor hardware information.
+
+    Keys:
+        type: Sensor type string (e.g., "arduino_ble33", "digital_twin").
+        name: Human-readable sensor name.
+        port: Connection port/path (if applicable).
+        firmware: Firmware version (if available).
+        capabilities: List of supported features.
+    """
+
+    type: str
+    name: str
+    port: str
+    firmware: str
+    capabilities: list[str]
+
+
+class SensorStatus(TypedDict, total=False):
+    """Type for sensor operational status.
+
+    Keys:
+        connected: Whether sensor is responding.
+        calibrated: Whether calibration has been set.
+        is_open: Connection state.
+        error: Error string if problem detected, else None.
+        last_reading_age_ms: Milliseconds since last successful read.
+        reading_rate_hz: Current sample rate in Hz.
+    """
+
+    connected: bool
+    calibrated: bool
+    is_open: bool
+    error: str | None
+    last_reading_age_ms: float
+    reading_rate_hz: float
+
+
+class AvailableSensor(TypedDict, total=False):
+    """Type for discovered sensor descriptor.
+
+    Keys:
+        id: Integer index for selection.
+        type: Sensor type (e.g., "arduino_ble33").
+        name: Human-readable name.
+        port: Connection path (e.g., "/dev/ttyACM0").
+        description: Hardware description.
+    """
+
+    id: int
+    type: str
+    name: str
+    port: str
+    description: str
+
+
+def validate_position(altitude: float, azimuth: float) -> None:
+    """Validate telescope position coordinates.
+
+    Validates that altitude and azimuth values are within their valid ranges.
+    Used by calibrate() methods to ensure consistent validation across all
+    sensor implementations.
+
+    Business context: Prevents invalid calibration data that would cause
+    incorrect telescope pointing. Centralizes validation logic to ensure
+    Arduino and DigitalTwin sensors apply identical constraints.
+
+    Args:
+        altitude: Altitude in degrees. Must be in range [0, 90].
+            0 = horizon, 90 = zenith.
+        azimuth: Azimuth in degrees. Must be in range [0, 360).
+            0 = North, 90 = East, 180 = South, 270 = West.
+
+    Returns:
+        None. Raises on invalid input.
+
+    Raises:
+        ValueError: If altitude is not in [0, 90] or azimuth is not in [0, 360).
+
+    Example:
+        >>> validate_position(45.0, 180.0)  # Valid - no error
+        >>> validate_position(-5.0, 180.0)  # Raises ValueError
+    """
+    if not 0 <= altitude <= 90:
+        msg = f"Altitude must be between 0 and 90 degrees, got {altitude}"
+        raise ValueError(msg)
+    if not 0 <= azimuth < 360:
+        msg = f"Azimuth must be between 0 and 360 degrees, got {azimuth}"
+        raise ValueError(msg)
 
 
 @dataclass
@@ -33,26 +164,27 @@ class SensorReading:
     """A single sensor reading with all data.
 
     Attributes:
-        accelerometer: Dict with aX, aY, aZ in g.
-        magnetometer: Dict with mX, mY, mZ in µT.
-        altitude: Calculated altitude in degrees.
-        azimuth: Calculated azimuth in degrees.
+        accelerometer: 3-axis accelerometer data (aX, aY, aZ) in g.
+        magnetometer: 3-axis magnetometer data (mX, mY, mZ) in µT.
+        altitude: Calculated altitude in degrees (0-90°).
+        azimuth: Calculated azimuth in degrees (0-360°).
         temperature: Temperature in Celsius.
-        humidity: Relative humidity in %RH.
-        timestamp: When reading was taken.
+        humidity: Relative humidity in %RH (0-100).
+        timestamp: When reading was taken (UTC).
         raw_values: Raw tab-separated string (for compatibility).
     """
 
-    accelerometer: dict[str, float]
-    magnetometer: dict[str, float]
-    altitude: float
-    azimuth: float
+    accelerometer: AccelerometerData
+    magnetometer: MagnetometerData
+    altitude: float  # 0-90°
+    azimuth: float  # 0-360°
     temperature: float
-    humidity: float
+    humidity: float  # 0-100 %RH
     timestamp: datetime
     raw_values: str = ""
 
 
+@runtime_checkable
 class SensorInstance(Protocol):  # pragma: no cover
     """Protocol for connected sensor instances.
 
@@ -65,7 +197,7 @@ class SensorInstance(Protocol):  # pragma: no cover
     across different sensor types.
     """
 
-    def get_info(self) -> dict:
+    def get_info(self) -> SensorInfo:
         """Get sensor identification and capability information.
 
         Returns static information about the sensor hardware and its
@@ -154,7 +286,7 @@ class SensorInstance(Protocol):  # pragma: no cover
         """
         ...
 
-    def get_status(self) -> dict:
+    def get_status(self) -> SensorStatus:
         """Get current sensor operational status.
 
         Returns runtime status information including connection state,
@@ -232,6 +364,7 @@ class SensorInstance(Protocol):  # pragma: no cover
         ...
 
 
+@runtime_checkable
 class SensorDriver(Protocol):  # pragma: no cover
     """Protocol for sensor drivers.
 
@@ -244,7 +377,7 @@ class SensorDriver(Protocol):  # pragma: no cover
     DigitalTwinSensorDriver.
     """
 
-    def get_available_sensors(self) -> list[dict]:
+    def get_available_sensors(self) -> list[AvailableSensor]:
         """Enumerate available sensor devices.
 
         Scans for compatible sensors (serial ports, simulated devices)

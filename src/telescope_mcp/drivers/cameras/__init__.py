@@ -4,7 +4,7 @@ Provides camera control for ASI cameras (real hardware) and digital twin
 simulation for development without hardware.
 """
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from telescope_mcp.drivers.cameras.asi import (
     ASICameraDriver,
@@ -19,6 +19,7 @@ from telescope_mcp.drivers.cameras.twin import (
 )
 
 
+@runtime_checkable
 class CameraInstance(Protocol):  # pragma: no cover
     """Protocol for an opened camera instance.
 
@@ -289,6 +290,7 @@ class CameraInstance(Protocol):  # pragma: no cover
         ...
 
 
+@runtime_checkable
 class CameraDriver(Protocol):  # pragma: no cover
     """Protocol for camera drivers enabling hardware abstraction and testing.
 
