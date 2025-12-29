@@ -34,9 +34,10 @@ Testing:
     class MockSerial:
         def __init__(self):
             self.is_open = True
+            self.in_waiting = 0
             self._data = b"0.5\\t0.0\\t0.87\\t30.0\\t0.0\\t40.0\\t22.5\\t55.0\\r\\n"
 
-        def read_until(self, terminator):
+        def read_until(self, expected=b"\\n", size=None):
             return self._data
 
         # ... implement other SerialPort methods

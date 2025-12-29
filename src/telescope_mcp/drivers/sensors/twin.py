@@ -9,8 +9,8 @@ Example:
     driver = DigitalTwinSensorDriver()
     instance = driver.open()
 
-    data = instance.read()
-    print(f"ALT: {data['altitude']:.2f}°, AZ: {data['azimuth']:.2f}°")
+    reading = instance.read()
+    print(f"ALT: {reading.altitude:.2f}°, AZ: {reading.azimuth:.2f}°")
 """
 
 from __future__ import annotations

@@ -8,6 +8,9 @@ Protocols:
     SerialPort: Abstraction for serial port operations
     PortEnumerator: Abstraction for discovering serial ports
 
+Functions:
+    list_serial_ports: Wrapper for pyserial port enumeration with graceful fallback
+
 Example:
     # For testing - create mock implementations
     class MockSerialPort:

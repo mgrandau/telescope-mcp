@@ -8,13 +8,24 @@
 | **Type** | Package |
 | **Responsibility** | Telescope orientation sensing via IMU (accelerometer/magnetometer) |
 | **Context** | Hardware abstraction layer for position feedback |
-| **Public Surface** | `SensorReading`, `SensorInstance`, `SensorDriver`, `validate_position`, `ArduinoSensorDriver`, `ArduinoSensorInstance`, `DigitalTwinSensorDriver`, `DigitalTwinSensorInstance`, `DigitalTwinSensorConfig`, `SerialPort`, `PortEnumerator` |
+| **Public Surface** | `SensorReading`, `SensorInstance`, `SensorDriver`, `AvailableSensor`, `validate_position`, `ArduinoSensorDriver`, `ArduinoSensorInstance`, `DigitalTwinSensorDriver`, `DigitalTwinSensorInstance`, `DigitalTwinSensorConfig`, `SerialPort`, `PortEnumerator` |
 | **Patterns** | Protocol-based DI, Factory (Driver→Instance), Digital Twin, Context Manager |
 | **Language** | Python 3.13+ |
 | **Stack** | pyserial, threading, dataclasses, TypedDict |
 | **Entry Points** | `ArduinoSensorDriver.open()`, `DigitalTwinSensorDriver.open()` |
 | **State** | Stateful (calibration, position cache, serial connection) |
-| **Test Coverage** | 100% (arduino.py: 250 stmts/64 branches, twin.py: 164 stmts/12 branches) |
+| **Test Coverage** | 100% (arduino.py, twin.py, types.py) |
+
+### Hardware Reference
+
+**Arduino Nano 33 BLE Sense** (ABX00031) - [Datasheet PDF](https://docs.arduino.cc/resources/datasheets/ABX00031-datasheet.pdf)
+
+| Sensor | Chip | Purpose |
+|--------|------|---------|
+| IMU | LSM9DS1 | 3-axis accelerometer + magnetometer for altitude/azimuth |
+| Environmental | HTS221 | Temperature + humidity |
+
+See also: [Pinout](https://docs.arduino.cc/resources/pinouts/ABX00031-full-pinout.pdf) | [Schematics](https://docs.arduino.cc/resources/schematics/ABX00031-schematics.pdf) | [nRF52840 MCU](https://content.arduino.cc/assets/Nano_BLE_MCU-nRF52840_PS_v1.1.pdf)
 
 ### Key Decisions
 - **Protocol-based abstraction**: `SensorInstance`/`SensorDriver` use Python `Protocol` with `...` (ellipsis) bodies = structural typing, implementations must provide all methods
@@ -40,17 +51,18 @@ The `...` (ellipsis) marks abstract methods. `# pragma: no cover` excludes from 
 
 ```
 drivers/sensors/
-├── __init__.py          # Public exports, re-exports SerialPort/PortEnumerator (68 lines)
-├── types.py             # 🔒 SensorReading dataclass, SensorInstance/SensorDriver protocols, TypedDicts (425 lines)
-├── arduino.py           # ArduinoSensorInstance/Driver - real hardware via serial (1284 lines)
-└── twin.py              # DigitalTwinSensorInstance/Driver/Config - simulation for testing (795 lines)
+├── __init__.py          # Public exports, re-exports SerialPort/PortEnumerator (74 lines)
+├── types.py             # 🔒 SensorReading dataclass, SensorInstance/SensorDriver protocols, TypedDicts (461 lines)
+├── arduino.py           # ArduinoSensorInstance/Driver - real hardware via serial (1419 lines)
+└── twin.py              # DigitalTwinSensorInstance/Driver/Config - simulation for testing (904 lines)
 ```
 
 **Test Files:**
 ```
 tests/drivers/sensors/
-├── test_arduino.py      # 113 tests for Arduino driver (3975 lines)
-└── test_twin.py         # 25 tests for Digital Twin driver (691 lines)
+├── test_arduino.py      # 90 tests for Arduino driver (4189 lines)
+├── test_twin.py         # 25 tests for Digital Twin driver (963 lines)
+└── test_types.py        # 10 tests for types/protocols (328 lines)
 ```
 
 ## 3. Public Surface
@@ -64,8 +76,8 @@ tests/drivers/sensors/
 | `SensorDriver` | `Protocol: get_available_sensors(), open(), close()` | 🔒 | Breaks config/factory |
 | `AccelerometerData` | `TypedDict(aX, aY, aZ)` | 🔒 | Breaks SensorReading consumers |
 | `MagnetometerData` | `TypedDict(mX, mY, mZ)` | 🔒 | Breaks SensorReading consumers |
-| `SensorInfo` | `TypedDict(type, name, port, firmware, capabilities)` | 🔒 | Breaks get_info() consumers |
-| `SensorStatus` | `TypedDict(connected, calibrated, is_open, error, ...)` | 🔒 | Breaks get_status() consumers |
+| `SensorInfo` | `TypedDict(type, name, port, firmware, capabilities)` | 🔒 | Breaks get_info() consumers (not exported) |
+| `SensorStatus` | `TypedDict(connected, calibrated, is_open, error, ...)` | 🔒 | Breaks get_status() consumers (not exported) |
 | `AvailableSensor` | `TypedDict(id, type, name, port, description)` | 🔒 | Breaks get_available_sensors() consumers |
 
 ### ⚠️ Internal (may change)
@@ -83,8 +95,8 @@ tests/drivers/sensors/
 | `DigitalTwinSensorInstance.set_position()` | `(altitude, azimuth) -> None` | Test control |
 | `DigitalTwinSensorInstance.calibrate_magnetometer()` | `() -> MagCalibrationOffsets` | Simulated mag cal |
 | `DigitalTwinSensorConfig` | `@dataclass(initial_altitude, initial_azimuth, noise_std_*, drift_rate_*, ...)` | Twin configuration |
-| `TwinSensorInfo` | `TypedDict` | Twin-specific info |
-| `TwinSensorStatus` | `TypedDict` | Twin-specific status |
+| `TwinSensorInfo` | `TypedDict` | Twin-specific info (internal, not used by get_info) |
+| `TwinSensorStatus` | `TypedDict` | Twin-specific status (internal, not used by get_status) |
 | `MagCalibrationOffsets` | `TypedDict(offset_x, offset_y, offset_z)` | Mag cal return type |
 
 ### Data Contracts
@@ -328,11 +340,11 @@ classDiagram
         -_true_azimuth: float
         -_config: DigitalTwinSensorConfig
         -_is_open: bool
-        +get_info() TwinSensorInfo
+        +get_info() SensorInfo
         +read() SensorReading
         +calibrate(alt, az)
         +calibrate_magnetometer() MagCalibrationOffsets
-        +get_status() TwinSensorStatus
+        +get_status() SensorStatus
         +reset()
         +close()
         +set_position(alt, az)

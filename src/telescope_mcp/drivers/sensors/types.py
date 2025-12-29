@@ -5,9 +5,15 @@ drivers. By keeping these in a separate module, we avoid circular imports
 when implementation modules need to reference these types.
 
 Types defined here:
-- SensorReading: Data class for sensor readings
-- SensorInstance: Protocol for connected sensor instances
-- SensorDriver: Protocol for sensor drivers
+- AccelerometerData: TypedDict for 3-axis accelerometer readings (aX, aY, aZ)
+- MagnetometerData: TypedDict for 3-axis magnetometer readings (mX, mY, mZ)
+- SensorInfo: TypedDict for sensor hardware information (type, name, port)
+- SensorStatus: TypedDict for sensor operational status (connected, calibrated)
+- AvailableSensor: TypedDict for discovered sensor descriptors (id, type, name)
+- SensorReading: Dataclass for complete sensor readings with all data
+- SensorInstance: Protocol for connected sensor instances (read, calibrate, close)
+- SensorDriver: Protocol for sensor drivers (open, close, get_available_sensors)
+- validate_position: Helper function to validate altitude/azimuth ranges
 
 Example:
     from telescope_mcp.drivers.sensors.types import (

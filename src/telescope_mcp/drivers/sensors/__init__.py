@@ -6,12 +6,16 @@ report telescope pointing direction. Key components:
 - SensorReading: Complete sensor reading with accelerometer, magnetometer, etc.
 - SensorDriver: Protocol for sensor driver implementations
 - SensorInstance: Protocol for connected sensor instances
+- AvailableSensor: TypedDict for discovered sensor descriptors
+- validate_position: Helper to validate altitude/azimuth ranges
 - DigitalTwinSensorDriver: Simulated sensor for testing
+- DigitalTwinSensorConfig: Configuration dataclass for digital twin
 - ArduinoSensorDriver: Real hardware driver for Arduino Nano BLE33 Sense
 
 Example:
     from telescope_mcp.drivers.sensors import (
         DigitalTwinSensorDriver,
+        DigitalTwinSensorConfig,
         ArduinoSensorDriver,
     )
 
@@ -20,6 +24,10 @@ Example:
     instance = driver.open()
     reading = instance.read()
     print(f"ALT: {reading.altitude:.2f}°, AZ: {reading.azimuth:.2f}°")
+
+    # With custom config
+    config = DigitalTwinSensorConfig(initial_altitude=45.0, initial_azimuth=180.0)
+    driver = DigitalTwinSensorDriver(config)
 
     # For real hardware
     driver = ArduinoSensorDriver()
