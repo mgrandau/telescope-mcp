@@ -1,9 +1,49 @@
 """Comprehensive tests for server.py to increase coverage to 80%."""
 
+import time
+
+import pytest
 from mcp.server import Server
 
+from telescope_mcp import server as server_module
 from telescope_mcp.drivers.config import use_digital_twin
-from telescope_mcp.server import create_server, parse_args, start_dashboard
+from telescope_mcp.server import (
+    create_server,
+    parse_args,
+    start_dashboard,
+    stop_dashboard,
+)
+
+
+@pytest.fixture(autouse=True)
+def cleanup_dashboard():
+    """Ensure dashboard is stopped before and after each test to free port.
+
+    This fixture runs automatically for every test in this module,
+    stopping any running dashboard server to prevent port conflicts
+    between tests. Runs cleanup both before and after to handle
+    leftover servers from previous test runs.
+
+    Yields:
+        None: Test runs during yield.
+
+    Cleanup:
+        Calls stop_dashboard() and clears _dashboard_thread to ensure
+        clean state for next test.
+    """
+    # Cleanup before test (handle leftover from previous runs)
+    stop_dashboard()
+    time.sleep(0.1)
+    server_module._dashboard_thread = None
+    server_module._dashboard_server = None
+
+    yield
+
+    # Cleanup after test
+    stop_dashboard()
+    time.sleep(0.1)
+    server_module._dashboard_thread = None
+    server_module._dashboard_server = None
 
 
 class TestCreateServer:

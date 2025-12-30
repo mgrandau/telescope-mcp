@@ -11,7 +11,7 @@ from telescope_mcp.devices.camera import (
     OverlayConfig,
     SystemClock,
 )
-from telescope_mcp.devices.controller import (
+from telescope_mcp.devices.camera_controller import (
     CameraController,
     CameraNotFoundError,
     SyncCaptureConfig,

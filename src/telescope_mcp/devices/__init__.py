@@ -1,5 +1,24 @@
-"""Logical device layer - hardware-agnostic device abstractions."""
+"""Logical device layer - hardware-agnostic device abstractions.
 
+This module provides the public API for telescope device management:
+- Camera: Image capture with overlays, streaming, and recovery
+- CameraController: Multi-camera synchronization for alignment
+- CameraRegistry: Discovery and singleton management
+- Sensor: Environmental (temperature, humidity) and positional (alt/az) data
+
+Example:
+    >>> from telescope_mcp.devices import Camera, CameraRegistry, Sensor
+    >>> registry = CameraRegistry(driver)
+    >>> camera = registry.get(0, auto_connect=True)
+    >>> result = camera.capture()
+
+All public symbols are explicitly listed in __all__. Submodules (camera,
+controller, registry, sensor) are implementation details and not part of
+the public API.
+"""
+
+# Use explicit imports to avoid polluting namespace with submodule names.
+# The 'from .camera import X' style would add 'camera' to dir(module).
 from telescope_mcp.devices.camera import (
     Camera,
     CameraConfig,
@@ -18,12 +37,12 @@ from telescope_mcp.devices.camera import (
     StreamFrame,
     SystemClock,
 )
-from telescope_mcp.devices.controller import (
+from telescope_mcp.devices.camera_controller import (
     CameraController,
     SyncCaptureConfig,
     SyncCaptureResult,
 )
-from telescope_mcp.devices.registry import (
+from telescope_mcp.devices.camera_registry import (
     CameraNotInRegistryError,
     CameraRegistry,
     get_registry,
@@ -31,13 +50,16 @@ from telescope_mcp.devices.registry import (
     shutdown_registry,
 )
 from telescope_mcp.devices.sensor import (
+    DEFAULT_SAMPLE_RATE_HZ,
+    DeviceSensorInfo,
     Sensor,
     SensorConfig,
-    SensorInfo,
+    SensorDeviceStatus,
+    SensorStatistics,
 )
 
 __all__ = [
-    # Camera
+    # Camera (16 exports)
     "Camera",
     "CameraConfig",
     "CameraDisconnectedError",
@@ -46,28 +68,29 @@ __all__ = [
     "CameraInfo",
     "CaptureOptions",
     "CaptureResult",
+    "Clock",
+    "NullRecoveryStrategy",
+    "NullRenderer",
     "OverlayConfig",
     "OverlayRenderer",
-    "NullRenderer",
-    "StreamFrame",
-    # Recovery
     "RecoveryStrategy",
-    "NullRecoveryStrategy",
-    # Clock (shared)
-    "Clock",
+    "StreamFrame",
     "SystemClock",
-    # Controller
+    # Controller (3 exports)
     "CameraController",
     "SyncCaptureConfig",
     "SyncCaptureResult",
-    # Registry
-    "CameraRegistry",
+    # Registry (5 exports)
     "CameraNotInRegistryError",
-    "init_registry",
+    "CameraRegistry",
     "get_registry",
+    "init_registry",
     "shutdown_registry",
-    # Sensor
+    # Sensor (6 exports)
+    "DEFAULT_SAMPLE_RATE_HZ",
+    "DeviceSensorInfo",
     "Sensor",
     "SensorConfig",
-    "SensorInfo",
-]
+    "SensorDeviceStatus",
+    "SensorStatistics",
+]  # Total: 30 exports

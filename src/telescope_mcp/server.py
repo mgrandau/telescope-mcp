@@ -107,6 +107,7 @@ def _run_dashboard(host: str, port: int) -> None:
         host=host,
         port=port,
         log_level="warning",  # Reduce noise in MCP mode
+        ws="websockets-sansio",  # Use new websockets API (avoids deprecation warnings)
     )
     _dashboard_server = uvicorn.Server(config)
     _dashboard_server.run()

@@ -21,12 +21,26 @@ from telescope_mcp.drivers.sensors import (
     DigitalTwinSensorDriver,
     SensorDriver,
 )
-from telescope_mcp.observability import get_logger
 
 if TYPE_CHECKING:
     from telescope_mcp.data.session_manager import SessionManager
 
-logger = get_logger(__name__)
+# =============================================================================
+# Constants
+# =============================================================================
+
+# Default I2C settings for Arduino Nano BLE33 Sense IMU
+DEFAULT_I2C_BUS = 1
+DEFAULT_I2C_ADDRESS = 0x68  # MPU-6050/ICM-20948 default address
+
+# Default serial settings for stepper motor controller
+DEFAULT_MOTOR_BAUD_RATE = 115200
+
+#: Type alias for observer location dict with lat/lon/alt keys.
+#: lat: Latitude in decimal degrees [-90, 90]. Positive=North.
+#: lon: Longitude in decimal degrees [-180, 180]. Positive=East.
+#: alt: Altitude in meters above sea level. Default 0.
+LocationDict = dict[str, float]
 
 
 class DriverMode(Enum):
@@ -64,7 +78,20 @@ def _default_data_dir() -> Path:
 
 @dataclass
 class DriverConfig:
-    """Configuration for driver selection."""
+    """Configuration for driver selection and hardware settings.
+
+    Attributes:
+        mode: HARDWARE for real devices, DIGITAL_TWIN for simulation.
+        data_dir: Directory for ASDF session files (~/.telescope-mcp/data).
+        location: Observer coordinates {"lat": float, "lon": float, "alt": float}.
+        finder_camera_id: Camera index for finder/guide camera (default 0).
+        main_camera_id: Camera index for main imaging camera (default 1).
+        stub_image_path: Path to test images for digital twin (None=synthetic).
+        motor_serial_port: Serial port for motor controller (e.g., "/dev/ttyUSB0").
+        motor_baud_rate: Baud rate for motor serial communication.
+        sensor_i2c_bus: I2C bus number for IMU sensor.
+        sensor_i2c_address: I2C address of IMU (0x68 for MPU-6050/ICM-20948).
+    """
 
     mode: DriverMode = DriverMode.DIGITAL_TWIN
 
@@ -72,22 +99,22 @@ class DriverConfig:
     data_dir: Path = field(default_factory=_default_data_dir)
 
     # Observer location (lat, lon, alt)
-    location: dict[str, float] = field(default_factory=dict)
+    location: LocationDict = field(default_factory=dict)
 
     # Camera settings
     finder_camera_id: int = 0
     main_camera_id: int = 1
 
     # Digital twin settings
-    stub_image_path: Path | None = None  # For file/directory image source
+    stub_image_path: Path | None = None
 
     # Motor settings (for hardware mode)
     motor_serial_port: str | None = None
-    motor_baud_rate: int = 115200
+    motor_baud_rate: int = DEFAULT_MOTOR_BAUD_RATE
 
     # Sensor settings (for hardware mode)
-    sensor_i2c_bus: int = 1
-    sensor_i2c_address: int = 0x68
+    sensor_i2c_bus: int = DEFAULT_I2C_BUS
+    sensor_i2c_address: int = DEFAULT_I2C_ADDRESS
 
 
 class DriverFactory:
@@ -95,6 +122,16 @@ class DriverFactory:
 
     Provides a centralized way to create camera, motor, and sensor drivers
     based on the configured mode (hardware vs digital twin).
+
+    Thread Safety:
+        Not thread-safe. Use external synchronization if calling create_*
+        methods from multiple threads. The global factory singleton should
+        be configured once at startup before concurrent access.
+
+    Hardware Mode Limitations:
+        - create_camera_driver(): Requires ZWO ASI SDK installed
+        - create_motor_controller(): Not yet implemented (raises NotImplementedError)
+        - create_sensor_driver(): Requires Arduino Nano BLE33 Sense connected
     """
 
     def __init__(self, config: DriverConfig | None = None):
@@ -253,10 +290,16 @@ class DriverFactory:
             return DigitalTwinSensorDriver()
 
 
-# Global driver factory instance - can be reconfigured
-_factory: DriverFactory | None = None
+# =============================================================================
+# Global Singletons
+# =============================================================================
+# Thread Safety: These globals are NOT thread-safe. Configure once at startup
+# before spawning threads. Concurrent calls to configure(), use_hardware(),
+# use_digital_twin(), set_data_dir(), or set_location() may cause race conditions.
+# For multi-threaded applications, use external locking or configure before
+# starting worker threads.
 
-# Global session manager instance
+_factory: DriverFactory | None = None
 _session_manager: SessionManager | None = None
 
 
@@ -364,24 +407,55 @@ def configure(config: DriverConfig) -> None:
 
     # Shutdown existing session manager if reconfiguring
     if _session_manager is not None:
-        _session_manager.shutdown()
+        try:
+            _session_manager.shutdown()
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort cleanup - ignore shutdown failures
         _session_manager = None
 
     _factory = DriverFactory(config)
 
 
-def use_digital_twin() -> None:
+def _copy_config_with_mode(mode: DriverMode) -> DriverConfig:
+    """Create new DriverConfig preserving current settings but changing mode.
+
+    Helper to avoid duplicated config copying in use_hardware/use_digital_twin.
+
+    Args:
+        mode: New DriverMode (HARDWARE or DIGITAL_TWIN).
+
+    Returns:
+        DriverConfig with specified mode and all other settings from current factory.
+    """
+    factory = get_factory()
+    return DriverConfig(
+        mode=mode,
+        data_dir=factory.config.data_dir,
+        location=factory.config.location,
+        finder_camera_id=factory.config.finder_camera_id,
+        main_camera_id=factory.config.main_camera_id,
+        stub_image_path=factory.config.stub_image_path,
+        motor_serial_port=factory.config.motor_serial_port,
+        motor_baud_rate=factory.config.motor_baud_rate,
+        sensor_i2c_bus=factory.config.sensor_i2c_bus,
+        sensor_i2c_address=factory.config.sensor_i2c_address,
+    )
+
+
+def use_digital_twin(preserve_config: bool = False) -> None:
     """Switch to digital twin mode for simulated hardware operation.
 
-    Convenience function calling configure(DriverConfig(mode=DIGITAL_TWIN)) to set
-    all drivers to simulation. Useful for development, testing, demonstrations,
-    CI/CD without physical devices. Keeps other config (data_dir, location) at
-    defaults.
+    Convenience function to set all drivers to simulation. Useful for development,
+    testing, demonstrations, CI/CD without physical devices.
 
     Business context: Enables offline development where developers test telescope
     code without hardware access. Critical for CI/CD in cloud with no USB devices.
     Allows demonstrations without hauling equipment. Used by tests for repeatable
     fast execution. Essential for teams with limited hardware access.
+
+    Args:
+        preserve_config: If True, preserves existing data_dir, location, and other
+            settings. If False (default), resets all config to defaults.
 
     Returns:
         None. Global factory reconfigured for digital twin mode.
@@ -390,25 +464,31 @@ def use_digital_twin() -> None:
         None. Always succeeds as digital twin has no hardware dependencies.
 
     Example:
-        >>> use_digital_twin()  # All drivers now simulated
-        >>> driver = get_factory().create_camera_driver()  # DigitalTwinCameraDriver
+        >>> use_digital_twin()  # Reset all config to defaults
+        >>> use_digital_twin(preserve_config=True)  # Keep data_dir/location
     """
-    configure(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
+    if preserve_config:
+        configure(_copy_config_with_mode(DriverMode.DIGITAL_TWIN))
+    else:
+        configure(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
 
 
-def use_hardware() -> None:
+def use_hardware(preserve_config: bool = False) -> None:
     """Switch to hardware mode for real telescope equipment operation.
 
-    Convenience function calling configure(DriverConfig(mode=DriverMode.HARDWARE))
-    to set camera drivers to real ZWO ASI hardware. Motors/sensors raise
-    NotImplementedError. Requires physical ASI cameras connected via USB. Keeps
-    other config at defaults.
+    Convenience function to set camera drivers to real ZWO ASI hardware.
+    Motors raise NotImplementedError (not yet implemented). Requires physical
+    ASI cameras connected via USB.
 
     Business context: Essential for production telescope operation where real data
     acquisition is the goal. Used when transitioning from development (digital twin)
     to observation sessions. Enables final hardware validation after simulation
     testing. Critical for automated workflows that dry-run in simulation then switch
     to hardware.
+
+    Args:
+        preserve_config: If True, preserves existing data_dir, location, and other
+            settings. If False (default), resets all config to defaults.
 
     Returns:
         None. Global factory reconfigured for hardware mode.
@@ -418,10 +498,13 @@ def use_hardware() -> None:
         if unavailable.
 
     Example:
-        >>> use_hardware()  # Switch to real cameras
-        >>> driver = get_factory().create_camera_driver()  # ASICameraDriver
+        >>> use_hardware()  # Reset all config to defaults
+        >>> use_hardware(preserve_config=True)  # Keep data_dir/location
     """
-    configure(DriverConfig(mode=DriverMode.HARDWARE))
+    if preserve_config:
+        configure(_copy_config_with_mode(DriverMode.HARDWARE))
+    else:
+        configure(DriverConfig(mode=DriverMode.HARDWARE))
 
 
 def set_data_dir(data_dir: Path | str) -> None:
@@ -459,7 +542,10 @@ def set_data_dir(data_dir: Path | str) -> None:
     # Reset session manager to pick up new config
     global _session_manager
     if _session_manager is not None:
-        _session_manager.shutdown()
+        try:
+            _session_manager.shutdown()
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort cleanup - ignore shutdown failures
         _session_manager = None
 
 
@@ -489,7 +575,7 @@ def set_location(lat: float, lon: float, alt: float = 0.0) -> None:
         None. Location is stored in factory config for use by all components.
 
     Raises:
-        None. Validation should be performed by caller if needed.
+        ValueError: If lat not in [-90, 90] or lon not in [-180, 180].
 
     Example:
         >>> # Set location for Mauna Kea Observatory
@@ -497,5 +583,10 @@ def set_location(lat: float, lon: float, alt: float = 0.0) -> None:
         >>> # Set location for home observatory in Denver
         >>> set_location(lat=39.7392, lon=-104.9903, alt=1609)
     """
+    if not -90 <= lat <= 90:
+        raise ValueError(f"Latitude must be in range [-90, 90], got {lat}")
+    if not -180 <= lon <= 180:
+        raise ValueError(f"Longitude must be in range [-180, 180], got {lon}")
+
     factory = get_factory()
     factory.config.location = {"lat": lat, "lon": lon, "alt": alt}

@@ -3,14 +3,19 @@
 import json
 import logging
 from io import StringIO
+from unittest.mock import MagicMock
 
 from telescope_mcp.observability.logging import (
     JSONFormatter,
     LogContext,
+    SessionLogHandler,
     StructuredFormatter,
     StructuredLogger,
+    StructuredLogRecord,
+    _format_value,
     configure_logging,
     get_logger,
+    reset_logging,
 )
 
 
@@ -821,3 +826,535 @@ class TestLoggerEdgeCases:
         long_msg = "A" * 10000
         # Should not raise
         logger.info(long_msg)
+
+
+# =============================================================================
+# Coverage Tests - StructuredLogRecord
+# =============================================================================
+
+
+class TestStructuredLogRecord:
+    """Direct tests for StructuredLogRecord class."""
+
+    def test_init_with_structured_data(self):
+        """Verifies StructuredLogRecord stores structured_data from kwargs.
+
+        Tests direct instantiation of StructuredLogRecord to cover __init__.
+        """
+        record = StructuredLogRecord(
+            name="test.logger",
+            level=logging.INFO,
+            pathname="/path/to/test.py",
+            lineno=42,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+            func="test_func",
+            sinfo=None,
+            structured_data={"camera_id": 0, "exposure_ms": 100},
+        )
+
+        assert record.name == "test.logger"
+        assert record.levelno == logging.INFO
+        assert record.msg == "Test message"
+        assert record.structured_data == {"camera_id": 0, "exposure_ms": 100}
+
+    def test_init_without_structured_data(self):
+        """Verifies StructuredLogRecord defaults structured_data to empty dict."""
+        record = StructuredLogRecord(
+            name="test.logger",
+            level=logging.WARNING,
+            pathname="/path/to/test.py",
+            lineno=10,
+            msg="Warning message",
+            args=(),
+            exc_info=None,
+        )
+
+        assert record.structured_data == {}
+
+    def test_init_with_args_formatting(self):
+        """Verifies StructuredLogRecord handles %-style format args."""
+        record = StructuredLogRecord(
+            name="test.logger",
+            level=logging.INFO,
+            pathname="/path/to/test.py",
+            lineno=1,
+            msg="Value: %d",
+            args=(42,),
+            exc_info=None,
+        )
+
+        assert record.getMessage() == "Value: 42"
+
+
+# =============================================================================
+# Coverage Tests - _format_value
+# =============================================================================
+
+
+class TestFormatValue:
+    """Direct tests for _format_value helper function."""
+
+    def test_format_value_none(self):
+        """Verifies _format_value returns 'null' for None."""
+        assert _format_value(None) == "null"
+
+    def test_format_value_simple_string(self):
+        """Verifies _format_value returns string as-is without spaces."""
+        assert _format_value("hello") == "hello"
+        assert _format_value("world") == "world"
+
+    def test_format_value_string_with_spaces(self):
+        """Verifies _format_value quotes strings containing spaces."""
+        assert _format_value("hello world") == '"hello world"'
+        assert _format_value("has spaces here") == '"has spaces here"'
+
+    def test_format_value_dict(self):
+        """Verifies _format_value JSON-serializes dictionaries."""
+        result = _format_value({"key": "value"})
+        assert result == '{"key": "value"}'
+
+    def test_format_value_list(self):
+        """Verifies _format_value JSON-serializes lists."""
+        result = _format_value([1, 2, 3])
+        assert result == "[1, 2, 3]"
+
+    def test_format_value_integer(self):
+        """Verifies _format_value converts integers via str()."""
+        assert _format_value(42) == "42"
+        assert _format_value(-100) == "-100"
+
+    def test_format_value_float(self):
+        """Verifies _format_value converts floats via str()."""
+        assert _format_value(3.14) == "3.14"
+
+    def test_format_value_bool(self):
+        """Verifies _format_value converts booleans via str()."""
+        assert _format_value(True) == "True"
+        assert _format_value(False) == "False"
+
+    def test_format_value_nested_dict(self):
+        """Verifies _format_value handles nested structures."""
+        result = _format_value({"outer": {"inner": [1, 2]}})
+        parsed = json.loads(result)
+        assert parsed == {"outer": {"inner": [1, 2]}}
+
+
+# =============================================================================
+# Coverage Tests - StructuredFormatter
+# =============================================================================
+
+
+class TestStructuredFormatterCoverage:
+    """Additional coverage tests for StructuredFormatter."""
+
+    def test_format_include_structured_false(self):
+        """Verifies StructuredFormatter omits structured data when disabled."""
+        formatter = StructuredFormatter(include_structured=False)
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+        )
+        record.structured_data = {"camera_id": 0, "key": "value"}
+
+        formatted = formatter.format(record)
+
+        assert "Test message" in formatted
+        # Structured data should NOT be included
+        assert "camera_id" not in formatted
+        assert "key=" not in formatted
+
+    def test_format_without_structured_data_attribute(self):
+        """Verifies StructuredFormatter handles records without structured_data."""
+        formatter = StructuredFormatter()
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Plain message",
+            args=(),
+            exc_info=None,
+        )
+        # No structured_data attribute at all
+
+        formatted = formatter.format(record)
+        assert "Plain message" in formatted
+
+
+# =============================================================================
+# Coverage Tests - SessionLogHandler
+# =============================================================================
+
+
+class TestSessionLogHandler:
+    """Tests for SessionLogHandler class."""
+
+    def test_init_stores_getter(self):
+        """Verifies SessionLogHandler stores the manager getter function."""
+        mock_getter = MagicMock(return_value=None)
+        handler = SessionLogHandler(mock_getter, level=logging.INFO)
+
+        assert handler._get_manager is mock_getter
+        assert handler.level == logging.INFO
+
+    def test_init_default_level(self):
+        """Verifies SessionLogHandler defaults to NOTSET level."""
+        mock_getter = MagicMock(return_value=None)
+        handler = SessionLogHandler(mock_getter)
+
+        assert handler.level == logging.NOTSET
+
+    def test_emit_forwards_to_manager(self):
+        """Verifies emit() forwards log records to session manager."""
+        mock_manager = MagicMock()
+        mock_getter = MagicMock(return_value=mock_manager)
+        handler = SessionLogHandler(mock_getter)
+
+        record = logging.LogRecord(
+            name="test.module",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+        )
+        record.structured_data = {"camera_id": 0}
+
+        handler.emit(record)
+
+        mock_manager.log.assert_called_once_with(
+            level="INFO",
+            message="Test message",
+            source="test.module",
+            camera_id=0,
+        )
+
+    def test_emit_skips_when_manager_none(self):
+        """Verifies emit() skips silently when manager getter returns None."""
+        mock_getter = MagicMock(return_value=None)
+        handler = SessionLogHandler(mock_getter)
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Test",
+            args=(),
+            exc_info=None,
+        )
+
+        # Should not raise
+        handler.emit(record)
+        mock_getter.assert_called_once()
+
+    def test_emit_handles_exception(self):
+        """Verifies emit() catches exceptions and calls handleError."""
+        mock_manager = MagicMock()
+        mock_manager.log.side_effect = RuntimeError("Manager failed")
+        mock_getter = MagicMock(return_value=mock_manager)
+        handler = SessionLogHandler(mock_getter)
+        handler.handleError = MagicMock()
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Test",
+            args=(),
+            exc_info=None,
+        )
+
+        handler.emit(record)
+
+        handler.handleError.assert_called_once_with(record)
+
+    def test_emit_recursion_guard(self):
+        """Verifies emit() prevents recursive calls within same thread."""
+        call_count = 0
+
+        def recursive_log(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # Simulate recursion by calling emit again
+            if call_count < 3:
+                handler.emit(record)
+
+        mock_manager = MagicMock()
+        mock_manager.log.side_effect = recursive_log
+        mock_getter = MagicMock(return_value=mock_manager)
+        handler = SessionLogHandler(mock_getter)
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Test",
+            args=(),
+            exc_info=None,
+        )
+
+        handler.emit(record)
+
+        # Should only call log once due to recursion guard
+        assert call_count == 1
+
+    def test_emit_without_structured_data(self):
+        """Verifies emit() works when record lacks structured_data."""
+        mock_manager = MagicMock()
+        mock_getter = MagicMock(return_value=mock_manager)
+        handler = SessionLogHandler(mock_getter)
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.WARNING,
+            pathname="test.py",
+            lineno=10,
+            msg="Warning message",
+            args=(),
+            exc_info=None,
+        )
+        # No structured_data attribute
+
+        handler.emit(record)
+
+        mock_manager.log.assert_called_once_with(
+            level="WARNING",
+            message="Warning message",
+            source="test",
+        )
+
+
+# =============================================================================
+# Coverage Tests - LogContext edge cases
+# =============================================================================
+
+
+class TestLogContextCoverage:
+    """Additional coverage tests for LogContext."""
+
+    def test_exit_with_none_token(self):
+        """Verifies LogContext.__exit__ handles None token gracefully."""
+        ctx = LogContext(key="value")
+        # Don't enter - token remains None
+        ctx._token = None
+
+        # Should not raise
+        ctx.__exit__(None, None, None)
+
+    def test_context_override_existing_keys(self):
+        """Verifies nested LogContext overrides parent keys."""
+        from telescope_mcp.observability.logging import _log_context
+
+        with LogContext(key="outer"):
+            outer_ctx = _log_context.get()
+            assert outer_ctx.get("key") == "outer"
+
+            with LogContext(key="inner"):
+                inner_ctx = _log_context.get()
+                assert inner_ctx.get("key") == "inner"
+
+            # Back to outer
+            restored = _log_context.get()
+            assert restored.get("key") == "outer"
+
+
+# =============================================================================
+# Coverage Tests - Logger level branches
+# =============================================================================
+
+
+class TestLoggerLevelBranches:
+    """Test log methods when level is disabled (early return branches)."""
+
+    def test_debug_when_disabled(self):
+        """Verifies debug() returns early when DEBUG not enabled."""
+        reset_logging()
+        configure_logging(level=logging.WARNING, force=True)
+        logger = get_logger("test.level.debug")
+        logger.setLevel(logging.WARNING)
+
+        # DEBUG is below WARNING, so should be skipped
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        logger.addHandler(handler)
+
+        logger.debug("This should not appear")
+
+        assert stream.getvalue() == ""
+
+    def test_debug_when_enabled(self):
+        """Verifies debug() logs when DEBUG level enabled."""
+        reset_logging()
+        configure_logging(level=logging.DEBUG, force=True)
+        logger = get_logger("test.level.debug.enabled")
+
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(StructuredFormatter())
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+
+        logger.debug("Debug message", key="value")
+
+        output = stream.getvalue()
+        assert "Debug message" in output
+
+    def test_info_when_disabled(self):
+        """Verifies info() returns early when INFO not enabled."""
+        reset_logging()
+        configure_logging(level=logging.ERROR, force=True)
+        logger = get_logger("test.level.info")
+        logger.setLevel(logging.ERROR)
+
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        logger.addHandler(handler)
+
+        logger.info("This should not appear")
+
+        assert stream.getvalue() == ""
+
+    def test_warning_when_disabled(self):
+        """Verifies warning() returns early when WARNING not enabled."""
+        reset_logging()
+        configure_logging(level=logging.CRITICAL, force=True)
+        logger = get_logger("test.level.warning")
+        logger.setLevel(logging.CRITICAL)
+
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        logger.addHandler(handler)
+
+        logger.warning("This should not appear")
+
+        assert stream.getvalue() == ""
+
+    def test_error_when_disabled(self):
+        """Verifies error() returns early when ERROR not enabled."""
+        reset_logging()
+        configure_logging(level=logging.CRITICAL + 1, force=True)
+        logger = get_logger("test.level.error")
+        logger.setLevel(logging.CRITICAL + 1)
+
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        logger.addHandler(handler)
+
+        logger.error("This should not appear")
+
+        assert stream.getvalue() == ""
+
+    def test_critical_when_disabled(self):
+        """Verifies critical() returns early when CRITICAL not enabled."""
+        reset_logging()
+        configure_logging(level=logging.CRITICAL + 10, force=True)
+        logger = get_logger("test.level.critical")
+        logger.setLevel(logging.CRITICAL + 10)
+
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        logger.addHandler(handler)
+
+        logger.critical("This should not appear")
+
+        assert stream.getvalue() == ""
+
+
+# =============================================================================
+# Coverage Tests - get_logger auto-configuration
+# =============================================================================
+
+
+class TestGetLoggerAutoConfig:
+    """Test get_logger automatic configuration behavior."""
+
+    def test_get_logger_auto_configures(self):
+        """Verifies get_logger auto-configures when not yet configured."""
+        reset_logging()
+        from telescope_mcp.observability import logging as log_module
+
+        assert log_module._configured is False
+
+        # get_logger should auto-configure
+        logger = get_logger("test.autoconfig")
+
+        assert log_module._configured is True
+        assert isinstance(logger, StructuredLogger)
+
+
+# =============================================================================
+# Coverage Tests - Branch Coverage
+# =============================================================================
+
+
+class TestBranchCoverage:
+    """Tests specifically targeting partial branch coverage."""
+
+    def test_log_with_extra_dict(self):
+        """Verifies _log handles pre-existing extra dict (branch 458->460)."""
+        reset_logging()
+        configure_logging(level=logging.DEBUG, force=True)
+        logger = get_logger("test.extra.dict")
+        logger.setLevel(logging.DEBUG)
+
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(StructuredFormatter())
+        logger.addHandler(handler)
+
+        # Call with extra dict already provided
+        logger.info("Test message", extra={"custom_field": "custom_value"}, key="value")
+
+        output = stream.getvalue()
+        assert "Test message" in output
+
+    def test_structured_formatter_with_custom_fmt(self):
+        """Verifies StructuredFormatter accepts custom format string."""
+        custom_fmt = "%(levelname)s: %(message)s"
+        formatter = StructuredFormatter(fmt=custom_fmt)
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Custom format test",
+            args=(),
+            exc_info=None,
+        )
+        record.structured_data = {"key": "value"}
+
+        formatted = formatter.format(record)
+
+        # Should use custom format (no timestamp, no logger name)
+        assert formatted.startswith("INFO: Custom format test")
+        assert "key=value" in formatted
+
+    def test_structured_formatter_with_custom_datefmt(self):
+        """Verifies StructuredFormatter accepts custom date format."""
+        formatter = StructuredFormatter(datefmt="%Y-%m-%d")
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Date format test",
+            args=(),
+            exc_info=None,
+        )
+        record.structured_data = {}
+
+        formatted = formatter.format(record)
+        assert "Date format test" in formatted

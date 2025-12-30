@@ -290,8 +290,9 @@ def create_app() -> FastAPI:
             >>> # Stream auto-refreshes at configured FPS
         """
         return templates.TemplateResponse(
+            request,
             "dashboard.html",
-            {"request": request, "title": "Telescope Control"},
+            {"title": "Telescope Control"},
         )
 
     @app.get("/stream/finder")

@@ -12,7 +12,7 @@ import json
 import pytest
 from mcp.types import TextContent
 
-from telescope_mcp.devices.registry import init_registry, shutdown_registry
+from telescope_mcp.devices.camera_registry import init_registry, shutdown_registry
 from telescope_mcp.drivers.cameras.twin import DigitalTwinCameraDriver
 
 # Import session tools module

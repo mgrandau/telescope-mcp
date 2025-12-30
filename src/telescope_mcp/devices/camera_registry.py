@@ -742,7 +742,9 @@ def init_registry(
     Example:
         >>> # Application startup
         >>> from telescope_mcp.drivers.cameras import ASICameraDriver
-        >>> from telescope_mcp.devices.registry import init_registry, get_registry
+        >>> from telescope_mcp.devices.camera_registry import (
+        ...     init_registry, get_registry,
+        ... )
         >>>
         >>> # Initialize once at startup
         >>> registry = init_registry(
@@ -797,7 +799,9 @@ def get_registry() -> CameraRegistry:
 
     Example:
         >>> # Application startup (main.py)
-        >>> from telescope_mcp.devices.registry import init_registry, get_registry
+        >>> from telescope_mcp.devices.camera_registry import (
+        ...     init_registry, get_registry,
+        ... )
         >>> from telescope_mcp.drivers.cameras import ASICameraDriver
         >>> init_registry(ASICameraDriver())
         >>>
@@ -858,7 +862,9 @@ def shutdown_registry() -> None:
 
     Example:
         >>> # Application startup
-        >>> from telescope_mcp.devices.registry import init_registry, shutdown_registry
+        >>> from telescope_mcp.devices.camera_registry import (
+        ...     init_registry, shutdown_registry,
+        ... )
         >>> import signal, atexit
         >>>
         >>> init_registry(ASICameraDriver())

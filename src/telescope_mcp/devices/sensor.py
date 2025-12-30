@@ -7,7 +7,7 @@ hardware with Arduino driver.
 Key Components:
 - Sensor: High-level device abstraction with driver injection
 - SensorConfig: Configuration for sensor behavior
-- SensorInfo: Sensor capabilities and properties
+- DeviceSensorInfo: Device-layer sensor metadata
 
 Architecture:
     The Sensor device follows a driver injection pattern:
@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from telescope_mcp.observability import get_logger
 
@@ -69,6 +69,18 @@ if TYPE_CHECKING:
     )
 
 logger = get_logger(__name__)
+
+# Constants
+DEFAULT_SAMPLE_RATE_HZ = 10.0  # Typical IMU sensor polling rate
+
+__all__ = [
+    "Sensor",
+    "SensorConfig",
+    "DeviceSensorInfo",
+    "SensorDeviceStatus",
+    "SensorStatistics",
+    "DEFAULT_SAMPLE_RATE_HZ",
+]
 
 
 @dataclass
@@ -88,9 +100,60 @@ class SensorConfig:
     max_reconnect_attempts: int = 3
 
 
+class SensorDeviceStatus(TypedDict, total=False):
+    """Status from Sensor device layer.
+
+    Keys:
+        connected: Current connection state.
+        type: Sensor type if connected.
+        name: Sensor name if connected.
+        connect_time: ISO timestamp of connection.
+        read_count: Total successful readings.
+        error_count: Total read errors.
+        calibrated: From driver if connected.
+        is_open: Connection state from driver.
+        error: Error string from driver if problem detected.
+        last_reading_age_ms: Milliseconds since last read (from driver).
+        reading_rate_hz: Current sample rate (from driver).
+        status_error: Error string if driver status query fails.
+    """
+
+    connected: bool
+    type: str | None
+    name: str | None
+    connect_time: str | None
+    read_count: int
+    error_count: int
+    calibrated: bool
+    is_open: bool
+    error: str | None
+    last_reading_age_ms: float
+    reading_rate_hz: float
+    status_error: str
+
+
+class SensorStatistics(TypedDict):
+    """Usage statistics for Sensor device.
+
+    Keys:
+        read_count: Total successful sensor reads.
+        error_count: Total failed read attempts.
+        uptime_seconds: Seconds since connect(), None if never connected.
+        error_rate: Ratio of errors to total reads.
+    """
+
+    read_count: int
+    error_count: int
+    uptime_seconds: float | None
+    error_rate: float
+
+
 @dataclass
-class SensorInfo:
-    """Information about a sensor device.
+class DeviceSensorInfo:
+    """Device-layer sensor metadata (enriched from driver SensorInfo).
+
+    This is the Sensor device's view of sensor information, distinct from
+    the driver-level SensorInfo TypedDict in drivers/sensors/types.py.
 
     Attributes:
         type: Sensor type (e.g., "digital_twin", "arduino_ble33").
@@ -101,7 +164,9 @@ class SensorInfo:
         has_humidity: Whether sensor has humidity sensing.
         sample_rate_hz: Sensor sample rate in Hz.
         port: Serial port (for hardware sensors).
-        extra: Additional driver-specific info.
+        extra: Driver-specific metadata. Keys vary by driver:
+            - DigitalTwin: simulation_id, target_position
+            - Arduino: firmware_version, serial_number
     """
 
     type: str
@@ -110,9 +175,9 @@ class SensorInfo:
     has_magnetometer: bool = True
     has_temperature: bool = True
     has_humidity: bool = True
-    sample_rate_hz: float = 10.0
+    sample_rate_hz: float = DEFAULT_SAMPLE_RATE_HZ
     port: str | None = None
-    extra: dict = field(default_factory=dict)
+    extra: dict[str, object] = field(default_factory=dict)
 
 
 class Sensor:
@@ -181,7 +246,7 @@ class Sensor:
         self._driver = driver
         self._config = config or SensorConfig()
         self._instance: SensorInstance | None = None
-        self._info: SensorInfo | None = None
+        self._info: DeviceSensorInfo | None = None
         self._connected = False
         self._connect_time: datetime | None = None
         self._last_reading: SensorReading | None = None
@@ -229,7 +294,7 @@ class Sensor:
         return self._connected and self._instance is not None
 
     @property
-    def info(self) -> SensorInfo | None:
+    def info(self) -> DeviceSensorInfo | None:
         """Get detailed information about the connected sensor hardware.
 
         Returns cached sensor metadata populated during connect(). Includes
@@ -245,7 +310,7 @@ class Sensor:
             No arguments (property accessor).
 
         Returns:
-            SensorInfo: Dataclass with sensor metadata if connected:
+            DeviceSensorInfo: Dataclass with sensor metadata if connected:
                 - type: Hardware type identifier (e.g., 'arduino_nano_ble33')
                 - name: Human-readable sensor name
                 - has_accelerometer, has_magnetometer: IMU capabilities
@@ -282,7 +347,8 @@ class Sensor:
         tools to let clients enumerate available hardware.
 
         Returns:
-            list[dict]: List of sensor descriptors, each containing:
+            list[AvailableSensor]: List of sensor descriptors (TypedDict), each
+                containing:
                 - id (int | str): Unique sensor identifier for connect()
                 - type (str): Sensor type (e.g., 'arduino_nano_ble33')
                 - name (str): Human-readable name
@@ -347,14 +413,14 @@ class Sensor:
 
             # Get sensor info
             raw_info = self._instance.get_info()
-            self._info = SensorInfo(
+            self._info = DeviceSensorInfo(
                 type=str(raw_info.get("type", "unknown")),
                 name=str(raw_info.get("name", "Unknown Sensor")),
                 has_accelerometer=bool(raw_info.get("has_accelerometer", True)),
                 has_magnetometer=bool(raw_info.get("has_magnetometer", True)),
                 has_temperature=bool(raw_info.get("has_temperature", True)),
                 has_humidity=bool(raw_info.get("has_humidity", True)),
-                sample_rate_hz=10.0,  # Default; TypedDict doesn't include this field
+                sample_rate_hz=DEFAULT_SAMPLE_RATE_HZ,
                 port=str(raw_info.get("port")) if raw_info.get("port") else None,
                 extra={
                     k: v
@@ -382,7 +448,14 @@ class Sensor:
         except Exception as e:
             self._connected = False
             self._instance = None
-            raise RuntimeError(f"Failed to connect to sensor: {e}") from e
+            available = self._driver.get_available_sensors()
+            available_msg = (
+                ", ".join(s.get("name", str(s.get("id"))) for s in available) or "none"
+            )
+            raise RuntimeError(
+                f"Failed to connect to sensor {target_id}: {e}. "
+                f"Available: {available_msg}"
+            ) from e
 
     def disconnect(self) -> None:
         """Disconnect from the sensor and release hardware resources.
@@ -425,6 +498,10 @@ class Sensor:
 
         self._connected = False
         self._info = None
+        self._connect_time = None
+        self._last_reading = None  # Clear stale reading from previous session
+        # Note: _read_count and _error_count are intentionally preserved across
+        # reconnects to track cumulative session reliability, not per-connection stats.
         logger.info("Sensor disconnected")
 
     def read(self) -> SensorReading:
@@ -506,7 +583,7 @@ class Sensor:
                 Valid range: 0.0 (horizon) to 90.0 (zenith).
                 Obtained from plate solving or star catalog.
             true_azimuth: Known true azimuth in degrees.
-                Valid range: 0.0 to 360.0.
+                Valid range: [0.0, 360.0) (360 excluded, wraps to 0).
                 0° = North, 90° = East, 180° = South, 270° = West.
 
         Returns:
@@ -526,11 +603,11 @@ class Sensor:
         if not self._connected or self._instance is None:
             raise RuntimeError("Sensor not connected. Call connect() first.")
 
-        # Validate ranges
+        # Validate ranges (azimuth uses < 360 to match driver protocol)
         if not 0 <= true_altitude <= 90:
-            raise ValueError(f"Altitude must be 0-90°, got {true_altitude}")
-        if not 0 <= true_azimuth <= 360:
-            raise ValueError(f"Azimuth must be 0-360°, got {true_azimuth}")
+            raise ValueError(f"Altitude must be in range [0, 90], got {true_altitude}")
+        if not 0 <= true_azimuth < 360:
+            raise ValueError(f"Azimuth must be in range [0, 360), got {true_azimuth}")
 
         logger.info(
             "Calibrating sensor",
@@ -576,7 +653,7 @@ class Sensor:
         self._instance.reset()
         logger.info("Sensor reset")
 
-    def get_status(self) -> dict:
+    def get_status(self) -> SensorDeviceStatus:
         """Get comprehensive sensor status including connection and statistics.
 
         Combines device-level metadata with driver-reported status to provide
@@ -589,7 +666,7 @@ class Sensor:
         monitoring of observatory equipment.
 
         Returns:
-            dict: Status dictionary containing:
+            SensorDeviceStatus: TypedDict containing:
                 - connected (bool): Current connection state
                 - type (str | None): Sensor type if connected
                 - name (str | None): Sensor name if connected
@@ -597,7 +674,7 @@ class Sensor:
                 - read_count (int): Total successful readings
                 - error_count (int): Total read errors
                 - calibrated (bool): From driver if connected
-                - last_calibration (str): From driver if connected
+                - is_open (bool): Connection state from driver
                 - status_error (str): If driver status query fails
 
         Raises:
@@ -610,9 +687,9 @@ class Sensor:
             >>> print(f"Reads: {status['read_count']}, Errors: {status['error_count']}")
             Reads: 1523, Errors: 2
             >>> if status.get('calibrated'):
-            ...     print(f"Calibrated at {status['last_calibration']}")
+            ...     print("Sensor is calibrated")
         """
-        base_status = {
+        base_status: SensorDeviceStatus = {
             "connected": self._connected,
             "type": self._info.type if self._info else None,
             "name": self._info.name if self._info else None,
@@ -627,8 +704,18 @@ class Sensor:
             try:
                 driver_status = self._instance.get_status()
                 # Merge driver status into base status
-                for key, value in driver_status.items():
-                    base_status[key] = value  # type: ignore[assignment]
+                if "calibrated" in driver_status:
+                    base_status["calibrated"] = driver_status["calibrated"]
+                if "is_open" in driver_status:
+                    base_status["is_open"] = driver_status["is_open"]
+                if "error" in driver_status:
+                    base_status["error"] = driver_status["error"]
+                if "last_reading_age_ms" in driver_status:
+                    base_status["last_reading_age_ms"] = driver_status[
+                        "last_reading_age_ms"
+                    ]
+                if "reading_rate_hz" in driver_status:
+                    base_status["reading_rate_hz"] = driver_status["reading_rate_hz"]
             except Exception as e:
                 base_status["status_error"] = str(e)
 
@@ -677,11 +764,12 @@ class Sensor:
         return self._last_reading
 
     @property
-    def statistics(self) -> dict:
+    def statistics(self) -> SensorStatistics:
         """Get sensor usage and reliability statistics.
 
         Computes operational metrics including read counts, error rates,
-        and connection uptime. Statistics reset when sensor is reconnected.
+        and connection uptime. Statistics accumulate across reconnections
+        within the same Sensor instance for session-wide reliability tracking.
 
         Business context: Long-running observatory sessions need reliability
         monitoring. High error rates may indicate hardware issues, loose
@@ -692,7 +780,7 @@ class Sensor:
             No arguments (property accessor).
 
         Returns:
-            dict: Statistics dictionary containing:
+            SensorStatistics: TypedDict containing:
                 - read_count (int): Total successful sensor reads
                 - error_count (int): Total failed read attempts
                 - uptime_seconds (float | None): Seconds since connect(),
@@ -716,16 +804,16 @@ class Sensor:
             >>> if stats['error_rate'] > 0.05:
             ...     print("Warning: High error rate detected")
         """
-        uptime = None
+        uptime: float | None = None
         if self._connect_time:
             uptime = (datetime.now(UTC) - self._connect_time).total_seconds()
 
-        return {
-            "read_count": self._read_count,
-            "error_count": self._error_count,
-            "uptime_seconds": uptime,
-            "error_rate": self._error_count / max(1, self._read_count),
-        }
+        return SensorStatistics(
+            read_count=self._read_count,
+            error_count=self._error_count,
+            uptime_seconds=uptime,
+            error_rate=self._error_count / max(1, self._read_count),
+        )
 
     def _attempt_reconnect(self) -> None:
         """Attempt to reconnect to the sensor after connection failure.
@@ -809,6 +897,13 @@ class Sensor:
             ...     reading = sensor.read()
             ...     print(f"Altitude: {reading.altitude}")
             >>> # Automatically disconnected here
+
+            # Exceptions propagate but cleanup still runs:
+            >>> try:
+            ...     with Sensor(driver) as sensor:
+            ...         sensor.calibrate(-10, 0)  # ValueError
+            ... except ValueError:
+            ...     pass  # sensor.disconnect() was called
         """
         if not self._connected:
             self.connect()
@@ -874,8 +969,14 @@ class Sensor:
             "Sensor(connected=False)"
             >>> sensor.connect()
             >>> repr(sensor)
-            "Sensor(type='arduino_ble33', connected=True)"
+            "Sensor(type='arduino_ble33', connected=True, uptime=45s)"
         """
         if self._info:
-            return f"Sensor(type={self._info.type!r}, connected={self._connected})"
+            uptime = ""
+            if self._connect_time:
+                secs = (datetime.now(UTC) - self._connect_time).total_seconds()
+                uptime = f", uptime={secs:.0f}s"
+            return (
+                f"Sensor(type={self._info.type!r}, connected={self._connected}{uptime})"
+            )
         return f"Sensor(connected={self._connected})"

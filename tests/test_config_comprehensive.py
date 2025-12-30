@@ -142,9 +142,9 @@ class TestDriverFactory:
     Categories:
     1. Factory Initialization - Default and custom configs (2 tests)
     2. Camera Driver Creation - Digital twin variants (2 tests)
-    3. Other Driver Creation - Motor and sensor (2 tests)
+    3. Other Driver Creation - Motor and sensor (3 tests)
 
-    Total: 6 tests.
+    Total: 7 tests.
     """
 
     def test_factory_default_config(self):
@@ -306,17 +306,51 @@ class TestDriverFactory:
         assert driver is not None
         assert "DigitalTwin" in driver.__class__.__name__
 
+    def test_create_sensor_driver_hardware(self):
+        """Verifies factory creates ArduinoSensorDriver in hardware mode.
+
+        Tests sensor driver instantiation with HARDWARE config. This exercises
+        the hardware mode branch in create_sensor_driver() which imports and
+        returns ArduinoSensorDriver.
+
+        Business context:
+        Enables production telescope operation with real IMU hardware by
+        instantiating the Arduino Nano BLE33 Sense driver for orientation sensing.
+
+        Arrangement:
+        1. Import ArduinoSensorDriver for type checking.
+        2. Create DriverConfig with mode=HARDWARE.
+        3. Create DriverFactory with config.
+
+        Action:
+        Call factory.create_sensor_driver() to instantiate driver.
+
+        Assertion Strategy:
+        Validates driver type by confirming:
+        - Returned driver is instance of ArduinoSensorDriver.
+        - Factory creates hardware driver for HARDWARE mode.
+
+        Testing Principle:
+        Validates mode-based dispatch for sensors, ensuring factory routes
+        to appropriate sensor driver implementation based on configuration."""
+        from telescope_mcp.drivers.sensors import ArduinoSensorDriver
+
+        config = DriverConfig(mode=DriverMode.HARDWARE)
+        factory = DriverFactory(config)
+        driver = factory.create_sensor_driver()
+        assert isinstance(driver, ArduinoSensorDriver)
+
 
 class TestGlobalConfiguration:
     """Test suite for global configuration helper functions.
 
     Categories:
-    1. Mode Switching - use_digital_twin/use_hardware (2 tests)
+    1. Mode Switching - use_digital_twin/use_hardware (4 tests)
     2. Custom Configuration - configure() function (1 test)
     3. Data Directory - set_data_dir() variants (2 tests)
-    4. Location Setting - set_location() with/without altitude (2 tests)
+    4. Location Setting - set_location() with/without altitude (4 tests)
 
-    Total: 7 tests.
+    Total: 11 tests.
     """
 
     def test_use_digital_twin(self):
@@ -364,6 +398,84 @@ class TestGlobalConfiguration:
         assert factory.config.mode == DriverMode.HARDWARE
         # Switch back to digital twin for other tests
         use_digital_twin()
+
+    def test_use_digital_twin_preserve_config(self):
+        """Verifies use_digital_twin(preserve_config=True) keeps existing settings.
+
+        Tests that data_dir and location are preserved when switching modes.
+
+        Arrangement:
+        1. Configure with custom data_dir and location via configure().
+        2. Switch to hardware mode.
+
+        Action:
+        Call use_digital_twin(preserve_config=True) to switch back.
+
+        Assertion Strategy:
+        Validates config preservation by confirming:
+        - Mode is DIGITAL_TWIN.
+        - data_dir unchanged from custom path.
+        - location unchanged from custom coordinates.
+
+        Testing Principle:
+        Validates preserve_config parameter prevents config loss during
+        mode switching."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Set custom config via configure to ensure it sticks
+            config = DriverConfig(
+                mode=DriverMode.HARDWARE,
+                data_dir=Path(tmpdir),
+                location={"lat": 45.0, "lon": -120.0, "alt": 500.0},
+            )
+            configure(config)
+
+            # Switch back with preserve
+            use_digital_twin(preserve_config=True)
+
+            factory = get_factory()
+            assert factory.config.mode == DriverMode.DIGITAL_TWIN
+            assert factory.config.data_dir == Path(tmpdir)
+            assert factory.config.location["lat"] == 45.0
+
+    def test_use_hardware_preserve_config(self):
+        """Verifies use_hardware(preserve_config=True) keeps existing settings.
+
+        Tests that data_dir and location are preserved when switching modes.
+
+        Arrangement:
+        1. Configure with custom data_dir and location via configure().
+
+        Action:
+        Call use_hardware(preserve_config=True) to switch modes.
+
+        Assertion Strategy:
+        Validates config preservation by confirming:
+        - Mode is HARDWARE.
+        - data_dir unchanged from custom path.
+        - location unchanged from custom coordinates.
+
+        Testing Principle:
+        Validates preserve_config parameter prevents config loss during
+        mode switching."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Set custom config via configure
+            config = DriverConfig(
+                mode=DriverMode.DIGITAL_TWIN,
+                data_dir=Path(tmpdir),
+                location={"lat": 35.0, "lon": -80.0, "alt": 200.0},
+            )
+            configure(config)
+
+            # Switch to hardware with preserve
+            use_hardware(preserve_config=True)
+
+            factory = get_factory()
+            assert factory.config.mode == DriverMode.HARDWARE
+            assert factory.config.data_dir == Path(tmpdir)
+            assert factory.config.location["lat"] == 35.0
+
+            # Reset for other tests
+            use_digital_twin()
 
     def test_configure_custom(self):
         """Verifies configure() accepts custom DriverConfig with multiple settings.
@@ -494,6 +606,60 @@ class TestGlobalConfiguration:
         assert factory.config.location["lon"] == -75.0
         assert factory.config.location["alt"] == 0.0
 
+    def test_set_location_invalid_latitude(self):
+        """Verifies set_location() raises ValueError for out-of-range latitude.
+
+        Tests input validation for latitude bounds.
+
+        Arrangement:
+        1. Define latitude outside valid range [-90, 90].
+
+        Action:
+        Call set_location with lat=100 (invalid).
+
+        Assertion Strategy:
+        Validates range checking by confirming:
+        - ValueError is raised.
+        - Error message mentions latitude and range.
+
+        Testing Principle:
+        Validates input validation prevents invalid coordinates
+        from corrupting astronomical calculations."""
+        import pytest
+
+        with pytest.raises(ValueError, match="Latitude"):
+            set_location(100.0, -75.0)
+
+        with pytest.raises(ValueError, match="Latitude"):
+            set_location(-95.0, -75.0)
+
+    def test_set_location_invalid_longitude(self):
+        """Verifies set_location() raises ValueError for out-of-range longitude.
+
+        Tests input validation for longitude bounds.
+
+        Arrangement:
+        1. Define longitude outside valid range [-180, 180].
+
+        Action:
+        Call set_location with lon=200 (invalid).
+
+        Assertion Strategy:
+        Validates range checking by confirming:
+        - ValueError is raised.
+        - Error message mentions longitude and range.
+
+        Testing Principle:
+        Validates input validation prevents invalid coordinates
+        from corrupting astronomical calculations."""
+        import pytest
+
+        with pytest.raises(ValueError, match="Longitude"):
+            set_location(40.0, 200.0)
+
+        with pytest.raises(ValueError, match="Longitude"):
+            set_location(40.0, -185.0)
+
 
 class TestSessionManagerIntegration:
     """Test suite for SessionManager integration with driver configuration.
@@ -586,9 +752,9 @@ class TestConfigReconfiguration:
 
     Categories:
     1. Session Manager Reset - Manager replacement on reconfig (1 test)
-    2. Cleanup - Proper shutdown on reconfiguration (1 test)
+    2. Cleanup - Proper shutdown on reconfiguration (2 tests)
 
-    Total: 2 tests.
+    Total: 3 tests.
     """
 
     def test_reconfigure_resets_session_manager(self):
@@ -655,6 +821,45 @@ class TestConfigReconfiguration:
 
         # Should work without errors
         assert manager2 is not None
+
+    def test_configure_handles_shutdown_exception(self):
+        """Verifies configure() handles exceptions during session manager shutdown.
+
+        Tests that reconfiguration succeeds even when shutdown() raises an exception.
+        This exercises the try/except block in configure() that catches shutdown errors.
+
+        Arrangement:
+        1. Get session manager to ensure one exists.
+        2. Monkeypatch shutdown to raise an exception.
+
+        Action:
+        Call configure() with new config.
+
+        Assertion Strategy:
+        Validates exception handling by confirming:
+        - configure() does not raise despite shutdown failure.
+        - New factory is created successfully.
+
+        Testing Principle:
+        Validates defensive error handling, ensuring configuration
+        succeeds with best-effort cleanup on shutdown failures."""
+        from unittest.mock import patch
+
+        # Get initial manager
+        _ = get_session_manager()
+
+        # Patch shutdown to raise
+        with patch.object(
+            get_session_manager(),
+            "shutdown",
+            side_effect=RuntimeError("Shutdown failed"),
+        ):
+            # This should not raise despite shutdown failure
+            configure(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
+
+        # Factory should be reconfigured successfully
+        factory = get_factory()
+        assert factory.config.mode == DriverMode.DIGITAL_TWIN
 
 
 class TestDriverModeEnum:

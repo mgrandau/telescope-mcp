@@ -5,10 +5,11 @@ Arduino driver tests require hardware and are integration tests.
 """
 
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 import pytest
 
-from telescope_mcp.devices.sensor import Sensor, SensorConfig, SensorInfo
+from telescope_mcp.devices.sensor import DeviceSensorInfo, Sensor, SensorConfig
 from telescope_mcp.drivers.sensors import (
     DigitalTwinSensorConfig,
     DigitalTwinSensorDriver,
@@ -766,7 +767,7 @@ class TestSensorDevice:
         sensor = Sensor(driver)
         sensor.connect()
 
-        with pytest.raises(ValueError, match="Altitude must be 0-90"):
+        with pytest.raises(ValueError, match=r"Altitude must be in range \[0, 90\]"):
             sensor.calibrate(true_altitude=100.0, true_azimuth=180.0)
 
         sensor.disconnect()
@@ -800,7 +801,7 @@ class TestSensorDevice:
         sensor = Sensor(driver)
         sensor.connect()
 
-        with pytest.raises(ValueError, match="Azimuth must be 0-360"):
+        with pytest.raises(ValueError, match=r"Azimuth must be in range \[0, 360\)"):
             sensor.calibrate(true_altitude=45.0, true_azimuth=400.0)
 
         sensor.disconnect()
@@ -1059,7 +1060,7 @@ class TestSensorDevice:
 
         sensor.connect()
         assert sensor.info is not None
-        assert isinstance(sensor.info, SensorInfo)
+        assert isinstance(sensor.info, DeviceSensorInfo)
         assert sensor.info.type == "digital_twin"
 
         sensor.disconnect()
@@ -1150,3 +1151,847 @@ class TestSensorReading:
         assert reading.altitude == 45.0
         assert reading.azimuth == 180.0
         assert reading.accelerometer["aZ"] == 1.0
+
+
+class TestSensorEdgeCases:
+    """Test suite for Sensor edge cases and error paths.
+
+    Covers uncovered lines for 100% coverage:
+    - Connection failures
+    - Disconnect error suppression
+    - Read error recovery
+    - Precondition validation
+    - Status error handling
+    - Reconnection logic
+
+    Total: 13 tests.
+    """
+
+    def test_connect_failure_wraps_exception(self) -> None:
+        """Verifies connect() wraps driver exceptions in RuntimeError.
+
+        Tests exception handling in connect() when driver.open() fails.
+
+        Business context:
+            Hardware failures (port busy, device not found) must be wrapped
+            in a consistent exception type for application error handling.
+
+        Arrangement:
+            1. Create mock driver that raises on open().
+
+        Action:
+            Attempt to connect() with failing driver.
+
+        Assertion Strategy:
+            Validates exception wrapping by confirming:
+            - RuntimeError raised with "Failed to connect" message.
+            - Sensor remains disconnected after failure.
+
+        Testing Principle:
+            Validates defensive programming, ensuring driver failures
+            propagate as consistent exception types.
+        """
+        mock_driver = Mock()
+        mock_driver.open.side_effect = RuntimeError("Port /dev/ttyACM0 not found")
+        mock_driver.get_available_sensors.return_value = []
+
+        sensor = Sensor(mock_driver)
+
+        with pytest.raises(RuntimeError, match="Failed to connect"):
+            sensor.connect()
+
+        assert not sensor.connected
+        assert sensor._instance is None
+
+    def test_disconnect_suppresses_close_errors(self) -> None:
+        """Verifies disconnect() suppresses errors from instance.close().
+
+        Tests error suppression during cleanup to ensure cleanup completes.
+
+        Business context:
+            Serial port cleanup may fail (already closed, hardware removed).
+            disconnect() must complete cleanup regardless, ensuring sensor
+            state is consistent for potential reconnection.
+
+        Arrangement:
+            1. Create mock driver with mock instance.
+            2. Make instance.close() raise exception.
+            3. Connect sensor to establish state.
+
+        Action:
+            Call disconnect() where close() will fail.
+
+        Assertion Strategy:
+            Validates suppression by confirming:
+            - disconnect() completes without raising.
+            - Sensor marked disconnected despite close error.
+            - Instance cleared for garbage collection.
+
+        Testing Principle:
+            Validates defensive cleanup, ensuring disconnect always
+            leaves sensor in consistent disconnected state.
+        """
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"type": "mock", "name": "Mock Sensor"}
+        mock_instance.close.side_effect = RuntimeError("Close failed")
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        sensor = Sensor(mock_driver)
+        sensor.connect()
+
+        # Should not raise - close error is suppressed
+        sensor.disconnect()
+
+        assert not sensor.connected
+        assert sensor._instance is None
+        mock_instance.close.assert_called_once()
+
+    def test_read_error_triggers_reconnect(self) -> None:
+        """Verifies read() triggers reconnect on error when configured.
+
+        Tests automatic recovery flow for transient read failures.
+
+        Business context:
+            USB sensors may disconnect temporarily during long sessions.
+            With reconnect_on_error=True, sensor automatically attempts
+            recovery, maintaining data flow without manual intervention.
+
+        Arrangement:
+            1. Create mock driver returning instance that fails first read.
+            2. Configure sensor with reconnect_on_error=True (default).
+            3. Track reconnect attempts via open() calls.
+
+        Action:
+            Call read() which fails, triggers reconnect, then retries.
+
+        Assertion Strategy:
+            Validates recovery by confirming:
+            - Second read succeeds after reconnect.
+            - driver.open() called twice (initial + reconnect).
+            - Error count incremented.
+
+        Testing Principle:
+            Validates automatic recovery, ensuring transient failures
+            don't require manual intervention.
+        """
+        # First instance fails on read, second succeeds
+        call_count = [0]
+
+        def create_mock_instance(sensor_id: int | str = 0) -> Mock:
+            """Create mock instance - first fails read, second succeeds."""
+            call_count[0] += 1
+            mock = Mock()
+            mock.get_info.return_value = {"type": "mock", "name": "Mock Sensor"}
+            mock.close.return_value = None
+
+            if call_count[0] == 1:
+                mock.read.side_effect = RuntimeError("Read failed")
+            else:
+                mock.read.return_value = SensorReading(
+                    accelerometer={"aX": 0.0, "aY": 0.0, "aZ": 1.0},
+                    magnetometer={"mX": 30.0, "mY": 0.0, "mZ": 40.0},
+                    altitude=45.0,
+                    azimuth=180.0,
+                    temperature=20.0,
+                    humidity=50.0,
+                    timestamp=datetime.now(UTC),
+                    raw_values="test",
+                )
+            return mock
+
+        mock_driver = Mock()
+        mock_driver.open.side_effect = create_mock_instance
+
+        config = SensorConfig(reconnect_on_error=True, max_reconnect_attempts=3)
+        sensor = Sensor(mock_driver, config)
+        sensor.connect()
+
+        # First read fails, triggers reconnect, retry succeeds
+        reading = sensor.read()
+
+        assert reading.altitude == 45.0
+        assert sensor._error_count == 1
+        assert mock_driver.open.call_count == 2
+
+        sensor.disconnect()
+
+    def test_read_error_raises_when_reconnect_disabled(self) -> None:
+        """Verifies read() raises when reconnect_on_error=False.
+
+        Tests that error propagates without recovery attempt.
+
+        Business context:
+            Some applications prefer manual error handling over automatic
+            reconnection. Disabling reconnect lets caller control recovery.
+
+        Arrangement:
+            1. Create mock instance that fails on read.
+            2. Configure sensor with reconnect_on_error=False.
+
+        Action:
+            Call read() which fails.
+
+        Assertion Strategy:
+            Validates error propagation by confirming:
+            - Original exception raised (not wrapped).
+            - Error count incremented.
+            - No reconnect attempt made.
+
+        Testing Principle:
+            Validates configurable behavior, ensuring reconnect_on_error
+            flag controls recovery behavior.
+        """
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
+        mock_instance.read.side_effect = RuntimeError("Sensor disconnected")
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        config = SensorConfig(reconnect_on_error=False)
+        sensor = Sensor(mock_driver, config)
+        sensor.connect()
+
+        with pytest.raises(RuntimeError, match="Sensor disconnected"):
+            sensor.read()
+
+        assert sensor._error_count == 1
+        # Only initial open, no reconnect
+        assert mock_driver.open.call_count == 1
+
+    def test_calibrate_not_connected_raises(self) -> None:
+        """Verifies calibrate() raises RuntimeError when not connected.
+
+        Tests precondition enforcement for calibration.
+
+        Business context:
+            Calibration requires active sensor to read current position.
+            Attempting calibration without connection is a programming error.
+
+        Arrangement:
+            1. Create Sensor but do not connect.
+
+        Action:
+            Attempt to calibrate() without connecting.
+
+        Assertion Strategy:
+            Validates precondition by confirming:
+            - RuntimeError raised with "not connected" message.
+            - Clear guidance to call connect() first.
+
+        Testing Principle:
+            Validates fail-fast behavior, ensuring invalid operations
+            fail early with helpful error messages.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            sensor.calibrate(45.0, 180.0)
+
+    def test_reset_not_connected_raises(self) -> None:
+        """Verifies reset() raises RuntimeError when not connected.
+
+        Tests precondition enforcement for reset.
+
+        Business context:
+            Reset clears calibration on the sensor instance. Without
+            connection, there's no instance to reset.
+
+        Arrangement:
+            1. Create Sensor but do not connect.
+
+        Action:
+            Attempt to reset() without connecting.
+
+        Assertion Strategy:
+            Validates precondition by confirming:
+            - RuntimeError raised with "not connected" message.
+
+        Testing Principle:
+            Validates fail-fast behavior for invalid state operations.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            sensor.reset()
+
+    def test_get_status_handles_driver_error(self) -> None:
+        """Verifies get_status() captures driver status errors gracefully.
+
+        Tests error handling when driver get_status() fails.
+
+        Business context:
+            Status queries should never crash monitoring systems.
+            If driver status fails, error is captured in response
+            rather than propagated as exception.
+
+        Arrangement:
+            1. Create mock instance where get_status() raises.
+            2. Connect sensor with mocked driver.
+
+        Action:
+            Call get_status() where driver status fails.
+
+        Assertion Strategy:
+            Validates error capture by confirming:
+            - Status returned (no exception raised).
+            - status_error field contains error message.
+            - Base status fields still populated.
+
+        Testing Principle:
+            Validates graceful degradation, ensuring partial status
+            available even when driver fails.
+        """
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
+        mock_instance.get_status.side_effect = RuntimeError("Status unavailable")
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        sensor = Sensor(mock_driver)
+        sensor.connect()
+
+        status = sensor.get_status()
+
+        assert status["connected"] is True
+        assert "status_error" in status
+        assert "Status unavailable" in status["status_error"]
+
+        sensor.disconnect()
+
+    def test_reconnect_all_attempts_fail(self) -> None:
+        """Verifies _attempt_reconnect raises after all attempts fail.
+
+        Tests reconnection loop exhaustion.
+
+        Business context:
+            If hardware is truly gone (unplugged, broken), reconnection
+            will fail repeatedly. After max_reconnect_attempts, give up
+            and raise to let caller handle.
+
+        Arrangement:
+            1. Create mock driver that always fails to reconnect.
+            2. Configure max_reconnect_attempts=2.
+
+        Action:
+            Call _attempt_reconnect() which will fail twice.
+
+        Assertion Strategy:
+            Validates exhaustion by confirming:
+            - RuntimeError raised with "Failed to reconnect" message.
+            - All attempts were made (open called max times).
+
+        Testing Principle:
+            Validates bounded retry, ensuring reconnection gives up
+            after configured number of attempts.
+        """
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
+        mock_instance.close.return_value = None
+
+        mock_driver = Mock()
+        # First open succeeds, subsequent opens fail
+        call_count = [0]
+
+        def open_failing(sensor_id: int | str = 0) -> Mock:
+            """First open succeeds, rest fail."""
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_instance
+            raise RuntimeError("Reconnect failed")
+
+        mock_driver.open.side_effect = open_failing
+
+        config = SensorConfig(max_reconnect_attempts=2)
+        sensor = Sensor(mock_driver, config)
+        sensor.connect()
+
+        with pytest.raises(RuntimeError, match="Failed to reconnect after 2 attempts"):
+            sensor._attempt_reconnect()
+
+        # Initial open + 2 reconnect attempts
+        assert mock_driver.open.call_count == 3
+
+    def test_reconnect_succeeds_after_partial_failure(self) -> None:
+        """Verifies _attempt_reconnect succeeds after initial failures.
+
+        Tests reconnection succeeding on non-first attempt.
+
+        Business context:
+            Transient issues (USB reset, power glitch) may cause initial
+            reconnects to fail while later attempts succeed. The loop
+            should continue trying until success or exhaustion.
+
+        Arrangement:
+            1. Create mock driver that fails first reconnect but succeeds second.
+            2. Configure max_reconnect_attempts=3.
+
+        Action:
+            Call _attempt_reconnect() which fails once then succeeds.
+
+        Assertion Strategy:
+            Validates partial recovery by confirming:
+            - No exception raised (reconnect succeeded).
+            - Sensor is connected after recovery.
+
+        Testing Principle:
+            Validates retry persistence, ensuring temporary failures
+            don't prevent eventual recovery.
+        """
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
+        mock_instance.close.return_value = None
+
+        call_count = [0]
+
+        def open_with_partial_failure(sensor_id: int | str = 0) -> Mock:
+            """First open succeeds, second fails, third succeeds."""
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_instance  # Initial connect
+            elif call_count[0] == 2:
+                raise RuntimeError("Transient failure")  # First reconnect fails
+            else:
+                return mock_instance  # Second reconnect succeeds
+
+        mock_driver = Mock()
+        mock_driver.open.side_effect = open_with_partial_failure
+
+        config = SensorConfig(max_reconnect_attempts=3)
+        sensor = Sensor(mock_driver, config)
+        sensor.connect()
+
+        # Should succeed after one failed attempt
+        sensor._attempt_reconnect()
+
+        assert sensor.connected
+        # Initial + 2 reconnect attempts (fail then success)
+        assert mock_driver.open.call_count == 3
+
+    def test_context_manager_when_already_connected(self) -> None:
+        """Verifies context manager skips connect when already connected.
+
+        Tests __enter__ optimization for pre-connected sensors.
+
+        Business context:
+            Applications may connect sensors before using context manager.
+            __enter__ should not attempt redundant connection which would
+            raise "already connected" error.
+
+        Arrangement:
+            1. Create and connect Sensor.
+
+        Action:
+            Use already-connected sensor in context manager.
+
+        Assertion Strategy:
+            Validates skip behavior by confirming:
+            - No exception raised entering context.
+            - Sensor remains connected throughout.
+            - Sensor disconnected after context exit.
+
+        Testing Principle:
+            Validates idempotency, ensuring context manager handles
+            pre-connected state gracefully.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+        sensor.connect()
+
+        # Enter context when already connected - should not fail
+        with sensor:
+            assert sensor.connected
+            reading = sensor.read()
+            assert reading is not None
+
+        assert not sensor.connected
+
+    def test_calibrate_negative_altitude_raises(self) -> None:
+        """Verifies calibrate() rejects negative altitude.
+
+        Tests lower bound validation for altitude.
+
+        Business context:
+            Altitude below horizon (negative) is physically impossible
+            for telescope pointing. Validates input before corrupting
+            calibration state.
+
+        Arrangement:
+            1. Create and connect Sensor.
+
+        Action:
+            Attempt calibrate with altitude=-10 (below horizon).
+
+        Assertion Strategy:
+            Validates bound check by confirming:
+            - ValueError raised with "0-90" range in message.
+
+        Testing Principle:
+            Validates input validation, ensuring physically impossible
+            values are rejected early.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+        sensor.connect()
+
+        with pytest.raises(ValueError, match=r"Altitude must be in range \[0, 90\]"):
+            sensor.calibrate(true_altitude=-10.0, true_azimuth=180.0)
+
+        sensor.disconnect()
+
+    def test_calibrate_negative_azimuth_raises(self) -> None:
+        """Verifies calibrate() rejects negative azimuth.
+
+        Tests lower bound validation for azimuth.
+
+        Business context:
+            Azimuth must be 0-360° representing compass direction.
+            Negative values indicate user error in coordinate conversion.
+
+        Arrangement:
+            1. Create and connect Sensor.
+
+        Action:
+            Attempt calibrate with azimuth=-45 (invalid).
+
+        Assertion Strategy:
+            Validates bound check by confirming:
+            - ValueError raised with "0-360" range in message.
+
+        Testing Principle:
+            Validates input validation for azimuth lower bound.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+        sensor.connect()
+
+        with pytest.raises(ValueError, match=r"Azimuth must be in range \[0, 360\)"):
+            sensor.calibrate(true_altitude=45.0, true_azimuth=-45.0)
+
+        sensor.disconnect()
+
+    def test_auto_connect_failure_propagates(self) -> None:
+        """Verifies auto_connect failure raises during __init__.
+
+        Tests exception propagation from auto_connect.
+
+        Business context:
+            If auto_connect is enabled but connection fails, the exception
+            should propagate so caller knows sensor creation failed.
+
+        Arrangement:
+            1. Create mock driver that fails on open.
+            2. Configure auto_connect=True.
+
+        Action:
+            Create Sensor with failing auto_connect.
+
+        Assertion Strategy:
+            Validates propagation by confirming:
+            - RuntimeError raised during Sensor.__init__.
+            - Contains "Failed to connect" message.
+
+        Testing Principle:
+            Validates fail-fast for auto_connect, ensuring callers
+            know immediately when sensor creation fails.
+        """
+        mock_driver = Mock()
+        mock_driver.open.side_effect = RuntimeError("No sensors available")
+        mock_driver.get_available_sensors.return_value = []
+
+        config = SensorConfig(auto_connect=True)
+
+        with pytest.raises(RuntimeError, match="Failed to connect"):
+            Sensor(mock_driver, config)
+
+    def test_get_status_when_not_connected(self) -> None:
+        """Verifies get_status() returns base status when not connected.
+
+        Tests status without driver status merge (disconnected path).
+
+        Business context:
+            Status queries should work even when disconnected. Returns
+            base status fields without driver-specific data.
+
+        Arrangement:
+            1. Create Sensor but do not connect.
+
+        Action:
+            Call get_status() on disconnected sensor.
+
+        Assertion Strategy:
+            Validates base status by confirming:
+            - connected is False.
+            - type and name are None.
+            - No driver status fields merged.
+
+        Testing Principle:
+            Validates graceful handling of disconnected state in status.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+
+        status = sensor.get_status()
+
+        assert status["connected"] is False
+        assert status["type"] is None
+        assert status["name"] is None
+        assert status["connect_time"] is None
+        assert "calibrated" not in status  # No driver status merged
+
+    def test_statistics_when_never_connected(self) -> None:
+        """Verifies statistics property works when never connected.
+
+        Tests statistics with no connect_time (uptime=None path).
+
+        Business context:
+            Statistics may be queried before first connection. Should
+            return valid data with uptime=None indicating no session.
+
+        Arrangement:
+            1. Create Sensor but do not connect.
+
+        Action:
+            Access statistics property.
+
+        Assertion Strategy:
+            Validates default state by confirming:
+            - read_count is 0.
+            - error_count is 0.
+            - uptime_seconds is None (never connected).
+            - error_rate is 0.0.
+
+        Testing Principle:
+            Validates safe defaults when accessing stats before connection.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+
+        stats = sensor.statistics
+
+        assert stats["read_count"] == 0
+        assert stats["error_count"] == 0
+        assert stats["uptime_seconds"] is None
+        assert stats["error_rate"] == 0.0
+
+    def test_get_status_merges_all_driver_status_fields(self) -> None:
+        """Verifies get_status() merges all optional driver status fields.
+
+        Tests that all driver status fields are properly merged into response.
+
+        Business context:
+            Driver status may include is_open, error, last_reading_age_ms,
+            and reading_rate_hz. All should be included in device status.
+
+        Arrangement:
+            1. Create mock driver returning full status.
+
+        Action:
+            Call get_status() and verify all fields present.
+
+        Assertion Strategy:
+            Validates field merging by confirming all optional fields appear.
+
+        Testing Principle:
+            Validates complete data passthrough from driver to device status.
+        """
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
+        mock_instance.get_status.return_value = {
+            "calibrated": True,
+            "is_open": True,
+            "error": None,
+            "last_reading_age_ms": 50.0,
+            "reading_rate_hz": 10.0,
+        }
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        sensor = Sensor(mock_driver)
+        sensor.connect()
+
+        status = sensor.get_status()
+
+        assert status["calibrated"] is True
+        assert status["is_open"] is True
+        assert status["error"] is None
+        assert status["last_reading_age_ms"] == 50.0
+        assert status["reading_rate_hz"] == 10.0
+
+        sensor.disconnect()
+
+    def test_repr_shows_uptime_when_connected(self) -> None:
+        """Verifies __repr__ includes uptime when connected.
+
+        Tests enhanced repr for debugging connected sensors.
+
+        Business context:
+            When debugging, seeing uptime in repr helps identify
+            connection age and potential issues.
+
+        Arrangement:
+            1. Create and connect Sensor.
+
+        Action:
+            Call repr() on connected sensor.
+
+        Assertion Strategy:
+            Validates repr format by confirming uptime appears in string.
+
+        Testing Principle:
+            Validates debugging information in repr for connected state.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+        sensor.connect()
+
+        repr_str = repr(sensor)
+
+        assert "type='digital_twin'" in repr_str
+        assert "connected=True" in repr_str
+        assert "uptime=" in repr_str
+
+        sensor.disconnect()
+
+    def test_get_status_handles_partial_driver_status(self) -> None:
+        """Verifies get_status() handles driver status without all fields.
+
+        Tests graceful handling when driver returns sparse status.
+
+        Business context:
+            Some drivers may not report all status fields. Device layer
+            should only include fields that are present.
+
+        Arrangement:
+            1. Create mock driver returning partial status (calibrated only).
+
+        Action:
+            Call get_status() and verify only present fields are merged.
+
+        Assertion Strategy:
+            Validates partial merge by confirming:
+            - calibrated field is present.
+            - is_open, error, etc. are not in status (not provided by driver).
+
+        Testing Principle:
+            Validates robust handling of optional driver status fields.
+        """
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
+        mock_instance.get_status.return_value = {
+            "calibrated": False,
+            # Intentionally omitting is_open, error, etc.
+        }
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        sensor = Sensor(mock_driver)
+        sensor.connect()
+
+        status = sensor.get_status()
+
+        # calibrated should be merged
+        assert status["calibrated"] is False
+        # These should NOT be present since driver didn't provide them
+        assert "is_open" not in status
+        assert "error" not in status
+        assert "last_reading_age_ms" not in status
+        assert "reading_rate_hz" not in status
+
+        sensor.disconnect()
+
+    def test_get_status_handles_empty_driver_status(self) -> None:
+        """Verifies get_status() handles driver returning empty status.
+
+        Tests edge case where driver status contains no optional fields.
+
+        Business context:
+            A minimal driver implementation might return empty status dict.
+            Device layer should handle this gracefully without KeyError.
+
+        Arrangement:
+            1. Create mock driver returning empty status dict.
+
+        Action:
+            Call get_status() and verify no optional fields present.
+
+        Assertion Strategy:
+            Validates empty handling by confirming:
+            - Base status fields are present (connected, read_count, etc.).
+            - No driver-specific fields merged.
+
+        Testing Principle:
+            Validates defensive handling of minimal driver responses.
+        """
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
+        mock_instance.get_status.return_value = {}  # Empty status dict
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        sensor = Sensor(mock_driver)
+        sensor.connect()
+
+        status = sensor.get_status()
+
+        # Base status should be present
+        assert status["connected"] is True
+        assert status["type"] == "mock"
+        assert status["name"] == "Mock"
+        assert status["read_count"] == 0
+        assert status["error_count"] == 0
+
+        # No driver-specific fields should be present
+        assert "calibrated" not in status
+        assert "is_open" not in status
+        assert "error" not in status
+        assert "last_reading_age_ms" not in status
+        assert "reading_rate_hz" not in status
+
+        sensor.disconnect()
+
+    def test_repr_with_info_but_no_connect_time(self) -> None:
+        """Verifies __repr__ handles info exists but connect_time is None.
+
+        Tests defensive repr handling for unusual state.
+
+        Business context:
+            While normally _info and _connect_time are set together during
+            connect(), defensive code should handle edge cases gracefully.
+
+        Arrangement:
+            1. Create sensor and manually set _info without _connect_time.
+
+        Action:
+            Call repr() on sensor with partial state.
+
+        Assertion Strategy:
+            Validates repr handles missing connect_time:
+            - Shows type from info.
+            - No uptime displayed (since connect_time is None).
+
+        Testing Principle:
+            Validates defensive programming in __repr__ for edge cases.
+        """
+        driver = DigitalTwinSensorDriver()
+        sensor = Sensor(driver)
+
+        # Manually set _info without connect_time to test edge case
+        sensor._info = DeviceSensorInfo(type="test_type", name="Test Sensor")
+        sensor._connected = True
+        sensor._connect_time = None  # Edge case: info exists but no connect_time
+
+        repr_str = repr(sensor)
+
+        assert "type='test_type'" in repr_str
+        assert "connected=True" in repr_str
+        # Should NOT have uptime since connect_time is None
+        assert "uptime=" not in repr_str
