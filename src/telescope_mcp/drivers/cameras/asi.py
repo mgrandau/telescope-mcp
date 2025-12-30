@@ -199,43 +199,251 @@ class ASICameraProtocol(Protocol):  # pragma: no cover
     """
 
     def get_camera_property(self) -> dict[str, Any]:
-        """Get camera properties from hardware."""
+        """Get camera properties from hardware.
+
+        Queries the ASI SDK for camera hardware properties including sensor
+        specifications, supported features, and device identification.
+
+        Business context: Camera properties are cached at open time and used
+        throughout the session for resolution settings, format selection, and
+        feature detection. Essential for applications adapting to different
+        camera models.
+
+        Returns:
+            Dict containing ASI SDK camera properties:
+            - Name: str - Camera model (e.g., "ZWO ASI183MM Pro")
+            - MaxWidth: int - Sensor width in pixels
+            - MaxHeight: int - Sensor height in pixels
+            - PixelSize: float - Pixel size in micrometers
+            - IsColorCam: bool - True for Bayer color sensors
+            - BitDepth: int - ADC bit depth (8, 12, 14, 16)
+            - IsUSB3Camera: bool - USB3 capability
+            - IsCoolerCam: bool - Cooling capability
+            - ST4Port: bool - ST4 autoguider port presence
+
+        Raises:
+            RuntimeError: If camera disconnected or SDK error.
+
+        Example:
+            >>> props = camera.get_camera_property()
+            >>> print(f"{props['Name']}: {props['MaxWidth']}x{props['MaxHeight']}")
+        """
         ...
 
     def get_controls(self) -> dict[str, dict[str, Any]]:
-        """Get available controls and their ranges."""
+        """Get available camera controls and their valid ranges.
+
+        Queries the ASI SDK for all adjustable camera parameters including
+        gain, exposure, white balance, and temperature readout.
+
+        Business context: Control definitions enable UI construction with
+        proper slider ranges, input validation before hardware calls, and
+        feature detection for adaptive applications.
+
+        Returns:
+            Dict mapping control name to properties:
+            - MinValue: int - Minimum allowed value
+            - MaxValue: int - Maximum allowed value
+            - DefaultValue: int - Factory default
+            - IsAutoSupported: bool - Auto mode availability
+            - IsWritable: bool - Can be modified (False for temp)
+            - Description: str - Human-readable description
+
+        Raises:
+            RuntimeError: If camera disconnected or SDK error.
+
+        Example:
+            >>> controls = camera.get_controls()
+            >>> gain = controls['Gain']
+            >>> print(f"Gain: {gain['MinValue']}-{gain['MaxValue']}")
+        """
         ...
 
     def set_control_value(self, control_id: int, value: int) -> None:
-        """Set a control value."""
+        """Set a camera control value via ASI SDK.
+
+        Applies the specified value to the camera control identified by
+        ASI SDK control ID constant.
+
+        Business context: Low-level SDK interface for camera adjustment.
+        Higher layers translate control names to IDs via CONTROL_MAP.
+
+        Args:
+            control_id: ASI SDK control constant (e.g., asi.ASI_GAIN).
+            value: Integer value to set. Must be within control's valid range.
+
+        Returns:
+            None. Value applied to hardware.
+
+        Raises:
+            RuntimeError: If value out of range or hardware error.
+
+        Example:
+            >>> camera.set_control_value(asi.ASI_GAIN, 100)
+        """
         ...
 
     def get_control_value(self, control_id: int) -> tuple[int, bool]:
-        """Get current control value and auto status."""
+        """Get current control value and auto status from ASI SDK.
+
+        Queries the camera for the current value of a control and whether
+        auto mode is enabled.
+
+        Business context: Read-back confirms hardware state, enables UI sync,
+        and monitors read-only values like sensor temperature.
+
+        Args:
+            control_id: ASI SDK control constant (e.g., asi.ASI_TEMPERATURE).
+
+        Returns:
+            Tuple of (value: int, is_auto: bool):
+            - value: Current control value
+            - is_auto: True if auto mode enabled for this control
+
+        Raises:
+            RuntimeError: If camera disconnected or invalid control.
+
+        Example:
+            >>> value, auto = camera.get_control_value(asi.ASI_GAIN)
+            >>> print(f"Gain: {value}, Auto: {auto}")
+        """
         ...
 
     def set_image_type(self, image_type: int) -> None:
-        """Set image format (RAW8, RAW16, etc.)."""
+        """Set image format for subsequent captures.
+
+        Configures the camera's output format for the next exposure.
+
+        Business context: Format selection trades off between data size,
+        processing requirements, and image quality. RAW8 for preview,
+        RAW16 for scientific imaging requiring full dynamic range.
+
+        Args:
+            image_type: ASI image type constant:
+            - asi.ASI_IMG_RAW8: 8-bit mono (smallest, fastest)
+            - asi.ASI_IMG_RAW16: 16-bit mono (full dynamic range)
+            - asi.ASI_IMG_RGB24: 24-bit color (debayered)
+            - asi.ASI_IMG_Y8: 8-bit luminance
+
+        Returns:
+            None. Format applied to camera.
+
+        Raises:
+            RuntimeError: If format not supported by camera.
+
+        Example:
+            >>> camera.set_image_type(asi.ASI_IMG_RAW16)
+        """
         ...
 
     def start_exposure(self) -> None:
-        """Begin exposure."""
+        """Begin camera exposure.
+
+        Triggers the camera to start integrating light on the sensor.
+        Non-blocking - returns immediately while exposure continues.
+
+        Business context: Separates exposure trigger from data retrieval,
+        enabling status polling and exposure abort functionality.
+
+        Returns:
+            None. Exposure started in background.
+
+        Raises:
+            RuntimeError: If camera busy or hardware error.
+
+        Example:
+            >>> camera.start_exposure()
+            >>> while camera.get_exposure_status() == asi.ASI_EXP_WORKING:
+            ...     time.sleep(0.01)
+        """
         ...
 
     def get_exposure_status(self) -> int:
-        """Get exposure completion status."""
+        """Get current exposure completion status.
+
+        Polls the camera for exposure progress. Used to wait for long
+        exposures without blocking.
+
+        Business context: Enables responsive UIs during long exposures,
+        progress indicators, and exposure abort detection.
+
+        Returns:
+            ASI exposure status constant:
+            - asi.ASI_EXP_IDLE (0): No exposure in progress
+            - asi.ASI_EXP_WORKING (1): Exposure ongoing
+            - asi.ASI_EXP_SUCCESS (2): Exposure complete, data ready
+            - asi.ASI_EXP_FAILED (3): Exposure failed
+
+        Raises:
+            RuntimeError: If camera disconnected.
+
+        Example:
+            >>> status = camera.get_exposure_status()
+            >>> if status == asi.ASI_EXP_SUCCESS:
+            ...     data = camera.get_data_after_exposure()
+        """
         ...
 
     def stop_exposure(self) -> None:
-        """Stop an in-progress exposure."""
+        """Abort an in-progress exposure.
+
+        Immediately terminates any ongoing exposure. Safe to call when
+        no exposure is running.
+
+        Business context: Allows users to cancel long exposures, enables
+        rapid retry in autofocus routines, and handles error recovery.
+
+        Returns:
+            None. Exposure aborted if running.
+
+        Raises:
+            None. Safe to call at any time.
+
+        Example:
+            >>> camera.stop_exposure()  # Cancel current exposure
+        """
         ...
 
     def get_data_after_exposure(self) -> bytes:
-        """Retrieve image data after exposure completes."""
+        """Retrieve image data after exposure completes.
+
+        Reads the image buffer from the camera after a successful exposure.
+        Must be called after get_exposure_status() returns ASI_EXP_SUCCESS.
+
+        Business context: Final step in capture pipeline. Returns raw sensor
+        data for processing, encoding, or storage.
+
+        Returns:
+            Raw image bytes in the format set by set_image_type().
+            Size depends on resolution and format (e.g., 1920*1080 for RAW8).
+
+        Raises:
+            RuntimeError: If no exposure data available or read error.
+
+        Example:
+            >>> if camera.get_exposure_status() == asi.ASI_EXP_SUCCESS:
+            ...     raw_data = camera.get_data_after_exposure()
+        """
         ...
 
     def close(self) -> None:
-        """Close camera and release resources."""
+        """Close camera and release hardware resources.
+
+        Releases exclusive USB access to the camera, allowing other
+        applications to open it.
+
+        Business context: Essential cleanup for multi-application workflows.
+        Cameras remain locked until explicitly closed.
+
+        Returns:
+            None. Camera released.
+
+        Raises:
+            None. Errors logged but not raised for cleanup safety.
+
+        Example:
+            >>> camera.close()
+        """
         ...
 
 
@@ -266,22 +474,93 @@ class ASISDKProtocol(Protocol):  # pragma: no cover
     """
 
     def init(self, library_path: str) -> None:
-        """Initialize SDK with library path."""
+        """Initialize ASI SDK with native library path.
+
+        Loads the ASI camera library (libASICamera2.so) and initializes
+        the SDK for camera operations.
+
+        Business context: SDK must be initialized once before any camera
+        operations. Path points to bundled SDK library matching system arch.
+
+        Args:
+            library_path: Absolute path to libASICamera2.so/.dylib.
+
+        Returns:
+            None. SDK ready for camera enumeration.
+
+        Raises:
+            RuntimeError: If library not found or initialization fails.
+
+        Example:
+            >>> sdk.init("/usr/lib/libASICamera2.so")
+        """
         ...
 
     def get_num_cameras(self) -> int:
-        """Return number of connected cameras."""
+        """Return count of connected ASI cameras.
+
+        Enumerates USB devices to count available ZWO cameras.
+
+        Business context: Quick check for camera availability before
+        attempting full discovery. Returns 0 if no cameras connected.
+
+        Returns:
+            Number of connected ASI cameras (0 if none).
+
+        Raises:
+            RuntimeError: If SDK not initialized.
+
+        Example:
+            >>> count = sdk.get_num_cameras()
+            >>> print(f"Found {count} camera(s)")
+        """
         ...
 
     def list_cameras(self) -> list[str]:
-        """Return list of camera names."""
+        """Return list of connected camera names.
+
+        Enumerates cameras and returns model names for display.
+
+        Business context: Provides human-readable camera identification
+        for selection UIs without opening cameras.
+
+        Returns:
+            List of camera model names (e.g., ["ZWO ASI183MM Pro"]).
+            Empty list if no cameras connected.
+
+        Raises:
+            RuntimeError: If SDK not initialized.
+
+        Example:
+            >>> names = sdk.list_cameras()
+            >>> for name in names:
+            ...     print(f"Found: {name}")
+        """
         ...
 
     def open_camera(self, camera_id: int) -> ASICameraProtocol:
         """Open camera by ID and return camera object.
 
-        Note: Named open_camera to satisfy PEP8 (N802). The real zwoasi
-        module uses Camera() which is automatically wrapped.
+        Establishes exclusive connection to camera for control and capture.
+
+        Business context: Opening claims the camera - only one process can
+        access it until closed. Named open_camera (not Camera) for PEP8.
+
+        Args:
+            camera_id: 0-based camera index from enumeration.
+
+        Returns:
+            ASICameraProtocol implementation for camera operations.
+
+        Raises:
+            RuntimeError: If camera already open or hardware error.
+
+        Example:
+            >>> camera = sdk.open_camera(0)
+            >>> try:
+            ...     camera.get_camera_property()
+            ... finally:
+            ...     camera.close()
         """
         ...
 
@@ -292,24 +571,105 @@ class _ASISDKWrapper:
     Bridges between the protocol interface (using open_camera) and the
     actual zwoasi module (using Camera). This avoids N802 naming issues
     while maintaining type safety.
+
+    Business context: The zwoasi module uses Camera() constructor which
+    violates PEP8 naming. This wrapper provides open_camera() method
+    conforming to the protocol while delegating to the real SDK.
     """
 
     def init(self, library_path: str) -> None:
-        """Initialize SDK with library path."""
+        """Initialize SDK with library path.
+
+        Delegates to asi.init() to load the native ASI camera library.
+
+        Args:
+            library_path: Path to libASICamera2.so/.dylib.
+
+        Returns:
+            None. SDK initialized.
+
+        Raises:
+            RuntimeError: If library load fails.
+
+        Example:
+            >>> wrapper.init("/usr/lib/libASICamera2.so")
+        """
         asi.init(library_path)
 
     def get_num_cameras(self) -> int:
-        """Return number of connected cameras."""
+        """Return number of connected ASI cameras.
+
+        Queries USB bus for connected ZWO ASI cameras. Call after init().
+
+        Business context: First step in camera discovery workflow. Returns
+        count that determines valid camera_id range for open_camera().
+
+        Args:
+            self: SDK wrapper instance (implicit).
+
+        Returns:
+            Count of connected ASI cameras (0 if none found).
+
+        Raises:
+            RuntimeError: If SDK not initialized (init not called).
+
+        Example:
+            >>> wrapper.init("/usr/lib/libASICamera2.so")
+            >>> count = wrapper.get_num_cameras()
+            >>> print(f"Found {count} cameras")
+        """
         result: int = asi.get_num_cameras()
         return result
 
     def list_cameras(self) -> list[str]:
-        """Return list of camera names."""
+        """Return list of connected camera model names.
+
+        Enumerates all connected ASI cameras and returns their model strings.
+        Useful for logging and user selection interfaces.
+
+        Business context: Provides human-readable camera identification for
+        multi-camera setups. Names like "ASI294MC Pro" help users select
+        the correct device.
+
+        Args:
+            self: SDK wrapper instance (implicit).
+
+        Returns:
+            List of camera model name strings, indexed by camera_id.
+
+        Raises:
+            RuntimeError: If SDK not initialized.
+
+        Example:
+            >>> names = wrapper.list_cameras()
+            >>> for i, name in enumerate(names):
+            ...     print(f"Camera {i}: {name}")
+        """
         result: list[str] = asi.list_cameras()
         return result
 
     def open_camera(self, camera_id: int) -> ASICameraProtocol:
-        """Open camera by ID and return camera object."""
+        """Open camera by ID and return camera object.
+
+        Creates camera instance for the specified device. Camera must exist
+        (camera_id < get_num_cameras()).
+
+        Business context: Entry point for all camera operations. Returns
+        object supporting exposure, configuration, and image capture.
+
+        Args:
+            camera_id: 0-based camera index from enumeration.
+
+        Returns:
+            ASICameraProtocol implementation (actual zwoasi.Camera object).
+
+        Raises:
+            RuntimeError: If camera_id invalid or camera open fails.
+
+        Example:
+            >>> if wrapper.get_num_cameras() > 0:
+            ...     camera = wrapper.open_camera(0)
+        """
         camera: ASICameraProtocol = asi.Camera(camera_id)
         return camera
 
@@ -317,8 +677,24 @@ class _ASISDKWrapper:
 def _wrap_asi_module() -> ASISDKProtocol:
     """Create SDK wrapper for the real zwoasi module.
 
+    Factory function creating the adapter between ASISDKProtocol interface
+    and the actual zwoasi module.
+
+    Business context: Enables dependency injection - production code uses
+    real SDK via this wrapper, tests inject mock implementations.
+
+    Args:
+        None. Factory function takes no parameters.
+
     Returns:
-        ASISDKProtocol implementation wrapping the real SDK.
+        ASISDKProtocol implementation wrapping the real zwoasi module.
+
+    Raises:
+        None. Wrapper creation always succeeds; SDK errors occur on init().
+
+    Example:
+        >>> sdk = _wrap_asi_module()
+        >>> sdk.init("/path/to/library")
     """
     return _ASISDKWrapper()
 
@@ -383,8 +759,14 @@ class ASICameraInstance:
         if exceptions occur during capture. Essential for robust applications
         where camera leaks prevent subsequent operations.
 
+        Args:
+            self: Camera instance (implicit).
+
         Returns:
             Self for use in with-block.
+
+        Raises:
+            None. Entry always succeeds for opened cameras.
 
         Example:
             >>> with driver.open(0) as camera:
@@ -399,34 +781,59 @@ class ASICameraInstance:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Exit context manager, closing camera.
+        """Exit context manager, closing camera automatically.
 
-        Called automatically when exiting with-block. Closes camera
-        regardless of whether an exception occurred.
+        Called when exiting with-block. Closes camera regardless of whether
+        an exception occurred, ensuring proper resource cleanup.
+
+        Business context: Deterministic cleanup prevents camera resource leaks.
+        Even if exceptions occur during capture, camera is released for other
+        applications. Essential for long-running servers and daemons.
 
         Args:
-            exc_type: Exception type if raised in with-block.
-            exc_val: Exception instance if raised.
-            exc_tb: Exception traceback if raised.
+            exc_type: Exception type if raised in with-block, else None.
+            exc_val: Exception instance if raised, else None.
+            exc_tb: Exception traceback if raised, else None.
 
         Returns:
-            None. Does not suppress exceptions.
+            None. Does not suppress exceptions (returns None/False).
+
+        Raises:
+            None. close() errors are caught internally.
+
+        Example:
+            >>> with driver.open(0) as camera:
+            ...     raise ValueError("error")  # Exception raised
+            # camera.close() still called, then ValueError re-raised
         """
         self.close()
 
     def _validate_control(self, control: str) -> int:
-        """Validate control name and return SDK control ID.
+        """Validate control name and return corresponding ASI SDK control ID.
 
-        Centralizes control validation logic for set_control/get_control.
+        Centralizes control validation logic for set_control/get_control,
+        translating human-readable names to SDK integer constants.
+
+        Business context: Provides consistent error handling across control
+        operations. Validates user input early with helpful error messages
+        listing valid options.
 
         Args:
-            control: Control name to validate.
+            control: Control name to validate (e.g., "Gain", "Exposure").
+                Must be a key in CONTROL_MAP.
 
         Returns:
-            ASI SDK control ID integer.
+            ASI SDK control ID integer (e.g., asi.ASI_GAIN).
 
         Raises:
-            ValueError: If control name is not in CONTROL_MAP.
+            ValueError: If control name is not in CONTROL_MAP. Error message
+                includes list of valid control names for user guidance.
+
+        Example:
+            >>> control_id = self._validate_control("Gain")
+            >>> # Returns asi.ASI_GAIN (integer constant)
+            >>> self._validate_control("Invalid")
+            ValueError: Unknown control: Invalid. Valid: ['Gain', 'Exposure', ...]
         """
         if control not in CONTROL_MAP:
             raise ValueError(
@@ -614,21 +1021,37 @@ class ASICameraInstance:
         img_type: int,
         jpeg_quality: int,
     ) -> bytes:
-        """Convert raw image data to JPEG bytes.
+        """Convert raw sensor data to JPEG-encoded bytes.
 
-        Handles different ASI image formats (RAW8, RAW16, RGB24) and encodes
-        to JPEG with specified quality. Extracted for testability.
+        Handles different ASI image formats (RAW8, RAW16, RGB24) by reshaping
+        the raw bytes into numpy arrays and encoding via OpenCV. Extracted
+        as separate method for testability and single responsibility.
+
+        Business context: JPEG encoding enables efficient network transmission
+        for live preview and streaming. Converts high-bandwidth raw sensor data
+        to compressed format suitable for web display. RAW16 is scaled to 8-bit
+        for JPEG compatibility while preserving visual quality.
 
         Args:
-            img_data: Raw image bytes from camera.
-            img_type: ASI image type constant (ASI_IMG_RAW8, etc.).
-            jpeg_quality: JPEG compression quality (0-100).
+            img_data: Raw image bytes from camera matching resolution * bytes_per_pixel.
+            img_type: ASI image type constant determining byte interpretation:
+                - asi.ASI_IMG_RAW8: 1 byte/pixel grayscale
+                - asi.ASI_IMG_RAW16: 2 bytes/pixel, scaled to 8-bit
+                - asi.ASI_IMG_RGB24: 3 bytes/pixel color
+            jpeg_quality: JPEG compression quality (0-100). Higher = better quality,
+                larger files. Typical values: 70 for streaming, 90 for storage.
 
         Returns:
-            JPEG-encoded image bytes.
+            JPEG-encoded image bytes ready for display or transmission.
 
         Raises:
-            RuntimeError: If JPEG encoding fails.
+            RuntimeError: If cv2.imencode fails (corrupted data, memory issues).
+
+        Example:
+            >>> raw_data = camera.get_data_after_exposure()
+            >>> jpeg = self._encode_to_jpeg(raw_data, asi.ASI_IMG_RAW8, 90)
+            >>> with open("frame.jpg", "wb") as f:
+            ...     f.write(jpeg)
         """
         width = self._info["MaxWidth"]
         height = self._info["MaxHeight"]

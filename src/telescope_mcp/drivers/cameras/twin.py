@@ -262,7 +262,29 @@ class DigitalTwinCameraDriver:
         )
 
     def __repr__(self) -> str:
-        """Return string representation for debugging."""
+        """Return human-readable string representation for debugging.
+
+        Produces a concise summary of driver configuration useful in logs,
+        REPL sessions, and debugging output.
+
+        Business context: Debugging distributed systems requires quick
+        identification of driver configuration. repr() shows image source
+        and available camera IDs at a glance.
+
+        Args:
+            self: Driver instance (implicit).
+
+        Returns:
+            String in format: DigitalTwinCameraDriver(source=X, cameras=[...])
+
+        Raises:
+            None. Always succeeds.
+
+        Example:
+            >>> driver = DigitalTwinCameraDriver()
+            >>> print(repr(driver))
+            DigitalTwinCameraDriver(source=synthetic, cameras=[0, 1])
+        """
         return (
             f"DigitalTwinCameraDriver("
             f"source={self.config.image_source.value}, "
@@ -416,14 +438,25 @@ class DigitalTwinCameraInstance:
         """Enter context manager, returning self for capture operations.
 
         Enables the with-statement pattern for API compatibility with
-        ASICameraInstance.
+        ASICameraInstance. Digital twin has no resources to acquire.
+
+        Business context: Provides identical API to real cameras, enabling
+        code to work with either implementation unchanged. Essential for
+        testing camera workflows with simulated hardware.
+
+        Args:
+            self: Camera instance (implicit).
 
         Returns:
             Self for use in with-block.
 
+        Raises:
+            None. Entry always succeeds for digital twin.
+
         Example:
             >>> with driver.open(0) as camera:
             ...     data = camera.capture(100000)
+            # close() called automatically (no-op for twin)
         """
         return self
 
@@ -433,17 +466,30 @@ class DigitalTwinCameraInstance:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Exit context manager, closing camera.
+        """Exit context manager, closing simulated camera.
 
-        Called automatically when exiting with-block. No-op for digital twin.
+        Called when exiting with-block. Delegates to close() which is a
+        no-op for digital twin since there are no hardware resources.
+
+        Business context: Maintains API compatibility with real cameras.
+        Code using context managers works identically with real and
+        simulated cameras.
 
         Args:
-            exc_type: Exception type if raised in with-block.
-            exc_val: Exception instance if raised.
-            exc_tb: Exception traceback if raised.
+            exc_type: Exception type if raised in with-block, else None.
+            exc_val: Exception instance if raised, else None.
+            exc_tb: Exception traceback if raised, else None.
 
         Returns:
             None. Does not suppress exceptions.
+
+        Raises:
+            None. close() is a safe no-op.
+
+        Example:
+            >>> with driver.open(0) as camera:
+            ...     camera.capture(100000)
+            # __exit__ calls close() - no-op for digital twin
         """
         self.close()
 
@@ -493,7 +539,29 @@ class DigitalTwinCameraInstance:
         )
 
     def __repr__(self) -> str:
-        """Return string representation for debugging."""
+        """Return human-readable string representation for debugging.
+
+        Produces a concise summary of instance configuration useful in logs,
+        REPL sessions, and debugging output.
+
+        Business context: Debugging capture pipelines requires quick
+        identification of which camera instance and image source is active.
+        repr() shows camera ID and source at a glance.
+
+        Args:
+            self: Camera instance (implicit).
+
+        Returns:
+            String in format: DigitalTwinCameraInstance(camera_id=X, source=Y)
+
+        Raises:
+            None. Always succeeds.
+
+        Example:
+            >>> instance = driver.open(0)
+            >>> print(repr(instance))
+            DigitalTwinCameraInstance(camera_id=0, source=synthetic)
+        """
         return (
             f"DigitalTwinCameraInstance("
             f"camera_id={self._camera_id}, "

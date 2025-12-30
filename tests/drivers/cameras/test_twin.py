@@ -52,20 +52,64 @@ from telescope_mcp.drivers.cameras.twin import (
 
 @pytest.fixture
 def driver() -> DigitalTwinCameraDriver:
-    """Create default DigitalTwinCameraDriver.
+    """Create default DigitalTwinCameraDriver for testing.
+
+    Factory fixture providing fresh driver instance for each test.
+    Uses default configuration (synthetic images, single camera).
+
+    Business context:
+    Standard fixture for unit tests that need driver functionality
+    without custom configuration. Synthetic mode ensures predictable
+    test images without external file dependencies.
+
+    Args:
+        None. Pytest fixture with no parameters.
 
     Returns:
-        DigitalTwinCameraDriver with default configuration.
+        DigitalTwinCameraDriver: Configured with defaults (synthetic source,
+        one simulated camera at index 0).
+
+    Raises:
+        None. Default configuration always succeeds.
+
+    Example:
+        >>> def test_discovery(driver: DigitalTwinCameraDriver):
+        ...     cameras = driver.get_connected_cameras()
+        ...     assert 0 in cameras
     """
     return DigitalTwinCameraDriver()
 
 
 @pytest.fixture
 def camera_info() -> CameraInfo:
-    """Create test camera info dictionary.
+    """Create standard test camera info TypedDict.
+
+    Provides realistic camera metadata matching common ASI camera specs.
+    Used for tests requiring pre-defined camera properties.
+
+    Business context:
+    CameraInfo structure mirrors real hardware properties. Standard
+    fixture ensures consistent test data across all tests requiring
+    camera metadata (info display, resolution validation, etc.).
+
+    Args:
+        None. Pytest fixture with no parameters.
 
     Returns:
-        CameraInfo TypedDict with standard test values.
+        CameraInfo: TypedDict with standard test values:
+        - camera_id: 0 (first camera)
+        - name: "Test Camera"
+        - Resolution: 1920x1080 (Full HD)
+        - pixel_size_um: 3.75 (common ASI spec)
+        - Monochrome, 12-bit, USB3, no cooler/ST4
+
+    Raises:
+        None. Static data always succeeds.
+
+    Example:
+        >>> def test_info_structure(camera_info: CameraInfo):
+        ...     assert camera_info["max_width"] == 1920
+        ...     assert camera_info["is_color"] is False
     """
     return CameraInfo(
         camera_id=0,
