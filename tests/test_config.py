@@ -130,7 +130,7 @@ class TestDigitalTwinCameraDriver:
         cameras = driver.get_connected_cameras()
         assert 0 in cameras
         assert 1 in cameras
-        assert b"ASI120MC-S" in cameras[0]["Name"]
+        assert "ASI120MC-S" in cameras[0]["Name"]
 
     def test_open_camera(self):
         """Verifies DigitalTwinCameraDriver.open() returns valid camera instance.
@@ -256,9 +256,9 @@ class TestDigitalTwinCameraInstance:
 
         Assertion Strategy:
         Validates control availability by confirming:
-        - Controls dict contains "ASI_GAIN" key.
-        - Controls dict contains "ASI_EXPOSURE" key.
-        - Matches ASI SDK control naming convention.
+        - Controls dict contains "Gain" key.
+        - Controls dict contains "Exposure" key.
+        - Matches simplified control naming convention.
 
         Testing Principle:
         Validates control exposure, ensuring camera provides
@@ -266,8 +266,8 @@ class TestDigitalTwinCameraInstance:
         driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
         controls = camera.get_controls()
-        assert "ASI_GAIN" in controls
-        assert "ASI_EXPOSURE" in controls
+        assert "Gain" in controls
+        assert "Exposure" in controls
 
     def test_set_and_get_control(self):
         """Verifies camera control set/get round-trip preserves values.
@@ -285,7 +285,7 @@ class TestDigitalTwinCameraInstance:
         3. Camera starts with default control values.
 
         Action:
-        Set ASI_GAIN to 75, then immediately read back with get_control().
+        Set Gain to 75, then immediately read back with get_control().
 
         Assertion Strategy:
         Validates state persistence by confirming:
@@ -298,8 +298,8 @@ class TestDigitalTwinCameraInstance:
         driver = DigitalTwinCameraDriver()
         camera = driver.open(0)
 
-        camera.set_control("ASI_GAIN", 75)
-        result = camera.get_control("ASI_GAIN")
+        camera.set_control("Gain", 75)
+        result = camera.get_control("Gain")
         assert result["value"] == 75
 
     def test_capture_returns_jpeg(self):

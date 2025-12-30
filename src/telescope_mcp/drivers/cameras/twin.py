@@ -9,10 +9,12 @@ Supports multiple image sources:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import MappingProxyType, TracebackType
+from typing import TYPE_CHECKING, Any, TypedDict, final
 
 import cv2
 import numpy as np
@@ -24,6 +26,19 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+__all__ = [
+    "DigitalTwinCameraDriver",
+    "DigitalTwinCameraInstance",
+    "DigitalTwinConfig",
+    "ImageSource",
+    "DEFAULT_CAMERAS",
+    "TwinCameraInfo",
+    "ControlInfo",
+    "ControlValue",
+    "create_file_camera",
+    "create_directory_camera",
+]
+
 
 class ImageSource(Enum):
     """Image source for digital twin camera."""
@@ -31,6 +46,69 @@ class ImageSource(Enum):
     SYNTHETIC = "synthetic"  # Generate test patterns
     DIRECTORY = "directory"  # Cycle through images in a folder
     FILE = "file"  # Return same image repeatedly
+
+
+# =============================================================================
+# TypedDicts for Type Safety
+# =============================================================================
+
+
+class TwinCameraInfo(TypedDict, total=False):
+    """Digital twin camera info (PascalCase keys matching ASI SDK raw output).
+
+    Note: Different from asi.CameraInfo which uses snake_case for normalized output.
+    This TypedDict matches the raw ASI SDK property names for simulation fidelity.
+    """
+
+    Name: str
+    MaxWidth: int
+    MaxHeight: int
+    IsColorCam: bool
+    PixelSize: float
+    SensorWidth: float
+    SensorHeight: float
+    BayerPattern: str
+    BitDepth: int
+    ElecPerADU: float
+    USB3Host: bool
+    LensFOV: int
+    FOVPerPixel: float
+    FocalLength: int
+    FOVWidth: float
+    FOVHeight: float
+    Purpose: str
+
+
+class ControlInfo(TypedDict):
+    """Camera control definition returned by get_controls().
+
+    Keys:
+        Name: Control name.
+        MinValue: Minimum allowed value.
+        MaxValue: Maximum allowed value.
+        DefaultValue: Factory default value.
+        IsAutoSupported: True if auto mode available.
+        IsWritable: True if control can be modified.
+    """
+
+    Name: str
+    MinValue: int
+    MaxValue: int
+    DefaultValue: int
+    IsAutoSupported: bool
+    IsWritable: bool
+
+
+class ControlValue(TypedDict):
+    """Current control state returned by get_control() and set_control().
+
+    Keys:
+        value: Current control value.
+        auto: True if auto mode is enabled.
+    """
+
+    value: int
+    auto: bool
 
 
 @dataclass
@@ -42,6 +120,29 @@ class DigitalTwinConfig:
     cycle_images: bool = True  # Loop through directory images
 
 
+# =============================================================================
+# Constants
+# =============================================================================
+
+# Default fallback exposure for synthetic generation (microseconds)
+_DEFAULT_FALLBACK_EXPOSURE_US = 100_000
+
+# Synthetic image generation constants
+_SYNTHETIC_GRID_SPACING = 50
+_CROSSHAIR_RADIUS = 100
+
+# JPEG encoding quality (0-100)
+_DEFAULT_JPEG_QUALITY = 90
+
+# Control maximum values by partial name match
+_CONTROL_MAX_VALUES: dict[str, int] = {
+    "GAIN": 600,
+    "EXPOSURE": 60_000_000,  # 60 seconds in microseconds
+    "WB": 99,
+    "GAMMA": 100,
+    "TEMPERATURE": 1000,  # 100.0°C
+}
+
 # Default camera specifications (matching real ASI cameras)
 # Camera 0: ASI120MC-S with 150° All-Sky Lens (finder/spotter scope)
 # Camera 1: ASI482MC through telescope optics (main imaging camera)
@@ -49,48 +150,51 @@ class DigitalTwinConfig:
 # Specifications from astrophotography_camera_exposure_times.ipynb:
 # - ASI120MC-S: 1.2MP, 1280x960, 3.75µm pixels, 4.8x3.6mm sensor
 # - ASI482MC: 2.07MP, 1920x1080, 5.8µm pixels, 11.13x6.26mm sensor
-DEFAULT_CAMERAS: dict[int, dict] = {
-    0: {
-        # Finder camera: ASI120MC-S with 150° All-Sky Lens
-        "Name": b"ASI120MC-S (Finder - 150deg All-Sky)",
-        "MaxWidth": 1280,
-        "MaxHeight": 960,
-        "IsColorCam": True,
-        "PixelSize": 3.75,  # micrometers
-        "SensorWidth": 4.8,  # mm
-        "SensorHeight": 3.6,  # mm
-        "BayerPattern": "RGGB",
-        "BitDepth": 8,
-        "ElecPerADU": 0.21,  # electrons per ADU
-        "USB3Host": True,
-        # All-sky lens specific
-        "LensFOV": 150,  # degrees (150° all-sky lens)
-        "FOVPerPixel": 421.875,  # arcseconds (150*3600/1280)
-        "Purpose": "finder",
-    },
-    1: {
-        # Main camera: ASI482MC through 1600mm telescope optics
-        "Name": b"ASI482MC (Main - Through Optics)",
-        "MaxWidth": 1920,
-        "MaxHeight": 1080,
-        "IsColorCam": True,
-        "PixelSize": 5.8,  # micrometers
-        "SensorWidth": 11.13,  # mm
-        "SensorHeight": 6.26,  # mm
-        "BayerPattern": "RGGB",
-        "BitDepth": 12,  # 12-bit ADC
-        "ElecPerADU": 0.16,
-        "USB3Host": True,
-        # Telescope optics specific
-        "FocalLength": 1600,  # mm (telescope focal length)
-        "FOVPerPixel": 0.748,  # arcseconds (calculated from focal length)
-        "FOVWidth": 23.9,  # arcminutes
-        "FOVHeight": 13.4,  # arcminutes
-        "Purpose": "main",
-    },
-}
+DEFAULT_CAMERAS: Mapping[int, TwinCameraInfo] = MappingProxyType(
+    {
+        0: TwinCameraInfo(
+            # Finder camera: ASI120MC-S with 150° All-Sky Lens
+            Name="ASI120MC-S (Finder - 150deg All-Sky)",
+            MaxWidth=1280,
+            MaxHeight=960,
+            IsColorCam=True,
+            PixelSize=3.75,  # micrometers
+            SensorWidth=4.8,  # mm
+            SensorHeight=3.6,  # mm
+            BayerPattern="RGGB",
+            BitDepth=8,
+            ElecPerADU=0.21,  # electrons per ADU
+            USB3Host=True,
+            # All-sky lens specific
+            LensFOV=150,  # degrees (150° all-sky lens)
+            FOVPerPixel=421.875,  # arcseconds (150*3600/1280)
+            Purpose="finder",
+        ),
+        1: TwinCameraInfo(
+            # Main camera: ASI482MC through 1600mm telescope optics
+            Name="ASI482MC (Main - Through Optics)",
+            MaxWidth=1920,
+            MaxHeight=1080,
+            IsColorCam=True,
+            PixelSize=5.8,  # micrometers
+            SensorWidth=11.13,  # mm
+            SensorHeight=6.26,  # mm
+            BayerPattern="RGGB",
+            BitDepth=12,  # 12-bit ADC
+            ElecPerADU=0.16,
+            USB3Host=True,
+            # Telescope optics specific
+            FocalLength=1600,  # mm (telescope focal length)
+            FOVPerPixel=0.748,  # arcseconds (calculated from focal length)
+            FOVWidth=23.9,  # arcminutes
+            FOVHeight=13.4,  # arcminutes
+            Purpose="main",
+        ),
+    }
+)
 
 
+@final
 class DigitalTwinCameraDriver:
     """Digital twin camera driver for development without hardware.
 
@@ -110,10 +214,12 @@ class DigitalTwinCameraDriver:
         driver = DigitalTwinCameraDriver(config=config)
     """
 
+    __slots__ = ("config", "_cameras")
+
     def __init__(
         self,
         config: DigitalTwinConfig | None = None,
-        cameras: dict[int, dict] | None = None,
+        cameras: Mapping[int, TwinCameraInfo] | None = None,
     ) -> None:
         """Initialize digital twin camera driver.
 
@@ -141,19 +247,29 @@ class DigitalTwinCameraDriver:
         Example:
             # Custom camera specifications
             cameras = {
-                0: {"Name": b"Test Camera", "MaxWidth": 640, "MaxHeight": 480}
+                0: {"Name": "Test Camera", "MaxWidth": 640, "MaxHeight": 480}
             }
             driver = DigitalTwinCameraDriver(cameras=cameras)
         """
         self.config = config or DigitalTwinConfig()
-        self._cameras = cameras or DEFAULT_CAMERAS.copy()
+        self._cameras: dict[int, TwinCameraInfo] = (
+            dict(cameras) if cameras else dict(DEFAULT_CAMERAS)
+        )
         logger.info(
             "Digital twin camera driver initialized",
             image_source=self.config.image_source.value,
             num_cameras=len(self._cameras),
         )
 
-    def get_connected_cameras(self) -> dict:
+    def __repr__(self) -> str:
+        """Return string representation for debugging."""
+        return (
+            f"DigitalTwinCameraDriver("
+            f"source={self.config.image_source.value}, "
+            f"cameras={list(self._cameras.keys())})"
+        )
+
+    def get_connected_cameras(self) -> dict[int, TwinCameraInfo]:
         """Return simulated camera list (digital twin discovery).
 
         Returns copy of configured camera definitions, simulating ASI SDK camera
@@ -215,18 +331,32 @@ class DigitalTwinCameraDriver:
         )
 
 
+@final
 class DigitalTwinCameraInstance:
     """Digital twin camera instance for simulated capture operations.
 
     Represents an open connection to a simulated camera. Provides the same
     interface as ASICameraInstance for capture, control get/set, and info
     queries. Images can come from synthetic generation, a file, or directory.
+
+    Supports context manager protocol for API compatibility:
+        with driver.open(0) as camera:
+            data = camera.capture(100000)
     """
+
+    __slots__ = (
+        "_camera_id",
+        "_info",
+        "_config",
+        "_controls",
+        "_image_files",
+        "_image_index",
+    )
 
     def __init__(
         self,
         camera_id: int,
-        info: dict,
+        info: TwinCameraInfo,
         config: DigitalTwinConfig,
     ) -> None:
         """Initialize digital twin camera instance (simulated camera connection).
@@ -262,24 +392,60 @@ class DigitalTwinCameraInstance:
         self._camera_id = camera_id
         self._info = info
         self._config = config
+        # Control names match ASI driver's CONTROL_MAP keys (unprefixed)
         self._controls = {
-            "ASI_GAIN": {"value": 50, "auto": False},
-            "ASI_EXPOSURE": {"value": 100000, "auto": False},
-            "ASI_WB_R": {"value": 52, "auto": False},
-            "ASI_WB_B": {"value": 95, "auto": False},
-            "ASI_GAMMA": {"value": 50, "auto": False},
-            "ASI_BRIGHTNESS": {"value": 50, "auto": False},
-            "ASI_OFFSET": {"value": 0, "auto": False},
-            "ASI_BANDWIDTHOVERLOAD": {"value": 80, "auto": False},
-            "ASI_FLIP": {"value": 0, "auto": False},
-            "ASI_HIGH_SPEED_MODE": {"value": 0, "auto": False},
-            "ASI_TEMPERATURE": {"value": 250, "auto": False},  # 25.0°C * 10
+            "Gain": {"value": 50, "auto": False},
+            "Exposure": {"value": 100000, "auto": False},
+            "WB_R": {"value": 52, "auto": False},
+            "WB_B": {"value": 95, "auto": False},
+            "Gamma": {"value": 50, "auto": False},
+            "Brightness": {"value": 50, "auto": False},
+            "Offset": {"value": 0, "auto": False},
+            "BandWidth": {"value": 80, "auto": False},
+            "Flip": {"value": 0, "auto": False},
+            "HighSpeedMode": {"value": 0, "auto": False},
+            "Temperature": {"value": 250, "auto": False},  # 25.0°C * 10
         }
 
         # For directory mode: track image index
         self._image_files: list[Path] = []
         self._image_index = 0
         self._load_image_files()
+
+    def __enter__(self) -> DigitalTwinCameraInstance:
+        """Enter context manager, returning self for capture operations.
+
+        Enables the with-statement pattern for API compatibility with
+        ASICameraInstance.
+
+        Returns:
+            Self for use in with-block.
+
+        Example:
+            >>> with driver.open(0) as camera:
+            ...     data = camera.capture(100000)
+        """
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit context manager, closing camera.
+
+        Called automatically when exiting with-block. No-op for digital twin.
+
+        Args:
+            exc_type: Exception type if raised in with-block.
+            exc_val: Exception instance if raised.
+            exc_tb: Exception traceback if raised.
+
+        Returns:
+            None. Does not suppress exceptions.
+        """
+        self.close()
 
     def _load_image_files(self) -> None:
         """Load list of image files for directory mode.
@@ -326,7 +492,15 @@ class DigitalTwinCameraInstance:
             f for f in path.iterdir() if f.suffix.lower() in extensions
         )
 
-    def get_info(self) -> dict:
+    def __repr__(self) -> str:
+        """Return string representation for debugging."""
+        return (
+            f"DigitalTwinCameraInstance("
+            f"camera_id={self._camera_id}, "
+            f"source={self._config.image_source.value})"
+        )
+
+    def get_info(self) -> dict[str, Any]:
         """Get simulated camera information from digital twin.
 
         Returns a copy of the camera properties dictionary containing
@@ -352,9 +526,9 @@ class DigitalTwinCameraInstance:
             >>> if info['IsColorCam']:
             ...     print(f"Simulating color camera")
         """
-        return self._info.copy()
+        return dict(self._info)
 
-    def get_controls(self) -> dict:
+    def get_controls(self) -> dict[str, dict[str, Any]]:
         """Get available simulated camera controls from digital twin.
 
         Returns control definitions matching the ASI SDK control format.
@@ -377,7 +551,7 @@ class DigitalTwinCameraInstance:
         Example:
             >>> twin = DigitalTwinCameraInstance(...)
             >>> controls = twin.get_controls()
-            >>> gain = controls['ASI_GAIN']
+            >>> gain = controls['Gain']
             >>> print(f"Gain range: {gain['MinValue']}-{gain['MaxValue']}")
         """
         return {
@@ -386,8 +560,8 @@ class DigitalTwinCameraInstance:
                 "MinValue": 0,
                 "MaxValue": self._get_control_max(name),
                 "DefaultValue": 50,
-                "IsAutoSupported": name not in {"ASI_TEMPERATURE"},
-                "IsWritable": name not in {"ASI_TEMPERATURE"},
+                "IsAutoSupported": name not in {"Temperature"},
+                "IsWritable": name not in {"Temperature"},
             }
             for name in self._controls
         }
@@ -396,39 +570,35 @@ class DigitalTwinCameraInstance:
         """Get maximum value for a simulated control.
 
         Returns appropriate maximum values based on control type to match
-        typical ASI camera specifications.
+        typical ASI camera specifications. Uses _CONTROL_MAX_VALUES dict
+        for data-driven lookup.
+
         Business context: Provides realistic control ranges for testing
         validation logic. Ensures test code uses valid ranges that match
         actual hardware capabilities.
 
         Args:
-            control: Control name (e.g., "ASI_GAIN", "ASI_EXPOSURE").
+            control: Control name (e.g., "Gain", "Exposure").
 
         Returns:
             Maximum allowed value for the control (e.g., 600 for gain,
             60000000 for exposure in microseconds).
 
         Raises:
-            None. Returns sensible defaults for all control types.
+            None. Returns 100 as default for unknown control types.
 
         Example:
             >>> twin = DigitalTwinCameraInstance(...)
-            >>> max_gain = twin._get_control_max("ASI_GAIN")
+            >>> max_gain = twin._get_control_max("Gain")
             >>> print(f"Max gain: {max_gain}")  # 600
         """
-        if "GAIN" in control:
-            return 600
-        if "EXPOSURE" in control:
-            return 60_000_000  # 60 seconds in microseconds
-        if "WB" in control:
-            return 99
-        if "GAMMA" in control:
-            return 100
-        if "TEMPERATURE" in control:
-            return 1000  # 100.0°C
+        control_upper = control.upper()
+        for key, value in _CONTROL_MAX_VALUES.items():
+            if key in control_upper:
+                return value
         return 100
 
-    def set_control(self, control: str, value: int) -> dict:
+    def set_control(self, control: str, value: int) -> dict[str, Any]:
         """Set a simulated camera control value for digital twin testing.
 
         Updates the internal control state in the digital twin simulation.
@@ -444,9 +614,8 @@ class DigitalTwinCameraInstance:
         presentations or training without actual cameras.
 
         Args:
-            control: Control name (e.g., "ASI_GAIN", "ASI_EXPOSURE", "ASI_WB_R").
-                Must be one of the controls defined in _controls dict. Unknown
-                controls are ignored (no error).
+            control: Control name (e.g., "Gain", "Exposure", "WB_R").
+                Must be one of the controls defined in _controls dict.
             value: Integer value to set. Not validated against min/max ranges
                 in digital twin (simulation accepts any value for flexibility).
 
@@ -456,45 +625,54 @@ class DigitalTwinCameraInstance:
             - auto: bool - Always False for digital twin (no auto modes simulated)
 
         Raises:
-            None. Unknown controls are silently ignored for compatibility.
+            ValueError: If control name is not in _controls (matches ASI behavior).
 
         Example:
             >>> twin = DigitalTwinCameraInstance(...)
-            >>> twin.set_control("ASI_GAIN", 80)
-            >>> twin.set_control("ASI_EXPOSURE", 500000)  # 500ms
-            >>> result = twin.get_control("ASI_GAIN")
+            >>> twin.set_control("Gain", 80)
+            >>> twin.set_control("Exposure", 500000)  # 500ms
+            >>> result = twin.get_control("Gain")
             >>> print(result['value'])  # 80
         """
-        if control in self._controls:
-            self._controls[control]["value"] = value
+        if control not in self._controls:
+            raise ValueError(
+                f"Unknown control: {control}. "
+                f"Valid controls: {list(self._controls.keys())}"
+            )
+        self._controls[control]["value"] = value
         return self.get_control(control)
 
-    def get_control(self, control: str) -> dict:
+    def get_control(self, control: str) -> dict[str, Any]:
         """Get a simulated control's current value from digital twin.
 
         Retrieves the current state of a camera control including its
         value and auto mode setting.
+
         Business context: Enables testing control readback logic and UI
         synchronization without hardware. Validates that control state
         management works correctly in multi-threaded environments.
 
         Args:
-            control: Control name (e.g., "ASI_GAIN", "ASI_TEMPERATURE").
+            control: Control name (e.g., "Gain", "Temperature").
 
         Returns:
             Dictionary with 'value' (int) and 'auto' (bool) keys.
-            Returns {'value': 0, 'auto': False} for unknown controls.
 
         Raises:
-            None. Returns default values for unknown controls.
+            ValueError: If control name is not in _controls (matches ASI behavior).
 
         Example:
             >>> twin = DigitalTwinCameraInstance(...)
-            >>> twin.set_control("ASI_GAIN", 100)
-            >>> result = twin.get_control("ASI_GAIN")
+            >>> twin.set_control("Gain", 100)
+            >>> result = twin.get_control("Gain")
             >>> print(f"Gain is now {result['value']}")
         """
-        return self._controls.get(control, {"value": 0, "auto": False})
+        if control not in self._controls:
+            raise ValueError(
+                f"Unknown control: {control}. "
+                f"Valid controls: {list(self._controls.keys())}"
+            )
+        return self._controls[control]
 
     def capture(self, exposure_us: int) -> bytes:
         """Capture a frame based on configured image source.
@@ -513,18 +691,20 @@ class DigitalTwinCameraInstance:
         Raises:
             cv2.error: If image encoding fails (rare).
 
+        Note:
+            Digital twin intentionally accepts any exposure value for testing
+            flexibility. Unlike ASICameraInstance, no bounds validation is
+            performed - this allows testing edge cases and error handling.
+
         Example:
             frame = camera.capture(100_000)  # 100ms exposure
             with open("frame.jpg", "wb") as f:
                 f.write(frame)
         """
+        import time
+
         source = self._config.image_source
-        logger.debug(
-            "Capturing frame",
-            camera_id=self._camera_id,
-            source=source.value,
-            exposure_us=exposure_us,
-        )
+        capture_start = time.monotonic()
 
         if source == ImageSource.FILE:
             data = self._capture_from_file()
@@ -533,10 +713,15 @@ class DigitalTwinCameraInstance:
         else:
             data = self._capture_synthetic(exposure_us)
 
+        capture_elapsed = time.monotonic() - capture_start
+
         logger.debug(
-            "Frame captured",
+            "Capture complete",
             camera_id=self._camera_id,
-            size_bytes=len(data),
+            source=source.value,
+            exposure_us=exposure_us,
+            capture_elapsed_ms=round(capture_elapsed * 1000, 1),
+            jpeg_size_kb=round(len(data) / 1024, 1),
         )
         return data
 
@@ -571,20 +756,22 @@ class DigitalTwinCameraInstance:
             >>> frame2 = instance.capture(200_000)  # Same m31.jpg
         """
         if self._config.image_path is None:
-            return self._capture_synthetic(100000)
+            return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
         path = Path(self._config.image_path)
         if not path.is_file():
-            return self._capture_synthetic(100000)
+            return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
         img = cv2.imread(str(path))
         if img is None:
-            return self._capture_synthetic(100000)
+            return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
         # Resize to match camera resolution if needed
         img = self._resize_to_camera(img)
 
-        _, jpeg = cv2.imencode(".jpg", img)
+        _, jpeg = cv2.imencode(
+            ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
+        )
         return jpeg.tobytes()
 
     def _capture_from_directory(self) -> bytes:
@@ -621,7 +808,7 @@ class DigitalTwinCameraInstance:
             >>> # ... eventually loops back to sky/001.jpg
         """
         if not self._image_files:
-            return self._capture_synthetic(100000)
+            return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
         # Get current image
         image_path = self._image_files[self._image_index]
@@ -635,15 +822,17 @@ class DigitalTwinCameraInstance:
 
         img = cv2.imread(str(image_path))
         if img is None:
-            return self._capture_synthetic(100000)
+            return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
         # Resize to match camera resolution
         img = self._resize_to_camera(img)
 
-        _, jpeg = cv2.imencode(".jpg", img)
+        _, jpeg = cv2.imencode(
+            ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
+        )
         return jpeg.tobytes()
 
-    def _resize_to_camera(self, img: NDArray) -> NDArray:
+    def _resize_to_camera(self, img: NDArray[Any]) -> NDArray[Any]:
         """Resize image to match camera resolution.
 
         Scales the input image to the camera's MaxWidth x MaxHeight if
@@ -710,20 +899,19 @@ class DigitalTwinCameraInstance:
         width = self._info["MaxWidth"]
         height = self._info["MaxHeight"]
 
-        # Create base image
-        img = np.zeros((height, width, 3), dtype=np.uint8)
+        # Create base image (type widened for cv2 compatibility)
+        img: NDArray[Any] = np.zeros((height, width, 3), dtype=np.uint8)
 
         # Add grid pattern
-        grid_spacing = 50
-        img[::grid_spacing, :] = [50, 50, 50]
-        img[:, ::grid_spacing] = [50, 50, 50]
+        img[::_SYNTHETIC_GRID_SPACING, :] = [50, 50, 50]
+        img[:, ::_SYNTHETIC_GRID_SPACING] = [50, 50, 50]
 
         # Add center crosshair
         cv2.line(img, (width // 2, 0), (width // 2, height), (0, 255, 0), 1)
         cv2.line(img, (0, height // 2), (width, height // 2), (0, 255, 0), 1)
 
         # Add circle at center
-        cv2.circle(img, (width // 2, height // 2), 100, (0, 100, 0), 1)
+        cv2.circle(img, (width // 2, height // 2), _CROSSHAIR_RADIUS, (0, 100, 0), 1)
 
         # Add text overlay
         cv2.putText(
@@ -746,7 +934,7 @@ class DigitalTwinCameraInstance:
         )
         cv2.putText(
             img,
-            f"Gain: {self._controls['ASI_GAIN']['value']}",
+            f"Gain: {self._controls['Gain']['value']}",
             (50, 130),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
@@ -755,15 +943,41 @@ class DigitalTwinCameraInstance:
         )
 
         # Simulate noise based on gain
-        gain = self._controls["ASI_GAIN"]["value"]
+        gain = self._controls["Gain"]["value"]
         if gain > 0:
             noise_level = int(gain) // 10
             noise = np.random.randint(0, noise_level + 1, img.shape, dtype=np.uint8)
             img = cv2.add(img, noise)
 
         # Encode as JPEG
-        _, jpeg = cv2.imencode(".jpg", img)
+        _, jpeg = cv2.imencode(
+            ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
+        )
         return jpeg.tobytes()
+
+    def stop_exposure(self) -> None:
+        """Stop an in-progress exposure (no-op for digital twin).
+
+        Exists for API compatibility with ASICameraInstance. Digital twin
+        has no actual exposure to stop.
+
+        Business context: Enables code to call stop_exposure() regardless
+        of whether using real or simulated camera. Essential for testing
+        exposure cancellation workflows.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Safe to call at any time.
+
+        Example:
+            >>> twin.stop_exposure()  # No-op, always succeeds
+        """
+        logger.debug(f"stop_exposure called on digital twin camera {self._camera_id}")
 
     def close(self) -> None:
         """Close the simulated camera connection.
@@ -800,9 +1014,7 @@ class DigitalTwinCameraInstance:
 
 
 # Convenience function for creating pre-configured twins
-def create_file_camera(
-    image_path: Path | str, camera_id: int = 0
-) -> DigitalTwinCameraDriver:
+def create_file_camera(image_path: Path | str) -> DigitalTwinCameraDriver:
     """Create a digital twin camera that returns a single image.
 
     Convenience factory for creating a camera that always returns the same
@@ -810,13 +1022,13 @@ def create_file_camera(
 
     Args:
         image_path: Path to the image file (JPEG, PNG, TIFF, or FITS).
-        camera_id: Which camera ID to simulate (default 0 for finder).
 
     Returns:
         Configured DigitalTwinCameraDriver in FILE mode.
 
     Raises:
-        FileNotFoundError: If image_path does not exist (on first capture).
+        None. Path validation deferred to capture time; missing files
+        trigger synthetic fallback instead of raising exceptions.
 
     Example:
         driver = create_file_camera("/data/reference.jpg")
@@ -832,7 +1044,6 @@ def create_file_camera(
 
 def create_directory_camera(
     image_dir: Path | str,
-    camera_id: int = 0,
     cycle: bool = True,
 ) -> DigitalTwinCameraDriver:
     """Create a digital twin camera that cycles through images in a directory.
@@ -843,14 +1054,14 @@ def create_directory_camera(
 
     Args:
         image_dir: Path to directory containing images.
-        camera_id: Which camera ID to simulate (default 0 for finder).
         cycle: Whether to loop back to start after last image (default True).
 
     Returns:
         Configured DigitalTwinCameraDriver in DIRECTORY mode.
 
     Raises:
-        FileNotFoundError: If image_dir does not exist (on driver creation).
+        None. Path validation deferred to capture time; missing directories
+        trigger synthetic fallback instead of raising exceptions.
 
     Example:
         driver = create_directory_camera("/data/test_frames/", cycle=True)

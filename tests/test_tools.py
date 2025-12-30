@@ -285,28 +285,28 @@ class TestCameraTools:
         assert data["camera_id"] == 0
 
     @pytest.mark.asyncio
-    async def test_set_camera_control_with_asi_prefix(self):
-        """Verifies _set_camera_control handles ASI_ prefixed control names.
+    async def test_set_camera_control_high_value(self):
+        """Verifies _set_camera_control handles high gain values.
 
         Arrangement:
-        1. ZWO ASI cameras use ASI_GAIN naming.
-        2. Tool should accept ASI_ prefix.
-        3. Driver normalizes control names.
+        1. Camera accepts Gain values up to 600.
+        2. Tool should handle high values correctly.
+        3. Driver stores the value.
 
         Action:
-        Calls _set_camera_control with control="ASI_GAIN".
+        Calls _set_camera_control with control="Gain", value=150.
 
         Assertion Strategy:
-        Validates name handling by confirming:
+        Validates value handling by confirming:
         - camera_id=0 in response.
-        - No error from ASI_ prefix.
+        - No error from high value.
 
         Testing Principle:
-        Validates naming flexibility, ensuring tool
-        accepts hardware-specific control name formats.
+        Validates value range handling, ensuring tool
+        accepts valid high gain values.
         """
         result = await cameras._set_camera_control(
-            camera_id=0, control="ASI_GAIN", value=150
+            camera_id=0, control="Gain", value=150
         )
         data = json.loads(result[0].text)
         assert data["camera_id"] == 0
@@ -366,27 +366,27 @@ class TestCameraTools:
         assert "value" in data
 
     @pytest.mark.asyncio
-    async def test_get_camera_control_with_asi_prefix(self):
-        """Verifies _get_camera_control handles ASI_ prefixed control names.
+    async def test_get_camera_control_exposure(self):
+        """Verifies _get_camera_control retrieves Exposure control.
 
         Arrangement:
-        1. ZWO ASI cameras use ASI_EXPOSURE naming.
-        2. Tool should accept ASI_ prefix for reads.
-        3. Driver normalizes control names.
+        1. Camera has Exposure control.
+        2. Tool should retrieve current value.
+        3. Driver returns stored value.
 
         Action:
-        Calls _get_camera_control with control="ASI_EXPOSURE".
+        Calls _get_camera_control with control="Exposure".
 
         Assertion Strategy:
-        Validates name handling by confirming:
+        Validates retrieval by confirming:
         - camera_id=0 in response.
-        - No error from ASI_ prefix.
+        - No error from control query.
 
         Testing Principle:
-        Validates naming flexibility, ensuring tool
-        accepts hardware-specific control names for queries.
+        Validates control query, ensuring tool
+        retrieves current exposure settings correctly.
         """
-        result = await cameras._get_camera_control(camera_id=0, control="ASI_EXPOSURE")
+        result = await cameras._get_camera_control(camera_id=0, control="Exposure")
         data = json.loads(result[0].text)
         assert data["camera_id"] == 0
 

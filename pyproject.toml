@@ -124,6 +124,15 @@ exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
+    # Hardware SDK wrapper - untestable without real hardware
+    "class _ASISDKWrapper",
+    "def init\\(self, library_path",
+    "def get_num_cameras\\(self\\)",
+    "def list_cameras\\(self\\)",
+    "def open_camera\\(self, camera_id",
+    # SDK initialization success path - requires real SDK library
+    "self._sdk_initialized = True",
+    'logger.info.*ASI SDK initialized',
 ]
 
 # =============================================================================

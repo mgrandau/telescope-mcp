@@ -95,6 +95,105 @@ class TestCameraProtocolCompliance:
         driver = DigitalTwinCameraDriver()
         assert_implements_protocol(driver, CameraDriver)
 
+    def test_digital_twin_camera_instance_implements_protocol(self) -> None:
+        """DigitalTwinCameraInstance satisfies CameraInstance protocol.
+
+        Verifies that opened digital twin camera instances implement all
+        required CameraInstance methods including context manager support.
+
+        Arrangement:
+        1. Import DigitalTwinCameraDriver and CameraInstance protocol.
+        2. Create driver and open camera instance.
+
+        Action:
+        Call assert_implements_protocol() with instance and protocol.
+
+        Assertion Strategy:
+        Validates protocol compliance by confirming:
+        - No assertion error raised.
+        - isinstance(instance, CameraInstance) returns True.
+        """
+        from telescope_mcp.drivers.cameras import CameraInstance
+        from telescope_mcp.drivers.cameras.twin import DigitalTwinCameraDriver
+
+        driver = DigitalTwinCameraDriver()
+        instance = driver.open(0)
+        try:
+            assert_implements_protocol(instance, CameraInstance)
+        finally:
+            instance.close()
+
+    def test_asi_camera_driver_implements_protocol(self) -> None:
+        """ASICameraDriver satisfies CameraDriver protocol.
+
+        Verifies that the real ASI camera driver correctly implements
+        all methods required by the CameraDriver protocol interface.
+        Uses mock SDK to avoid hardware dependency.
+
+        Arrangement:
+        1. Import ASICameraDriver and CameraDriver protocol.
+        2. Create driver instance with mock SDK.
+
+        Action:
+        Call assert_implements_protocol() with driver and protocol.
+
+        Assertion Strategy:
+        Validates protocol compliance by confirming:
+        - No assertion error raised.
+        - isinstance(driver, CameraDriver) returns True.
+        """
+        from unittest.mock import MagicMock
+
+        from telescope_mcp.drivers.cameras import CameraDriver
+        from telescope_mcp.drivers.cameras.asi import ASICameraDriver
+
+        # Create mock SDK to avoid hardware dependency
+        mock_sdk = MagicMock()
+        mock_sdk.get_num_cameras.return_value = 0
+
+        driver = ASICameraDriver(sdk=mock_sdk)
+        assert_implements_protocol(driver, CameraDriver)
+
+    def test_asi_camera_instance_implements_protocol(self) -> None:
+        """ASICameraInstance satisfies CameraInstance protocol.
+
+        Verifies that opened ASI camera instances implement all
+        required CameraInstance methods. Uses mock camera object.
+
+        Arrangement:
+        1. Import ASICameraInstance and CameraInstance protocol.
+        2. Create instance with mock camera object.
+
+        Action:
+        Call assert_implements_protocol() with instance and protocol.
+
+        Assertion Strategy:
+        Validates protocol compliance by confirming:
+        - No assertion error raised.
+        - isinstance(instance, CameraInstance) returns True.
+        """
+        from unittest.mock import MagicMock
+
+        from telescope_mcp.drivers.cameras import CameraInstance
+        from telescope_mcp.drivers.cameras.asi import ASICameraInstance
+
+        # Create mock camera object
+        mock_camera = MagicMock()
+        mock_camera.get_camera_property.return_value = {
+            "Name": "Mock Camera",
+            "MaxWidth": 1920,
+            "MaxHeight": 1080,
+            "PixelSize": 2.9,
+            "IsColorCam": True,
+            "BitDepth": 16,
+        }
+
+        instance = ASICameraInstance(camera_id=0, camera=mock_camera)
+        try:
+            assert_implements_protocol(instance, CameraInstance)
+        finally:
+            instance.close()
+
 
 class TestSerialProtocolCompliance:
     """Verify serial port mock implements SerialPort protocol."""

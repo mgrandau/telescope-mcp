@@ -53,7 +53,7 @@ class TestDefaultCameraSpecs:
         finder = DEFAULT_CAMERAS[0]
 
         # Basic identification
-        assert b"ASI120MC-S" in finder["Name"]
+        assert "ASI120MC-S" in finder["Name"]
         assert finder["Purpose"] == "finder"
 
         # Resolution (1.2MP)
@@ -99,7 +99,7 @@ class TestDefaultCameraSpecs:
         main = DEFAULT_CAMERAS[1]
 
         # Basic identification
-        assert b"ASI482MC" in main["Name"]
+        assert "ASI482MC" in main["Name"]
         assert main["Purpose"] == "main"
 
         # Resolution (2.07MP)
@@ -428,14 +428,14 @@ class TestDigitalTwinCameraInstance:
         - IsWritable flag indicates adjustability.
         """
         controls = finder_camera.get_controls()
-        assert "ASI_GAIN" in controls
-        assert "ASI_EXPOSURE" in controls
-        assert "ASI_WB_R" in controls
-        assert "ASI_WB_B" in controls
-        assert "ASI_TEMPERATURE" in controls
+        assert "Gain" in controls
+        assert "Exposure" in controls
+        assert "WB_R" in controls
+        assert "WB_B" in controls
+        assert "Temperature" in controls
 
         # Check control structure
-        gain = controls["ASI_GAIN"]
+        gain = controls["Gain"]
         assert "MinValue" in gain
         assert "MaxValue" in gain
         assert "DefaultValue" in gain
@@ -457,27 +457,26 @@ class TestDigitalTwinCameraInstance:
         Validates state persistence by confirming:
         - get_control returns value=200.
         """
-        finder_camera.set_control("ASI_GAIN", 200)
-        result = finder_camera.get_control("ASI_GAIN")
+        finder_camera.set_control("Gain", 200)
+        result = finder_camera.get_control("Gain")
         assert result["value"] == 200
 
     def test_get_unknown_control(self, finder_camera):
-        """Verifies unknown control returns safe default.
+        """Verifies unknown control raises ValueError.
 
         Arrangement:
         1. Camera has defined control set.
         2. Request for UNKNOWN_CONTROL (not in set).
-        3. Default response: {value: 0, auto: False}.
 
         Action:
         Requests non-existent control.
 
         Assertion Strategy:
-        Validates graceful handling by confirming:
-        - Returns default dict with value=0, auto=False.
+        Validates error handling by confirming:
+        - ValueError raised with control name in message.
         """
-        result = finder_camera.get_control("UNKNOWN_CONTROL")
-        assert result == {"value": 0, "auto": False}
+        with pytest.raises(ValueError, match="Unknown control"):
+            finder_camera.get_control("UNKNOWN_CONTROL")
 
 
 class TestDigitalTwinCapture:
@@ -635,10 +634,10 @@ class TestDigitalTwinCapture:
         - data_low != data_high (different bytes).
         - Higher gain produces different noise pattern.
         """
-        finder_camera.set_control("ASI_GAIN", 0)
+        finder_camera.set_control("Gain", 0)
         data_low = finder_camera.capture(100000)
 
-        finder_camera.set_control("ASI_GAIN", 300)
+        finder_camera.set_control("Gain", 300)
         data_high = finder_camera.capture(100000)
 
         # Images should be different due to noise
