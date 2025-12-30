@@ -8,11 +8,17 @@ Types:
     ControlInfo: TypedDict for camera control definitions
     ControlValue: TypedDict for current control state
     DiscoveredCamera: TypedDict for camera discovery results
+
+Protocols:
+    ASICameraProtocol: Protocol for camera object abstraction (enables mocking)
     ASISDKProtocol: Protocol for SDK abstraction (enables testing)
 
 Classes:
     ASICameraInstance: Opened camera instance for capture/control
     ASICameraDriver: Driver for discovering and opening cameras
+
+Constants:
+    CONTROL_MAP: Mapping of control names to ASI SDK constants
 
 Example:
     from telescope_mcp.drivers.cameras.asi import ASICameraDriver

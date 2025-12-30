@@ -1,10 +1,48 @@
-"""Digital twin camera driver for testing without hardware.
+"""Digital Twin Camera Driver - Simulated Hardware for Testing.
 
-Provides simulated camera responses for development and testing.
-Supports multiple image sources:
-- Synthetic: Generate test patterns (default)
-- Directory: Cycle through images in a folder
-- File: Return same image repeatedly
+Provides simulated camera responses for development and testing without
+physical hardware. Follows the CameraDriver protocol for drop-in replacement.
+
+Image Sources:
+    Synthetic: Generate test patterns (gradient, noise, checkerboard)
+    Directory: Cycle through images in a folder
+    File: Return same image repeatedly
+
+Types:
+    TwinCameraInfo: TypedDict for camera hardware information (PascalCase)
+    ControlInfo: TypedDict for camera control definitions
+    ControlValue: TypedDict for current control state
+
+Enums:
+    ImageSource: Source type for simulated captures
+
+Classes:
+    DigitalTwinConfig: Configuration dataclass for image sources
+    DigitalTwinCameraDriver: Driver for discovering and opening simulated cameras
+    DigitalTwinCameraInstance: Opened camera instance for capture/control
+
+Constants:
+    DEFAULT_CAMERAS: Pre-configured simulated camera specs (ASI120MC-S, ASI482MC)
+
+Factory Functions:
+    create_file_camera: Create twin that returns single image
+    create_directory_camera: Create twin that cycles through image directory
+
+Example:
+    from telescope_mcp.drivers.cameras.twin import (
+        DigitalTwinCameraDriver,
+        create_directory_camera,
+    )
+
+    # Synthetic patterns (default)
+    driver = DigitalTwinCameraDriver()
+    with driver.open(0) as camera:
+        jpeg_data = camera.capture(100000)
+
+    # Cycle through sky frames
+    driver = create_directory_camera("/data/sky_frames/")
+    with driver.open(0) as camera:
+        jpeg_data = camera.capture(100000)
 """
 
 from __future__ import annotations

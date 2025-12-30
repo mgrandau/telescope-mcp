@@ -11,8 +11,17 @@ Implementations:
     ASICameraDriver/ASICameraInstance: Real ZWO ASI cameras via SDK
     DigitalTwinCameraDriver/DigitalTwinCameraInstance: Simulated cameras
 
+Configuration:
+    DigitalTwinConfig: Configuration for twin image sources
+    ImageSource: Enum for synthetic/directory/file modes
+    DEFAULT_CAMERAS: Pre-configured simulated camera specs
+
+Factory Functions:
+    create_directory_camera: Twin that cycles through image directory
+    create_file_camera: Twin that returns single image
+
 TypedDicts:
-    CameraInfo: Camera hardware information
+    TwinCameraInfo: Camera hardware information
     ControlInfo: Control definition with ranges
     ControlValue: Current control state
 """
