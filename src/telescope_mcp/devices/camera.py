@@ -9,8 +9,8 @@ Follows SOLID principles:
 - Dependency Inversion: Renderer and Clock are injectable protocols
 
 Example:
-    from telescope_mcp.devices import Camera, CameraConfig
-    from telescope_mcp.drivers.cameras import ASICameraDriver
+    from telescope_mcp.devices.camera import Camera, CameraConfig
+    from telescope_mcp.drivers.cameras.asi import ASICameraDriver
 
     driver = ASICameraDriver()
     config = CameraConfig(camera_id=0, name="Main Camera")
@@ -23,32 +23,56 @@ Example:
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    TypedDict,
+    cast,
+    runtime_checkable,
+)
 
-from telescope_mcp.observability import CameraStats, get_logger
+from telescope_mcp.observability import get_logger
 
 if TYPE_CHECKING:
     from telescope_mcp.drivers.cameras import CameraDriver, CameraInstance
+    from telescope_mcp.observability import CameraStats
+
+
+class ControlInfo(TypedDict):
+    """Type definition for camera control metadata.
+
+    Returned by driver.get_controls() for each available control.
+    """
+
+    min: int
+    max: int
+    default: int
+    value: int
+
 
 # Module logger
 logger = get_logger(__name__)
 
+# --- Constants ---
 
-# =============================================================================
-# Protocols (Injectable Dependencies)
-# =============================================================================
+DEFAULT_STREAM_FPS: float = 30.0
+"""Default maximum frames per second for video streaming."""
+
+
+# --- Protocols (Injectable Dependencies) ---
 
 
 @runtime_checkable
 class Clock(Protocol):  # pragma: no cover
     """Protocol for time functions (injectable for testing).
 
-    Defines the interface for time-related operations used by Camera.
-    The default implementation uses Python's time module, but this protocol
-    allows injecting mock clocks for deterministic testing.
+    Allows injecting mock clocks for deterministic testing. Default
+    implementation uses Python's time module.
 
     Example:
         class MockClock:
@@ -65,105 +89,52 @@ class Clock(Protocol):  # pragma: no cover
     """
 
     def monotonic(self) -> float:
-        """Monotonic time for accurate duration measurement immune to clock adjustments.
+        """Return monotonic time in seconds for duration measurement.
 
-        Returns monotonically increasing time value suitable for measuring elapsed
-        time (durations, intervals, timeouts). Reference point arbitrary but
-        consistent within process. Value never decreases, unaffected by system
-        clock adjustments (NTP sync, daylight saving, manual changes).
+        Protocol method for time measurement. Implementations should provide
+        a clock that never goes backwards, suitable for elapsed time calculation.
 
-        Business context: Essential for accurate frame timing in video streams
-        and performance measurement of camera operations. System clock
-        adjustments during long exposures or multi-hour streaming sessions would
-        cause negative durations or incorrect frame intervals if using wall-clock
-        time. Monotonic time prevents these errors, ensuring consistent frame
-        rates in live view and accurate capture duration logging. Critical for
-        time-sensitive telescope operations (exposures timed to millisecond
-        precision).
-
-        Implementation details: Standard implementation returns time.monotonic().
-        Reference point (zero) platform-specific, typically system boot time or
-        process start. Resolution typically nanoseconds on modern systems. Used
-        by Camera for elapsed time calculations:
-        `elapsed = clock.monotonic() - start`. Mock clocks return internal time
-        variable for deterministic testing without actual wall-clock time
-        passing.
+        Business context: Critical for frame timing in video streams and capture
+        duration measurement. Monotonic time prevents errors when system clock
+        is adjusted during long exposures.
 
         Returns:
-            Current monotonic time in seconds as float. Value only meaningful
-            when compared to other monotonic() calls to calculate elapsed time.
-            Absolute value has no significance. Precision typically microseconds
-            (6 decimal places).
+            Current monotonic time in seconds. Value only meaningful when
+            compared to other monotonic() calls for elapsed time calculation.
 
         Raises:
-            None. Should never fail on supported platforms. SystemClock
-            implementation uses time.monotonic() which always succeeds.
+            None. Implementations should never raise.
 
         Example:
-            >>> clock = SystemClock()
             >>> start = clock.monotonic()
-            >>> # ... capture frame (100ms exposure) ...
+            >>> # ... do work ...
             >>> elapsed = clock.monotonic() - start
-            >>> print(f\"Capture took {elapsed:.3f}s\")  # "Capture took 0.102s"
-
-        Note:
-            Unlike wall-clock time, monotonic time immune to: NTP synchronization,
-            daylight saving transitions, manual clock adjustments, leap seconds.
-            Perfect for measuring durations but meaningless as absolute timestamp
-            (use datetime.now() for timestamps).
         """
         ...
 
     def sleep(self, seconds: float) -> None:
         """Sleep for specified duration without busy-waiting.
 
-        Suspends execution for given duration, yielding CPU to other
-        threads/processes. Used for frame rate limiting in video streaming to
-        achieve target FPS without consuming 100% CPU in tight capture loops.
-        Mock implementations advance internal time without actual sleep for fast
-        test execution (100x+ speedup).
+        Protocol method for suspending execution. Used for frame rate control
+        in video streaming, preventing busy loops that consume CPU.
 
         Business context: Video streaming must maintain consistent frame rates
-        (30fps, 15fps, etc.) for smooth live preview. Without sleep, Camera
-        would capture as fast as possible (~100+fps), saturating CPU/USB
-        bandwidth, generating unnecessary frames, causing UI lag. Sleep
-        maintains target rate while keeping system responsive. Essential for
-        long-duration live view sessions during telescope alignment, focusing,
-        or target acquisition where thermal issues could arise from sustained
-        high CPU usage.
-
-        Implementation details: SystemClock uses time.sleep() (suspends thread).
-        Mock clocks increment internal time variable without blocking, enabling
-        tests to simulate hours of streaming in milliseconds. Camera calculates
-        sleep duration: `frame_interval - capture_time`. Short sleeps (<10ms)
-        have reduced accuracy due to OS scheduler quantum. Fractional seconds
-        supported (e.g., 0.033 for 30fps). Interruptible by signals (Ctrl+C).
+        (e.g., 30fps = 33.3ms between frames). Sleep between captures prevents
+        CPU saturation and thermal throttling in long-duration sessions.
 
         Args:
-            seconds: Duration to sleep in seconds as float (fractional values
-                supported). Typical range 0.001-1.0 for streaming (1ms-1s).
-                Zero/negative values return immediately (no-op). For 30fps:
-                0.033s, 15fps: 0.067s, 10fps: 0.100s.
+            seconds: Duration to sleep in seconds (float). Typical range
+                0.001-1.0 for frame rate control. Zero or negative returns
+                immediately.
+
+        Returns:
+            None. Suspends execution for specified duration.
 
         Raises:
-            None under normal operation. SystemClock.sleep() uses time.sleep()
-            which may raise KeyboardInterrupt on Ctrl+C (intended for
-            interrupting streaming). Mock clocks never raise.
+            None. Implementations should handle gracefully.
 
         Example:
-            >>> clock = SystemClock()
-            >>> clock.sleep(0.1)  # Sleep 100ms for frame rate limiting
-
-            >>> # Mock clock for fast testing:
-            >>> mock_clock = MockClock()
-            >>> mock_clock.sleep(3600.0)  # Instant - no actual wait
-            >>> assert mock_clock.monotonic() == 3600.0  # Time advanced
-
-        Note:
-            Mock clock pattern enables deterministic testing: tests run at full
-            speed while simulating real-time behavior. Critical for CI/CD where
-            waiting real time would slow test suites. Production always uses
-            SystemClock with real sleep.
+            >>> clock.sleep(0.033)  # ~30fps frame interval
         """
         ...
 
@@ -282,80 +253,40 @@ class OverlayRenderer(Protocol):  # pragma: no cover
         config: OverlayConfig,
         camera_info: CameraInfo | None,
     ) -> bytes:
-        """Render overlay on image data for live view targeting and alignment.
+        """Render overlay on image data.
 
-        Takes raw image data and applies the configured overlay. Typical use
-        cases include crosshairs for targeting, circles for alignment, grid
-        overlays for field of view reference, or custom indicators for
-        platesolving results.
+        Protocol method for applying visual overlays to captured frames.
+        Implementations decode image, draw overlay elements, and re-encode.
 
-        Business context: Essential for visual targeting during telescope
-        operation. Overlays guide users in centering objects, verifying
-        alignment, and understanding field positioning without modifying
-        captured science data (which uses capture_raw). Separation of rendered
-        preview from raw data enables both user-friendly live view and accurate
-        data collection.
-
-        Implementation details: Renderers should use efficient image processing
-        libraries (OpenCV, Pillow) to minimize frame latency. Consider caching
-        decoded images or using GPU acceleration for high-resolution cameras.
-        JPEG re-encoding quality should balance file size and visual quality
-        (85-95 typically).
+        Business context: Enables visual targeting aids (crosshairs, grids)
+        during live view without modifying science data. Essential for
+        interactive telescope operation where visual feedback guides alignment.
 
         Args:
-            image_data: Original image as JPEG bytes.
-            config: Overlay configuration specifying type, color, opacity, and
-                type-specific parameters. Type can be "crosshair", "circles",
-                "grid", "custom", etc.
-            camera_info: Camera info for resolution, aspect ratio, and pixel
-                scale. Used to scale overlay elements appropriately. May be None
-                if camera info is unavailable (renderer should handle
-                gracefully).
+            image_data: Original image as JPEG bytes to overlay.
+            config: Overlay configuration (type, color, opacity, params).
+            camera_info: Camera info for resolution scaling (may be None
+                if camera not connected).
 
         Returns:
-            Image with overlay applied, as JPEG bytes. Format and dimensions
-            should match input image. Quality should be suitable for display but
-            not necessarily archival.
+            Image with overlay applied as JPEG bytes. Same format as input.
 
         Raises:
-            ValueError: If image_data cannot be decoded as JPEG.
-            RuntimeError: If rendering fails due to processing error.
+            ValueError: If image_data is invalid or cannot be decoded.
+            RuntimeError: If overlay rendering fails.
 
         Example:
-            >>> class CrosshairRenderer:
-            ...     def render(self, image_data, config, camera_info):
-            ...         # Decode JPEG
-            ...         img = cv2.imdecode(
-            ...             np.frombuffer(image_data, np.uint8), cv2.IMREAD_COLOR
-            ...         )
-            ...         h, w = img.shape[:2]
-            ...
-            ...         # Draw crosshair at center
-            ...         cv2.line(img, (w//2 - 20, h//2), (w//2 + 20, h//2),
-            ...                  config.color, 2)
-            ...         cv2.line(img, (w//2, h//2 - 20), (w//2, h//2 + 20),
-            ...                  config.color, 2)
-            ...
-            ...         # Re-encode to JPEG
-            ...         _, enc = cv2.imencode('.jpg', img,
-            ...                               [cv2.IMWRITE_JPEG_QUALITY, 90])
-            ...         return enc.tobytes()
-
-        Note:
-            Implementations should be efficient as this is called on every frame
-            during live streaming (10-30 fps typical). Avoid expensive operations
-            like histogram equalization unless specifically requested via
-            config.params.
+            >>> rendered = renderer.render(
+            ...     jpeg_bytes,
+            ...     OverlayConfig(enabled=True, overlay_type="crosshair"),
+            ...     camera.info
+            ... )
         """
         ...
 
 
 class NullRenderer:
-    """Default renderer that does nothing (passthrough).
-
-    No-op implementation of OverlayRenderer that returns images unchanged.
-    Used as the default when no overlay rendering is needed.
-    """
+    """Default renderer that returns images unchanged (passthrough)."""
 
     def render(
         self,
@@ -365,32 +296,28 @@ class NullRenderer:
     ) -> bytes:
         """Return image data unchanged (no overlay applied).
 
-        Passthrough renderer that returns the original image without modifications.
-        Used as the default renderer when no overlay functionality is needed or
-        when overlays are disabled.
+        Passthrough implementation of OverlayRenderer protocol. Used as
+        default when no overlay rendering is configured.
 
-        Business context: Enables clean Camera API design by always having a renderer
-        present, eliminating null checks. Users can disable overlays without changing
-        Camera code. Also serves as a reference implementation showing the minimal
-        OverlayRenderer contract.
+        Business context: Provides null object pattern for overlay rendering.
+        Allows Camera to always call renderer.render() without null checks,
+        simplifying capture logic while preserving raw image data.
 
         Args:
-            image_data: Original image as JPEG bytes.
+            image_data: Original image as JPEG bytes (returned unchanged).
             config: Overlay configuration (ignored by this implementation).
             camera_info: Camera info (ignored by this implementation).
 
         Returns:
-            The original image_data unchanged. Same bytes object, not a copy.
+            The original image_data bytes unchanged.
 
         Raises:
-            None. This implementation never fails.
+            None. This implementation never raises.
 
         Example:
             >>> renderer = NullRenderer()
-            >>> original = b'\xff\xd8\xff\xe0...'  # JPEG bytes
-            >>> result = renderer.render(original, config, None)
-            >>> result is original  # True - same object returned
-            True
+            >>> output = renderer.render(jpeg_bytes, config, None)
+            >>> assert output is jpeg_bytes  # Identity preserved
         """
         return image_data
 
@@ -416,61 +343,37 @@ class RecoveryStrategy(Protocol):  # pragma: no cover
     """
 
     def attempt_recovery(self, camera_id: int) -> bool:
-        """Hardware-level recovery from camera disconnect (USB reset, driver reload).
+        """Attempt hardware-level recovery from camera disconnect.
 
-        Called when capture fails due to apparent disconnect. Implementation
-        performs hardware-level recovery operations (USB device reset, driver
-        reload, device re-enumeration, vendor-specific recovery commands), waits
-        for device stabilization, checks if camera becomes available again. Must
-        be blocking until recovery completes or fails.
+        Protocol method for camera disconnect recovery. Implementations may
+        perform USB reset, device re-enumeration, driver reload, or other
+        hardware-specific operations to restore camera availability.
 
-        Business context: USB cameras in long-running observatory sessions
-        experience transient disconnects from power glitches, USB enumeration
-        failures, driver hangs, cable issues. Hardware recovery (especially USB
-        reset) often restores camera without manual intervention, preventing
-        observation failures in remote/unattended operations. Strategy pattern
-        allows custom recovery per camera type (ZWO vs QHY vs QHYCCD have
-        different reset mechanisms).
+        Business context: USB cameras in long-running observatory operations
+        experience transient issues (power glitches, USB enumeration failures).
+        Automated recovery prevents observation session failures requiring
+        manual intervention. Critical for unattended remote operation.
 
-        Implementation details: Typical implementations call OS-level USB reset
-        (Linux: ioctl USBDEVFS_RESET, Windows: device restart), wait 2-5 seconds
-        for re-enumeration, query camera presence via driver's
-        get_connected_cameras(). Should be idempotent - safe to call multiple
-        times. Should catch all exceptions and return False (Camera expects
-        boolean, not exception). May log recovery attempts internally. Blocking
-        operation OK - called from capture flow which already blocks on
-        exposure.
+        Implementation notes: Should block until recovery completes or times
+        out (typically 2-10 seconds). Must catch all exceptions internally
+        and return False on failure.
 
         Args:
-            camera_id: 0-based camera ID to recover. Used to identify specific
-                USB device for reset. For multi-camera systems, must target
-                correct device.
+            camera_id: 0-based camera ID to recover. Used to identify the
+                specific device for hardware operations.
 
         Returns:
-            True if camera available and ready for reconnection (driver.open()
-            should succeed). False if recovery failed, camera not available, or
-            exceptions occurred during recovery. Camera class interprets True as
-            "retry connect", False as "raise CameraDisconnectedError".
+            True if camera is available for reconnection after recovery.
+            False if recovery failed or timed out.
 
         Raises:
             None. Implementations must catch all exceptions and return False.
-            Raising would crash Camera's recovery flow - always return False on
-            error.
 
         Example:
-            >>> class USBResetRecovery:
-            ...     def attempt_recovery(self, camera_id: int) -> bool:
-            ...         try:
-            ...             usb_reset_device(camera_id)  # OS-specific USB reset
-            ...             time.sleep(3.0)  # Wait for re-enumeration
-            ...             return camera_id in get_available_camera_ids()
-            ...         except Exception:
-            ...             return False  # Never raise
-
-        Note:
-            Should be idempotent and safe to call repeatedly. May take 2-10
-            seconds (USB reset + device enumeration). NullRecoveryStrategy
-            always returns False (no recovery attempt).
+            >>> if recovery.attempt_recovery(camera_id=0):
+            ...     camera.connect()  # Camera available
+            ... else:
+            ...     raise CameraDisconnectedError("Recovery failed")
         """
         ...
 
@@ -479,58 +382,40 @@ class NullRecoveryStrategy:
     """No-op recovery strategy (always fails).
 
     Default implementation that does not attempt any recovery.
-    Used when no recovery strategy is configured, causing camera
-    disconnects to immediately raise CameraDisconnectedError.
+    Used when no recovery strategy is configured.
     """
 
     def attempt_recovery(self, camera_id: int) -> bool:
-        """Return False without attempting any recovery actions.
+        """Return False without attempting any recovery.
 
-        No-op implementation that immediately fails recovery. Used as the
-        default recovery strategy when no specific recovery mechanism is
-        configured. Causes camera disconnects to immediately raise
-        CameraDisconnectedError without any recovery attempts.
+        No-op implementation of RecoveryStrategy protocol. Used as default
+        when no recovery strategy is configured.
 
-        Business context: Provides a safe default that prevents unexpected
-        recovery attempts (like USB resets) that might affect other devices.
-        Users can opt-in to recovery by injecting a real RecoveryStrategy.
-        Follows the Null Object pattern to eliminate null checks in Camera.
-
-        Implementation details: Always returns False immediately. No side effects.
-        Camera class interprets False return as "recovery failed" and raises
-        CameraDisconnectedError. For actual recovery, implement RecoveryStrategy
-        with hardware-specific recovery logic (USB reset, driver reload, etc.).
+        Business context: Provides null object pattern for recovery. When no
+        hardware recovery is available or desired, this allows Camera to call
+        recovery.attempt_recovery() without null checks. Failure signals that
+        manual intervention is required.
 
         Args:
-            camera_id: ID of the camera to recover (0-based index). Ignored by
-                this implementation since no recovery is attempted.
+            camera_id: Camera ID (ignored by this implementation).
 
         Returns:
-            Always False, indicating recovery was not attempted and camera is
-            not available.
+            Always False, indicating recovery not attempted.
 
         Raises:
-            None. This implementation never raises exceptions.
+            None. This implementation never raises.
 
         Example:
-            >>> strategy = NullRecoveryStrategy()
-            >>> success = strategy.attempt_recovery(0)
-            >>> print(success)  # Always False
-            False
-            >>>
-            >>> # This is the default when no recovery specified
-            >>> camera = Camera(driver, config)  # Uses NullRecoveryStrategy
-            >>> # On disconnect, Camera will immediately raise CameraDisconnectedError
+            >>> recovery = NullRecoveryStrategy()
+            >>> assert recovery.attempt_recovery(0) is False
         """
         return False
 
 
-# =============================================================================
-# Configuration Dataclasses
-# =============================================================================
+# --- Configuration Dataclasses ---
 
 
-@dataclass
+@dataclass(slots=True)
 class CameraConfig:
     """Configuration for camera initialization.
 
@@ -547,7 +432,7 @@ class CameraConfig:
     default_exposure_us: int = 100_000
 
 
-@dataclass
+@dataclass(slots=True)
 class CameraInfo:
     """Information about a connected camera.
 
@@ -562,61 +447,43 @@ class CameraInfo:
     is_color: bool
     bayer_pattern: str | None
     supported_bins: list[int]
-    controls: dict[str, dict]  # control_name -> {min, max, default, value}
+    controls: dict[str, ControlInfo]  # control_name -> {min, max, default, value}
 
     @classmethod
-    def from_driver_info(cls, info: dict, controls: dict) -> CameraInfo:
+    def from_driver_info(
+        cls, info: dict[str, Any], controls: dict[str, Any]
+    ) -> CameraInfo:
         """Create CameraInfo from driver response dictionaries.
 
-        Factory method that constructs a CameraInfo instance from the raw
-        dictionary responses returned by camera drivers. Handles missing
-        keys gracefully with sensible defaults, making it resilient to
+        Factory method constructing CameraInfo from raw driver responses.
+        Handles missing keys with sensible defaults for resilience to
         driver variations and incomplete data.
 
-        Business context: Bridges the gap between driver implementations
-        and the Camera class interface. Different drivers (ASI, digital twin)
-        may return slightly different dictionary structures. This factory
-        method normalizes them into a consistent CameraInfo structure,
+        Business context: Bridges driver implementations and Camera interface.
+        Different drivers (ASI, digital twin) return varying dictionary
+        structures. This factory normalizes them into consistent CameraInfo,
         enabling polymorphic driver usage without Camera code changes.
-        Essential for the dependency injection pattern used throughout the
-        telescope control system.
-
-        Implementation details: Uses dict.get() with defaults for all fields
-        to handle missing keys gracefully. Defaults are chosen to be safe
-        (non-crashing) but obviously wrong (width=0) so issues are visible.
-        The controls dict is passed through unchanged since Camera class
-        knows how to handle its structure. Consider validating that required
-        fields (width, height) are non-zero if more strict validation is needed.
 
         Args:
-            info: Camera information dictionary from driver.get_info().
-                Expected keys: camera_id, name, max_width, max_height,
-                is_color, bayer_pattern, supported_bins.
-                Missing keys get sensible defaults.
-            controls: Control values dictionary from driver.get_controls().
-                Maps control names to dicts with min, max, default, value.
-                Passed through unchanged.
+            info: Camera info dict from driver.get_info(). Expected keys:
+                camera_id, name, max_width, max_height, is_color,
+                bayer_pattern, supported_bins. Missing keys use defaults.
+            controls: Control dict from driver.get_controls(). Maps control
+                names to dicts with min/max/default/value keys.
 
         Returns:
-            CameraInfo instance populated with driver data and defaults.
-            All fields will be populated even if info dict is incomplete.
+            CameraInfo populated from driver data with defaults for missing keys.
 
         Raises:
             None. Missing keys result in default values, not exceptions.
 
         Example:
-            >>> # Normal case with complete data
-            >>> driver_info = camera_instance.get_info()
-            >>> driver_controls = camera_instance.get_controls()
-            >>> info = CameraInfo.from_driver_info(driver_info, driver_controls)
-            >>> print(f"Camera: {info.name}, {info.max_width}x{info.max_height}")
-            Camera: ZWO ASI183MM Pro, 5496x3672
-            >>>
-            >>> # Handles incomplete data gracefully
-            >>> partial_info = {"name": "Test Camera"}
-            >>> info = CameraInfo.from_driver_info(partial_info, {})
-            >>> print(f"{info.name}: {info.max_width}x{info.max_height}")
-            Test Camera: 0x0
+            >>> info = CameraInfo.from_driver_info(
+            ...     {"name": "ASI183", "max_width": 5496},
+            ...     {"Gain": {"min": 0, "max": 600, "default": 50, "value": 50}}
+            ... )
+            >>> print(info.name, info.max_width)
+            ASI183 5496
         """
         return cls(
             camera_id=info.get("camera_id", 0),
@@ -626,11 +493,11 @@ class CameraInfo:
             is_color=info.get("is_color", False),
             bayer_pattern=info.get("bayer_pattern"),
             supported_bins=info.get("supported_bins", [1]),
-            controls=controls,
+            controls=cast(dict[str, ControlInfo], controls),
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class OverlayConfig:
     """Configuration for image overlays.
 
@@ -643,17 +510,21 @@ class OverlayConfig:
         overlay_type: Type of overlay ("crosshair", "circles", "grid", "custom")
         color: RGB color tuple (0-255 each)
         opacity: Overlay opacity (0.0-1.0)
-        params: Type-specific parameters (e.g., line_width, num_circles)
+        params: Type-specific parameters. Schema by overlay_type:
+            - crosshair: {"line_width": int, "gap": int, "size": int}
+            - grid: {"rows": int, "cols": int, "line_width": int}
+            - circles: {"radii": list[int], "center_x": int, "center_y": int}
+            - custom: Renderer-specific parameters
     """
 
     enabled: bool = False
     overlay_type: str = "none"
     color: tuple[int, int, int] = (255, 0, 0)
     opacity: float = 0.8
-    params: dict = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class CaptureOptions:
     """Options for a single capture operation.
 
@@ -673,12 +544,10 @@ class CaptureOptions:
     format: Literal["jpeg", "raw"] = "jpeg"
 
 
-# =============================================================================
-# Result Dataclasses
-# =============================================================================
+# --- Result Dataclasses ---
 
 
-@dataclass
+@dataclass(slots=True)
 class CaptureResult:
     """Result of a frame capture.
 
@@ -689,14 +558,14 @@ class CaptureResult:
     timestamp: datetime
     exposure_us: int
     gain: int
-    width: int = 0
-    height: int = 0
+    width: int | None = None
+    height: int | None = None
     format: str = "jpeg"
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     has_overlay: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class StreamFrame:
     """A single frame from a video stream.
 
@@ -717,12 +586,151 @@ class StreamFrame:
     has_overlay: bool = False
 
 
-# =============================================================================
-# Event Hooks
-# =============================================================================
+# --- Event Hooks ---
 
 
-@dataclass
+class OnConnectCallback(Protocol):  # pragma: no cover
+    """Callback protocol for camera connection events."""
+
+    def __call__(self, info: CameraInfo) -> None:
+        """Called after successful camera connection.
+
+        Invoked by Camera.connect() after establishing connection and
+        querying camera info. Use for logging, UI updates, or initialization.
+
+        Args:
+            info: CameraInfo with camera capabilities (resolution, controls,
+                color/mono designation). Guaranteed non-None.
+
+        Returns:
+            None. Return value ignored.
+
+        Raises:
+            Any exception propagates to connect() caller.
+
+        Example:
+            >>> def on_connect(info: CameraInfo) -> None:
+            ...     print(f"Connected: {info.name}")
+        """
+        ...
+
+
+class OnDisconnectCallback(Protocol):  # pragma: no cover
+    """Callback protocol for camera disconnection events."""
+
+    def __call__(self) -> None:
+        """Called after camera disconnection.
+
+        Invoked by Camera.disconnect() after releasing hardware resources.
+        Use for cleanup, UI updates, or resource management.
+
+        This callback enables disconnection-time processing such as UI state
+        updates, resource cleanup, logging, or triggering dependent operations.
+        The Camera class catches and logs any exceptions from this callback
+        to ensure the disconnection process always completes.
+
+        Business context:
+            Telescope sessions require graceful shutdown even when callbacks
+            fail. This protocol ensures disconnect cleanup runs reliably.
+
+        Args:
+            None: This method takes no arguments beyond implicit self.
+
+        Returns:
+            None. Return value ignored by the Camera class.
+
+        Raises:
+            Any exception from implementation is caught and logged by Camera,
+            ensuring disconnect completes even if callback fails.
+
+        Example:
+            >>> def on_disconnect() -> None:
+            ...     print("Camera disconnected")
+            ...     # Clean up resources, update UI state
+        """
+        ...
+
+
+class OnCaptureCallback(Protocol):  # pragma: no cover
+    """Callback protocol for capture completion events."""
+
+    def __call__(self, result: CaptureResult) -> None:
+        """Called after each capture completes (before overlay applied).
+
+        Invoked by Camera.capture() with raw capture result before overlay
+        rendering. Use for metrics, logging, or custom processing.
+
+        Args:
+            result: CaptureResult with image data, settings, and metadata.
+                Image has no overlay applied (has_overlay=False).
+
+        Returns:
+            None. Return value ignored.
+
+        Raises:
+            Any exception propagates to capture() caller.
+
+        Example:
+            >>> def on_capture(result: CaptureResult) -> None:
+            ...     print(f"Captured {len(result.image_data)} bytes")
+        """
+        ...
+
+
+class OnStreamFrameCallback(Protocol):  # pragma: no cover
+    """Callback protocol for stream frame events."""
+
+    def __call__(self, frame: StreamFrame) -> None:
+        """Called for each frame during video streaming.
+
+        Invoked by Camera.stream() for each yielded frame. Use for real-time
+        display, frame analysis, or metrics collection.
+
+        Args:
+            frame: StreamFrame with image data, timestamp, sequence number,
+                and capture settings.
+
+        Returns:
+            None. Return value ignored.
+
+        Raises:
+            Any exception propagates to stream() caller, stopping stream.
+
+        Example:
+            >>> def on_frame(frame: StreamFrame) -> None:
+            ...     display(frame.image_data)
+        """
+        ...
+
+
+class OnErrorCallback(Protocol):  # pragma: no cover
+    """Callback protocol for error events."""
+
+    def __call__(self, error: Exception) -> None:
+        """Called when a camera error occurs.
+
+        Invoked by Camera methods when errors occur (capture failure,
+        control errors, recovery failures). Use for error logging,
+        alerting, or custom error handling.
+
+        Args:
+            error: Exception that occurred. May be CameraError subclass
+                or other exception from driver/hardware.
+
+        Returns:
+            None. Return value ignored. Original exception still raised.
+
+        Raises:
+            Any exception logged but may be suppressed depending on context.
+
+        Example:
+            >>> def on_error(error: Exception) -> None:
+            ...     logger.error(f"Camera error: {error}")
+        """
+        ...
+
+
+@dataclass(slots=True)
 class CameraHooks:
     """Optional callbacks for camera events.
 
@@ -737,16 +745,14 @@ class CameraHooks:
         on_error: Called when an error occurs
     """
 
-    on_connect: Callable[[CameraInfo], None] | None = None
-    on_disconnect: Callable[[], None] | None = None
-    on_capture: Callable[[CaptureResult], None] | None = None
-    on_stream_frame: Callable[[StreamFrame], None] | None = None
-    on_error: Callable[[Exception], None] | None = None
+    on_connect: OnConnectCallback | None = None
+    on_disconnect: OnDisconnectCallback | None = None
+    on_capture: OnCaptureCallback | None = None
+    on_stream_frame: OnStreamFrameCallback | None = None
+    on_error: OnErrorCallback | None = None
 
 
-# =============================================================================
-# Exceptions
-# =============================================================================
+# --- Exceptions ---
 
 
 class CameraError(Exception):
@@ -773,9 +779,7 @@ class CameraDisconnectedError(CameraError):
     pass
 
 
-# =============================================================================
-# Camera Class
-# =============================================================================
+# --- Camera Class ---
 
 
 class Camera:
@@ -873,7 +877,7 @@ class Camera:
         self._clock = clock or SystemClock()
         self._hooks = hooks or CameraHooks()
         self._recovery = recovery or NullRecoveryStrategy()
-        self._stats = stats or CameraStats()
+        self._stats: CameraStats | None = stats  # Explicitly optional
 
         self._instance: CameraInstance | None = None
         self._info: CameraInfo | None = None
@@ -1253,6 +1257,111 @@ class Camera:
             )
         )
 
+    def _apply_capture_settings(
+        self,
+        exposure_us: int | None,
+        gain: int | None,
+    ) -> tuple[int, int]:
+        """Apply capture settings if changed and return effective values.
+
+        Resolves None values to current settings and applies changes to
+        hardware only when values differ. Optimizes capture by avoiding
+        redundant hardware calls.
+
+        Business context: Camera hardware calls have latency (~10ms each).
+        By tracking current settings and only updating when changed, this
+        reduces capture overhead for repeated captures with same settings.
+
+        Args:
+            exposure_us: Requested exposure in microseconds. None uses
+                current _current_exposure_us value.
+            gain: Requested gain value. None uses current _current_gain.
+
+        Returns:
+            Tuple of (effective_exposure_us, effective_gain) after resolving
+            None values and applying any changes to hardware.
+
+        Raises:
+            CameraError: If set_control fails (propagated from set_control).
+
+        Example:
+            >>> exp, gain = camera._apply_capture_settings(100_000, None)
+            >>> # exp=100_000, gain=current value
+        """
+        effective_exposure = (
+            exposure_us if exposure_us is not None else self._current_exposure_us
+        )
+        effective_gain = gain if gain is not None else self._current_gain
+
+        if effective_gain != self._current_gain:
+            self.set_control("Gain", effective_gain)
+        if effective_exposure != self._current_exposure_us:
+            self.set_control("Exposure", effective_exposure)
+
+        return effective_exposure, effective_gain
+
+    def _build_capture_result(
+        self,
+        image_data: bytes,
+        exposure_us: int,
+        gain: int,
+        duration_ms: float,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> CaptureResult:
+        """Build CaptureResult with standard metadata.
+
+        Factory method constructing CaptureResult with consistent metadata
+        structure. Centralizes result creation for uniform capture responses.
+
+        Business context: Consistent metadata structure enables downstream
+        processing (ASDF storage, analysis pipelines) to rely on standard
+        fields. Camera name, ID, and timing are always present.
+
+        Args:
+            image_data: Captured image as JPEG bytes.
+            exposure_us: Exposure time used in microseconds.
+            gain: Gain value used.
+            duration_ms: Capture duration in milliseconds for performance
+                tracking.
+            extra_metadata: Additional metadata to merge (e.g., recovered=True
+                after disconnect recovery).
+
+        Returns:
+            CaptureResult with image data, timestamp, settings, dimensions,
+            and metadata dict containing camera_id, camera_name,
+            capture_duration_ms, plus any extra_metadata.
+
+        Raises:
+            None. Always succeeds given valid inputs.
+
+        Example:
+            >>> result = camera._build_capture_result(
+            ...     jpeg_bytes, 100_000, 50, 150.5, {"recovered": True}
+            ... )
+            >>> assert result.metadata["recovered"] is True
+        """
+        camera_id = self._config.camera_id
+        metadata = {
+            "camera_id": camera_id,
+            "camera_name": self._config.name
+            or (self._info.name if self._info else "Unknown"),
+            "capture_duration_ms": round(duration_ms, 1),
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+
+        return CaptureResult(
+            image_data=image_data,
+            timestamp=self._now(),
+            exposure_us=exposure_us,
+            gain=gain,
+            width=self._info.max_width if self._info else None,
+            height=self._info.max_height if self._info else None,
+            format="jpeg",
+            metadata=metadata,
+            has_overlay=False,
+        )
+
     def _capture_internal(
         self,
         exposure_us: int | None = None,
@@ -1314,28 +1423,22 @@ class Camera:
         camera_id = self._config.camera_id
         start_time = self._clock.monotonic()
 
-        # Apply overrides if provided
-        effective_exposure = (
-            exposure_us if exposure_us is not None else self._current_exposure_us
+        # Apply settings using helper
+        effective_exposure, effective_gain = self._apply_capture_settings(
+            exposure_us, gain
         )
-        effective_gain = gain if gain is not None else self._current_gain
-
-        # Update settings if changed
-        if effective_gain != self._current_gain:
-            self.set_control("Gain", effective_gain)
-        if effective_exposure != self._current_exposure_us:
-            self.set_control("Exposure", effective_exposure)
 
         try:
             image_data = self._instance.capture(effective_exposure)
             duration_ms = (self._clock.monotonic() - start_time) * 1000
 
             # Record successful capture stats
-            self._stats.record_capture(
-                camera_id=camera_id,
-                duration_ms=duration_ms,
-                success=True,
-            )
+            if self._stats:
+                self._stats.record_capture(
+                    camera_id=camera_id,
+                    duration_ms=duration_ms,
+                    success=True,
+                )
 
             logger.debug(
                 "Frame captured",
@@ -1346,33 +1449,23 @@ class Camera:
                 duration_ms=round(duration_ms, 1),
             )
 
-            return CaptureResult(
+            return self._build_capture_result(
                 image_data=image_data,
-                timestamp=datetime.now(UTC),
                 exposure_us=effective_exposure,
                 gain=effective_gain,
-                width=self._info.max_width if self._info else 0,
-                height=self._info.max_height if self._info else 0,
-                format="jpeg",
-                metadata={
-                    "camera_id": camera_id,
-                    "camera_name": self._config.name or self._info.name
-                    if self._info
-                    else "Unknown",
-                    "capture_duration_ms": round(duration_ms, 1),
-                },
-                has_overlay=False,
+                duration_ms=duration_ms,
             )
         except Exception as e:
             duration_ms = (self._clock.monotonic() - start_time) * 1000
 
             # Record failed capture stats
-            self._stats.record_capture(
-                camera_id=camera_id,
-                duration_ms=duration_ms,
-                success=False,
-                error_type=type(e).__name__,
-            )
+            if self._stats:
+                self._stats.record_capture(
+                    camera_id=camera_id,
+                    duration_ms=duration_ms,
+                    success=False,
+                    error_type=type(e).__name__,
+                )
 
             logger.warning(
                 "Capture failed, attempting recovery",
@@ -1472,12 +1565,13 @@ class Camera:
                 camera_id=camera_id,
                 original_error=str(original_error),
             )
-            self._stats.record_capture(
-                camera_id=camera_id,
-                duration_ms=0,
-                success=False,
-                error_type="recovery_failed",
-            )
+            if self._stats:
+                self._stats.record_capture(
+                    camera_id=camera_id,
+                    duration_ms=0,
+                    success=False,
+                    error_type="recovery_failed",
+                )
             if self._hooks.on_error:
                 self._hooks.on_error(original_error)
             raise CameraDisconnectedError(
@@ -1488,44 +1582,74 @@ class Camera:
         try:
             self.connect()
             logger.info("Camera recovered successfully", camera_id=camera_id)
+            return self._retry_capture_after_recovery(exposure_us, gain)
+        except Exception as e:
+            if self._hooks.on_error:
+                self._hooks.on_error(e)
+            raise CameraDisconnectedError(
+                f"Camera {camera_id}: reconnection failed"
+            ) from e
 
-            # Retry capture
-            start_time = self._clock.monotonic()
-            assert self._instance is not None  # Verified by connect()
-            image_data = self._instance.capture(exposure_us)
-            duration_ms = (self._clock.monotonic() - start_time) * 1000
+    def _retry_capture_after_recovery(
+        self,
+        exposure_us: int,
+        gain: int,
+    ) -> CaptureResult:
+        """Capture frame after successful recovery reconnection.
 
-            # Record recovered capture
+        Called by _recover_and_capture() after reconnect succeeds. Verifies
+        instance established, performs capture, records stats, builds result
+        with recovered=True metadata.
+
+        Business context: After recovery reconnection, this method completes
+        the capture that originally failed. The recovered=True metadata flags
+        frames captured post-recovery for data provenance and quality
+        assessment in analysis pipelines.
+
+        Args:
+            exposure_us: Exposure time in microseconds. Should match the
+                original failed capture settings.
+            gain: Gain value. Should match original settings.
+
+        Returns:
+            CaptureResult with recovered=True in metadata, indicating frame
+            was captured after disconnect recovery.
+
+        Raises:
+            CameraDisconnectedError: If instance not established by connect().
+
+        Example:
+            >>> # Called internally by _recover_and_capture after reconnect
+            >>> result = camera._retry_capture_after_recovery(100_000, 50)
+            >>> assert result.metadata.get("recovered") is True
+        """
+        camera_id = self._config.camera_id
+
+        # Verify instance established by connect()
+        if self._instance is None:
+            raise CameraDisconnectedError(
+                f"Camera {camera_id}: reconnection failed to establish instance"
+            )
+
+        start_time = self._clock.monotonic()
+        image_data = self._instance.capture(exposure_us)
+        duration_ms = (self._clock.monotonic() - start_time) * 1000
+
+        # Record recovered capture
+        if self._stats:
             self._stats.record_capture(
                 camera_id=camera_id,
                 duration_ms=duration_ms,
                 success=True,
             )
 
-            return CaptureResult(
-                image_data=image_data,
-                timestamp=datetime.now(UTC),
-                exposure_us=exposure_us,
-                gain=gain,
-                width=self._info.max_width if self._info else 0,
-                height=self._info.max_height if self._info else 0,
-                format="jpeg",
-                metadata={
-                    "camera_id": camera_id,
-                    "camera_name": self._config.name or self._info.name
-                    if self._info
-                    else "Unknown",
-                    "recovered": True,
-                    "capture_duration_ms": round(duration_ms, 1),
-                },
-                has_overlay=False,
-            )
-        except Exception as e:
-            if self._hooks.on_error:
-                self._hooks.on_error(e)
-            raise CameraDisconnectedError(
-                f"Camera {self._config.camera_id} recovery failed on reconnect"
-            ) from e
+        return self._build_capture_result(
+            image_data=image_data,
+            exposure_us=exposure_us,
+            gain=gain,
+            duration_ms=duration_ms,
+            extra_metadata={"recovered": True},
+        )
 
     def set_overlay(self, config: OverlayConfig | None) -> None:
         """Set or clear overlay configuration for visual targeting aids.
@@ -1564,7 +1688,7 @@ class Camera:
     def stream(
         self,
         options: CaptureOptions | None = None,
-        max_fps: float = 30.0,
+        max_fps: float = DEFAULT_STREAM_FPS,
     ) -> Iterator[StreamFrame]:
         """Yield continuous frames for live view and monitoring.
 
@@ -1628,6 +1752,12 @@ class Camera:
             The on_stream_frame hook is called for each frame if configured.
             Use stop_stream() for clean shutdown rather than breaking the loop
             abruptly, as it ensures the streaming flag is cleared properly.
+
+        Warning:
+            Single-stream only: This method is not thread-safe. Only one
+            stream() generator should be active at a time per Camera instance.
+            Concurrent streams will corrupt frame_count and may cause undefined
+            behavior. Use separate Camera instances for parallel streaming.
         """
         if self._instance is None:
             raise CameraNotConnectedError("Camera is not connected")
@@ -1835,7 +1965,8 @@ class Camera:
 
         Raises:
             CameraNotConnectedError: If camera is not connected.
-            CameraError: If control name is invalid or query fails.
+            CameraError: If control name is invalid, query fails, or
+                driver returns invalid response (missing/non-int value).
 
         Example:
             current_gain = camera.get_control("Gain")
@@ -1846,7 +1977,16 @@ class Camera:
 
         try:
             result = self._instance.get_control(name)
-            return result.get("value", 0)
+            if "value" not in result:
+                raise CameraError(f"Control {name} response missing 'value' key")
+            value = result["value"]
+            if not isinstance(value, int):
+                raise CameraError(
+                    f"Control {name} returned non-integer: {type(value).__name__}"
+                )
+            return value
+        except CameraError:
+            raise
         except Exception as e:
             if self._hooks.on_error:
                 self._hooks.on_error(e)
@@ -1906,27 +2046,45 @@ class Camera:
         """
         self.disconnect()
 
+    # --- Private Helpers ---
+
+    def _now(self) -> datetime:
+        """Get current UTC timestamp for captures.
+
+        Centralizes timestamp generation for consistent capture metadata.
+        Uses UTC timezone for unambiguous timestamps across time zones.
+
+        Business context: UTC timestamps ensure consistent ordering and
+        comparison of captures regardless of observatory location or local
+        timezone changes (DST). Critical for ASDF session data integrity.
+
+        Returns:
+            Current datetime in UTC timezone.
+
+        Raises:
+            None. datetime.now(UTC) always succeeds.
+
+        Example:
+            >>> ts = camera._now()
+            >>> assert ts.tzinfo == UTC
+        """
+        return datetime.now(UTC)
+
     def __repr__(self) -> str:
         """Return string representation of camera for debugging.
 
         Business context: Useful for logging, debugging, and REPL inspection
         showing camera state at a glance (ID, name, connection status).
 
-        Args:
-            None.
-
-        Returns:
-            String like "<Camera(id=0, name='Main', connected=True)>".
-
-        Example:
-            >>> camera = Camera(driver, CameraConfig(camera_id=0, name="Main"))
-            >>> print(camera)  # <Camera(id=0, name='Main', connected=False)>
-
         Returns:
             String like '<Camera(name, connected)>' or '<Camera(name, disconnected)>'.
 
         Raises:
             None. Always returns a valid string.
+
+        Example:
+            >>> camera = Camera(driver, CameraConfig(camera_id=0, name="Main"))
+            >>> print(camera)  # <Camera(Main, disconnected)>
         """
         status = "connected" if self.is_connected else "disconnected"
         name = self._config.name or f"camera_{self._config.camera_id}"
