@@ -47,7 +47,7 @@ const unsigned long SAMPLE_INTERVAL_MS = 100;  // 10 Hz sampling rate
 const long SERIAL_BAUD_RATE = 115200;
 const int LED_PIN = LED_BUILTIN;               // Onboard LED for status
 const int WARMUP_SAMPLES = 10;                 // Samples to discard during warmup
-const int CALIBRATION_SAMPLES = 100;           // Samples for magnetometer calibration
+const int CALIBRATION_SAMPLES = 600;           // Samples for magnetometer calibration (60 sec)
 
 // Sensor data storage
 float accelX, accelY, accelZ;  // Accelerometer values in g
@@ -96,16 +96,22 @@ void blinkLED(int times, int onMs = 100, int offMs = 100) {
  */
 bool initIMU() {
     Serial.println("INFO: Initializing LSM9DS1 IMU...");
+    Serial.flush();
 
-    // End any existing connection first
-    IMU.end();
-    delay(100);
-
+    // Skip IMU.end() - can cause I2C hang on fresh boot
+    // Just try to begin directly
+    Serial.println("DEBUG: Calling IMU.begin()...");
+    Serial.flush();
+    
+    // IMU.begin() can hang if sensor is not responding
     if (!IMU.begin()) {
         Serial.println("ERROR: Failed to initialize LSM9DS1 IMU!");
+        Serial.flush();
         imuInitialized = false;
         return false;
     }
+    Serial.println("DEBUG: IMU.begin() returned OK");
+    Serial.flush();
 
     // Warm-up: discard initial readings
     Serial.println("INFO: IMU warm-up...");
@@ -360,28 +366,41 @@ void checkSerialCommands() {
 void setup() {
     // Initialize LED
     pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, LOW);
+    digitalWrite(LED_PIN, HIGH);  // LED ON during setup
 
     // Initialize serial communication
     Serial.begin(SERIAL_BAUD_RATE);
-    while (!Serial) {
-        blinkLED(1, 50, 50);  // Blink while waiting for serial
+    
+    // Wait for serial connection with 3 second timeout
+    // This prevents blocking forever if no serial monitor is connected
+    unsigned long serialWaitStart = millis();
+    while (!Serial && (millis() - serialWaitStart < 3000)) {
+        delay(100);
     }
 
+    // IMMEDIATE debug output - this should appear first
+    Serial.println("DEBUG: Serial connected");
+    Serial.println("DEBUG: Starting setup...");
+    Serial.flush();
+
     Serial.println();
     Serial.println("==============================");
-    Serial.println("Telescope Sensors v1.1");
+    Serial.println("Telescope Sensors v1.2-debug");
     Serial.println("Arduino Nano BLE33 Sense");
     Serial.println("==============================");
-    Serial.println("Commands: RESET, STATUS, CALIBRATE, STOP, START");
-    Serial.println();
+    Serial.flush();
 
     // Initialize all sensors with full sequence
+    Serial.println("DEBUG: About to init sensors...");
+    Serial.flush();
+    
     initAllSensors();
 
     Serial.println();
-    Serial.println("Ready. Streaming sensor data...");
-    Serial.println();
+    Serial.println("DEBUG: Init complete, starting loop");
+    Serial.flush();
+    
+    digitalWrite(LED_PIN, LOW);  // LED OFF when setup done
 }
 
 /**

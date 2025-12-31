@@ -210,3 +210,5 @@ pdm.lock
 utils/*.json
 nohup.out
 .python-version
+.vscode/mcp.json.telescope
+notebooks/data/sensor_calibration_*.json

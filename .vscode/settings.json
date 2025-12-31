@@ -19,5 +19,32 @@
             "envManager": "ms-python.python:venv",
             "packageManager": "ms-python.python:pip"
         }
+    ],
+    "cSpell.words": [
+        "addopts",
+        "altaz",
+        "ASISDK",
+        "astropy",
+        "asyncio",
+        "docscope",
+        "fastapi",
+        "filterwarnings",
+        "httpx",
+        "icrs",
+        "ipykernel",
+        "kwargs",
+        "mbed",
+        "mgrandau",
+        "mypy",
+        "numpy",
+        "obstime",
+        "opencv",
+        "pyserial",
+        "pytest",
+        "radec",
+        "testpaths",
+        "uvicorn",
+        "venv",
+        "zwoasi"
     ]
 }
