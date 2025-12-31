@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import uvicorn
 import zwoasi as asi
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -55,7 +55,7 @@ def _init_sdk() -> None:
         None.
 
     Returns:
-        None. Sets global _sdk_initialized flag on success.
+        None. Sets global _sdk_initialized flag on success or failure.
 
     Raises:
         None. Exceptions are caught and logged as warnings.
@@ -65,13 +65,15 @@ def _init_sdk() -> None:
         >>> _init_sdk()  # Subsequent calls are no-ops
     """
     global _sdk_initialized
-    if not _sdk_initialized:
+    if not _sdk_initialized:  # pragma: no cover - SDK init with real hardware
         try:
             sdk_path = get_sdk_library_path()
             asi.init(sdk_path)
             _sdk_initialized = True
             logger.info(f"ASI SDK initialized from {sdk_path}")
         except Exception as e:
+            # P2-4: Set flag to prevent retry storm on repeated failures
+            _sdk_initialized = True
             logger.warning(f"ASI SDK init failed (no cameras?): {e}")
 
 
@@ -297,9 +299,13 @@ def create_app() -> FastAPI:
 
     @app.get("/stream/finder")
     async def finder_stream(
-        exposure_us: int | None = Query(None, description="Exposure in microseconds"),
-        gain: int | None = Query(None, description="Gain value"),
-        fps: int = Query(DEFAULT_FPS, description="Target frames per second"),
+        exposure_us: int | None = Query(
+            None, ge=1, le=60_000_000, description="Exposure in microseconds (1-60s)"
+        ),
+        gain: int | None = Query(None, ge=0, le=600, description="Gain value (0-600)"),
+        fps: int = Query(
+            DEFAULT_FPS, ge=1, le=60, description="Target frames per second (1-60)"
+        ),
     ) -> StreamingResponse:
         """Stream MJPEG video from the finder camera (camera 0).
 
@@ -338,7 +344,7 @@ def create_app() -> FastAPI:
                 # Process MJPEG frames
                 pass
         """
-        return StreamingResponse(
+        return StreamingResponse(  # pragma: no cover - infinite stream
             _generate_camera_stream(
                 camera_id=0, exposure_us=exposure_us, gain=gain, fps=fps
             ),
@@ -347,9 +353,13 @@ def create_app() -> FastAPI:
 
     @app.get("/stream/main")
     async def main_stream(
-        exposure_us: int | None = Query(None, description="Exposure in microseconds"),
-        gain: int | None = Query(None, description="Gain value"),
-        fps: int = Query(DEFAULT_FPS, description="Target frames per second"),
+        exposure_us: int | None = Query(
+            None, ge=1, le=60_000_000, description="Exposure in microseconds (1-60s)"
+        ),
+        gain: int | None = Query(None, ge=0, le=600, description="Gain value (0-600)"),
+        fps: int = Query(
+            DEFAULT_FPS, ge=1, le=60, description="Target frames per second (1-60)"
+        ),
     ) -> StreamingResponse:
         """Stream MJPEG video from the main imaging camera (camera 1).
 
@@ -389,7 +399,7 @@ def create_app() -> FastAPI:
             }
             </script>
         """
-        return StreamingResponse(
+        return StreamingResponse(  # pragma: no cover - infinite stream
             _generate_camera_stream(
                 camera_id=1, exposure_us=exposure_us, gain=gain, fps=fps
             ),
@@ -399,9 +409,13 @@ def create_app() -> FastAPI:
     @app.get("/stream/{camera_id}")
     async def camera_stream(
         camera_id: int,
-        exposure_us: int | None = Query(None, description="Exposure in microseconds"),
-        gain: int | None = Query(None, description="Gain value"),
-        fps: int = Query(DEFAULT_FPS, description="Target frames per second"),
+        exposure_us: int | None = Query(
+            None, ge=1, le=60_000_000, description="Exposure in microseconds (1-60s)"
+        ),
+        gain: int | None = Query(None, ge=0, le=600, description="Gain value (0-600)"),
+        fps: int = Query(
+            DEFAULT_FPS, ge=1, le=60, description="Target frames per second (1-60)"
+        ),
     ) -> StreamingResponse:
         """Stream MJPEG video from any camera by numeric ID.
 
@@ -449,7 +463,7 @@ def create_app() -> FastAPI:
             });
             </script>
         """
-        return StreamingResponse(
+        return StreamingResponse(  # pragma: no cover - infinite stream
             _generate_camera_stream(
                 camera_id=camera_id, exposure_us=exposure_us, gain=gain, fps=fps
             ),
@@ -572,7 +586,8 @@ def create_app() -> FastAPI:
             }
         """
         # TODO: Implement
-        return {"status": "ok", "steps": steps, "speed": speed}
+        logger.warning("Motor altitude control not yet implemented")
+        return {"status": "not_implemented", "message": "Motor control pending"}
 
     @app.post("/api/motor/azimuth")
     async def api_move_azimuth(steps: int, speed: int = 100) -> dict:
@@ -622,7 +637,8 @@ def create_app() -> FastAPI:
             };
         """
         # TODO: Implement
-        return {"status": "ok", "steps": steps, "speed": speed}
+        logger.warning("Motor azimuth control not yet implemented")
+        return {"status": "not_implemented", "message": "Motor control pending"}
 
     @app.post("/api/motor/stop")
     async def api_stop_motors() -> dict:
@@ -678,7 +694,8 @@ def create_app() -> FastAPI:
             ... };
         """
         # TODO: Implement
-        return {"status": "stopped"}
+        logger.warning("Motor stop not yet implemented")
+        return {"status": "not_implemented", "message": "Motor control pending"}
 
     @app.get("/api/position")
     async def api_get_position() -> dict:
@@ -739,8 +756,13 @@ def create_app() -> FastAPI:
             ...         `Az: ${pos.azimuth.toFixed(2)} deg`;
             ... }, 1000);  // Update every second
         """
-        # TODO: Implement
-        return {"altitude": 45.0, "azimuth": 180.0}
+        # TODO: Implement - return placeholder with warning
+        return {
+            "altitude": 0.0,
+            "azimuth": 0.0,
+            "status": "not_implemented",
+            "message": "Position readout pending encoder integration",
+        }
 
     @app.post("/api/camera/{camera_id}/control")
     async def api_set_camera_control(
@@ -829,19 +851,14 @@ def create_app() -> FastAPI:
         }
 
         if control not in control_map:
-            return JSONResponse(
-                {
-                    "error": f"Unknown control: {control}",
-                    "valid": list(control_map.keys()),
-                },
+            raise HTTPException(
                 status_code=400,
+                detail=f"Unknown control: {control}. Valid: {list(control_map.keys())}",
             )
 
         camera = _get_camera(camera_id)
         if camera is None:
-            return JSONResponse(
-                {"error": f"Camera {camera_id} not found"}, status_code=404
-            )
+            raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
 
         try:
             camera.set_control_value(control_map[control], value)
@@ -863,7 +880,7 @@ def create_app() -> FastAPI:
                 }
             )
         except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
+            raise HTTPException(status_code=500, detail=str(e))
 
     return app
 
@@ -998,7 +1015,9 @@ async def _generate_camera_stream(
 
         frame_interval = 1.0 / fps
 
-        while _camera_streaming.get(camera_id, False):
+        while _camera_streaming.get(
+            camera_id, False
+        ):  # pragma: no cover - infinite loop
             try:
                 # Capture video frame (timeout in ms)
                 timeout_ms = max(int(exp / 1000) + 500, 1000)
@@ -1045,7 +1064,7 @@ async def _generate_camera_stream(
                 )
                 await asyncio.sleep(0.5)
 
-    except Exception as e:
+    except Exception as e:  # pragma: no cover - stream fatal error
         logger.error(f"Video stream error for camera {camera_id}: {e}")
         error_img = np.zeros((480, 640, 3), dtype=np.uint8)
         cv2.putText(
@@ -1059,7 +1078,7 @@ async def _generate_camera_stream(
         )
         _, jpeg = cv2.imencode(".jpg", error_img)
         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n"
-    finally:
+    finally:  # pragma: no cover - cleanup after stream ends
         # Stop video capture
         try:
             if _camera_streaming.get(camera_id):
@@ -1101,5 +1120,5 @@ def main() -> None:
     uvicorn.run(app, host="0.0.0.0", port=8080)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

@@ -7,13 +7,16 @@ Supports both real ASI cameras and digital twin simulation.
 import base64
 import json
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from telescope_mcp.devices import CaptureOptions, get_registry
 from telescope_mcp.observability import get_logger
+
+if TYPE_CHECKING:
+    from telescope_mcp.devices import CameraRegistry
 
 logger = get_logger(__name__)
 
@@ -193,9 +196,9 @@ def register(server: Server) -> None:
                 types validated by MCP framework before this handler.
 
         Returns:
-            List containing single TextContent with JSON result string or error
-            message. Success responses have structured JSON, errors have
-            descriptive text.
+            List containing single TextContent with JSON result string.
+            Success: {"camera_id": ..., ...} with operation-specific fields.
+            Error: {"error": str, "message": str} with error type and details.
 
         Raises:
             None. Errors are caught and returned as TextContent with error details.
@@ -230,13 +233,23 @@ def register(server: Server) -> None:
                 arguments["control"],
             )
         else:
-            return [TextContent(type="text", text=f"Unknown tool: {name}")]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {"error": "unknown_tool", "message": f"Unknown tool: {name}"}
+                    ),
+                )
+            ]
 
 
 # Tool implementations using device layer
 
 
-async def _list_cameras() -> list[TextContent]:
+async def _list_cameras(
+    *,
+    registry: "CameraRegistry | None" = None,
+) -> list[TextContent]:
     """List all connected cameras via the CameraRegistry.
 
     Queries the camera registry to discover connected ASI cameras.
@@ -247,14 +260,14 @@ async def _list_cameras() -> list[TextContent]:
     hardware and digital twin simulation based on configuration.
 
     Args:
-        None.
+        registry: Optional CameraRegistry for dependency injection (testing).
 
     Returns:
         List with single TextContent containing JSON:
         {"count": int, "cameras": [{"id": int, "name": str,
          "max_width": int, "max_height": int}, ...]}
-        Returns "No cameras connected" if registry is empty.
-        Returns error message on exceptions.
+        Returns {"count": 0, "cameras": []} if registry is empty.
+        Returns JSON error on exceptions.
 
     Raises:
         None. Exceptions caught and returned as error text.
@@ -265,11 +278,13 @@ async def _list_cameras() -> list[TextContent]:
         {"count": 2, "cameras": [{"id": 0, "name": "ASI120MC"}, ...]}
     """
     try:
-        registry = get_registry()
+        registry = registry or get_registry()
         cameras = registry.discover()
 
         if not cameras:
-            return [TextContent(type="text", text="No cameras connected")]
+            return [
+                TextContent(type="text", text=json.dumps({"count": 0, "cameras": []}))
+            ]
 
         result = {
             "count": len(cameras),
@@ -285,11 +300,20 @@ async def _list_cameras() -> list[TextContent]:
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error listing cameras: {e}")
-        return [TextContent(type="text", text=f"Error listing cameras: {e}")]
+        logger.exception("Error listing cameras")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
-async def _get_camera_info(camera_id: int) -> list[TextContent]:
+async def _get_camera_info(
+    camera_id: int,
+    *,
+    registry: "CameraRegistry | None" = None,
+) -> list[TextContent]:
     """Get detailed information about a specific camera.
 
     Retrieves comprehensive camera properties including sensor specs,
@@ -301,11 +325,12 @@ async def _get_camera_info(camera_id: int) -> list[TextContent]:
 
     Args:
         camera_id: Zero-based camera index (0=finder, 1=main).
+        registry: Optional CameraRegistry for dependency injection (testing).
 
     Returns:
         List with single TextContent containing JSON:
         {"camera_id": int, "info": {...}, "is_connected": bool}
-        Returns error message if camera not found or on exceptions.
+        Returns JSON error if camera not found or on exceptions.
 
     Raises:
         None. Exceptions caught and returned as error text.
@@ -317,12 +342,20 @@ async def _get_camera_info(camera_id: int) -> list[TextContent]:
         "ASI120MC-S"
     """
     try:
-        registry = get_registry()
+        registry = registry or get_registry()
         camera = registry.get(camera_id, auto_connect=True)
 
-        # Get info from camera (guaranteed non-None after successful get)
+        # Get info from camera
         camera_info = camera.info
-        assert camera_info is not None
+        if camera_info is None:
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {"error": "internal", "message": "Camera info unavailable"}
+                    ),
+                )
+            ]
         info_dict = asdict(camera_info)
 
         result = {
@@ -332,12 +365,21 @@ async def _get_camera_info(camera_id: int) -> list[TextContent]:
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error getting camera {camera_id} info: {e}")
-        return [TextContent(type="text", text=f"Error getting camera info: {e}")]
+        logger.exception("Error getting camera info")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
 async def _capture_frame(
-    camera_id: int, exposure_us: int, gain: int
+    camera_id: int,
+    exposure_us: int,
+    gain: int,
+    *,
+    registry: "CameraRegistry | None" = None,
 ) -> list[TextContent]:
     """Capture a single frame from a camera and return as base64 JPEG.
 
@@ -355,12 +397,13 @@ async def _capture_frame(
             1000 (1ms) to 60000000 (60s). Common values: 100000 (100ms).
         gain: Amplification value. Range varies by camera, typically
             0-500. Higher values increase brightness but add noise.
+        registry: Optional CameraRegistry for dependency injection (testing).
 
     Returns:
         List with single TextContent containing JSON:
         {"camera_id": int, "exposure_us": int, "gain": int,
          "timestamp": str (ISO), "image_base64": str}
-        Returns error message on capture failure.
+        Returns JSON error on capture failure.
 
     Raises:
         None. Exceptions caught and returned as error text.
@@ -371,7 +414,7 @@ async def _capture_frame(
         >>> image_bytes = base64.b64decode(data["image_base64"])
     """
     try:
-        registry = get_registry()
+        registry = registry or get_registry()
         camera = registry.get(camera_id, auto_connect=True)
 
         # Capture with specified settings
@@ -394,12 +437,21 @@ async def _capture_frame(
         }
         return [TextContent(type="text", text=json.dumps(result))]
     except Exception as e:
-        logger.error(f"Error capturing frame from camera {camera_id}: {e}")
-        return [TextContent(type="text", text=f"Error capturing frame: {e}")]
+        logger.exception("Error capturing frame")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
 async def _set_camera_control(
-    camera_id: int, control: str, value: int
+    camera_id: int,
+    control: str,
+    value: int,
+    *,
+    registry: "CameraRegistry | None" = None,
 ) -> list[TextContent]:
     """Set a camera control parameter to a specified value.
 
@@ -416,12 +468,12 @@ async def _set_camera_control(
             Legacy "ASI_GAIN" format also accepted.
         value: Integer value to set. Valid range depends on control
             and camera model. Use get_camera_info for ranges.
+        registry: Optional CameraRegistry for dependency injection (testing).
 
     Returns:
         List with single TextContent containing JSON with result:
-        {"camera_id": int, "control": str, "value": int,
-         "min": int, "max": int, "default": int}
-        Returns error message if camera not connected or control invalid.
+        {"camera_id": int, "control": str, "value": int, "auto": bool}
+        Returns JSON error if camera not connected or control invalid.
 
     Raises:
         None. Exceptions caught and returned as error text.
@@ -432,26 +484,33 @@ async def _set_camera_control(
         {"camera_id": 0, "control": "Gain", "value": 100, ...}
     """
     try:
-        registry = get_registry()
+        registry = registry or get_registry()
         camera = registry.get(camera_id, auto_connect=True)
 
         # Remove ASI_ prefix if provided for backwards compatibility
         control_name = control.replace("ASI_", "")
 
-        # Set control via camera instance
-        if not camera._instance:
-            return [TextContent(type="text", text="Camera not connected")]
-
-        result_dict = camera._instance.set_control(control_name, value)
+        # Set control via Camera method (raises CameraNotConnectedError)
+        result_dict = camera.set_control_info(control_name, value)
         result_dict["camera_id"] = camera_id
 
         return [TextContent(type="text", text=json.dumps(result_dict, indent=2))]
     except Exception as e:
-        logger.error(f"Error setting {control} on camera {camera_id}: {e}")
-        return [TextContent(type="text", text=f"Error setting control: {e}")]
+        logger.exception("Error setting camera control")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
-async def _get_camera_control(camera_id: int, control: str) -> list[TextContent]:
+async def _get_camera_control(
+    camera_id: int,
+    control: str,
+    *,
+    registry: "CameraRegistry | None" = None,
+) -> list[TextContent]:
     """Get the current value of a camera control parameter.
 
     Reads camera hardware settings including current value, valid range,
@@ -465,12 +524,12 @@ async def _get_camera_control(camera_id: int, control: str) -> list[TextContent]
         camera_id: Zero-based camera index (0=finder, 1=main).
         control: Control name without ASI_ prefix (e.g., "Temperature").
             Legacy "ASI_TEMPERATURE" format also accepted.
+        registry: Optional CameraRegistry for dependency injection (testing).
 
     Returns:
         List with single TextContent containing JSON:
-        {"camera_id": int, "control": str, "value": int,
-         "min": int, "max": int, "default": int, "is_auto": bool}
-        Returns error message if camera not connected or control invalid.
+        {"camera_id": int, "control": str, "value": int, "auto": bool}
+        Returns JSON error if camera not connected or control invalid.
 
     Raises:
         None. Exceptions caught and returned as error text.
@@ -481,20 +540,22 @@ async def _get_camera_control(camera_id: int, control: str) -> list[TextContent]
         >>> print(f"Sensor temp: {data['value'] / 10}°C")
     """
     try:
-        registry = get_registry()
+        registry = registry or get_registry()
         camera = registry.get(camera_id, auto_connect=True)
 
         # Remove ASI_ prefix if provided for backwards compatibility
         control_name = control.replace("ASI_", "")
 
-        # Get control via camera instance
-        if not camera._instance:
-            return [TextContent(type="text", text="Camera not connected")]
-
-        result_dict = camera._instance.get_control(control_name)
+        # Get control via Camera method (raises CameraNotConnectedError)
+        result_dict = camera.get_control_info(control_name)
         result_dict["camera_id"] = camera_id
 
         return [TextContent(type="text", text=json.dumps(result_dict, indent=2))]
     except Exception as e:
-        logger.error(f"Error getting {control} from camera {camera_id}: {e}")
-        return [TextContent(type="text", text=f"Error getting control: {e}")]
+        logger.exception("Error getting camera control")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]

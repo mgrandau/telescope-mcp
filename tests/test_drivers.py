@@ -1,5 +1,6 @@
 """Tests for driver stubs."""
 
+import struct
 import tempfile
 from pathlib import Path
 
@@ -18,6 +19,49 @@ from telescope_mcp.drivers.cameras.twin import (
 )
 from telescope_mcp.drivers.motors import MotorType, StubMotorController
 from telescope_mcp.drivers.sensors import DigitalTwinSensorDriver
+
+
+def _parse_jpeg_dimensions(data: bytes) -> tuple[int, int]:
+    """Parse width and height from JPEG data.
+
+    Scans for SOF0 (0xFFC0) marker and extracts dimensions.
+
+    Args:
+        data: JPEG byte data.
+
+    Returns:
+        Tuple of (width, height).
+
+    Raises:
+        ValueError: If SOF marker not found.
+    """
+    i = 0
+    while i < len(data) - 9:
+        if data[i] == 0xFF:
+            marker = data[i + 1]
+            # SOF0, SOF1, SOF2 markers contain dimensions
+            if marker in (0xC0, 0xC1, 0xC2):
+                # Skip marker (2) + length (2) + precision (1)
+                height = struct.unpack(">H", data[i + 5 : i + 7])[0]
+                width = struct.unpack(">H", data[i + 7 : i + 9])[0]
+                return width, height
+            elif marker == 0xD8:  # SOI
+                i += 2
+            elif marker == 0xD9:  # EOI
+                break
+            elif marker == 0x00:  # Stuffed byte
+                i += 1
+            else:
+                # Skip segment
+                if i + 3 < len(data):
+                    seg_len = struct.unpack(">H", data[i + 2 : i + 4])[0]
+                    i += 2 + seg_len
+                else:
+                    break
+        else:
+            i += 1
+    raise ValueError("SOF marker not found in JPEG data")
+
 
 # =============================================================================
 # Digital Twin Camera Driver Tests
@@ -581,10 +625,10 @@ class TestDigitalTwinCapture:
         Arrangement:
         1. Finder camera spec: 1280x960.
         2. Capture produces JPEG bytes.
-        3. Decode JPEG to verify dimensions.
+        3. Parse JPEG header to verify dimensions.
 
         Action:
-        Captures frame and decodes with OpenCV.
+        Captures frame and parses JPEG SOF marker.
 
         Assertion Strategy:
         Validates resolution by confirming:
@@ -592,10 +636,10 @@ class TestDigitalTwinCapture:
         - Image height = 960 pixels.
         """
         data = finder_camera.capture(100000)
-        # Decode JPEG
-        img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-        assert img.shape[1] == 1280  # width
-        assert img.shape[0] == 960  # height
+        # Parse JPEG dimensions from SOF0 marker (FF C0)
+        width, height = _parse_jpeg_dimensions(data)
+        assert width == 1280
+        assert height == 960
 
     def test_synthetic_capture_correct_resolution_main(self, main_camera):
         """Verifies main camera captures at correct resolution.
@@ -603,10 +647,10 @@ class TestDigitalTwinCapture:
         Arrangement:
         1. Main camera spec: 1920x1080.
         2. Capture produces JPEG bytes.
-        3. Decode to verify dimensions.
+        3. Parse JPEG header to verify dimensions.
 
         Action:
-        Captures frame and decodes.
+        Captures frame and parses JPEG SOF marker.
 
         Assertion Strategy:
         Validates resolution by confirming:
@@ -614,9 +658,9 @@ class TestDigitalTwinCapture:
         - Image height = 1080 pixels.
         """
         data = main_camera.capture(100000)
-        img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-        assert img.shape[1] == 1920  # width
-        assert img.shape[0] == 1080  # height
+        width, height = _parse_jpeg_dimensions(data)
+        assert width == 1920
+        assert height == 1080
 
     def test_capture_gain_affects_noise(self, finder_camera):
         """Verifies gain parameter affects image noise.

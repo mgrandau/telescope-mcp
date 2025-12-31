@@ -1992,6 +1992,97 @@ class Camera:
                 self._hooks.on_error(e)
             raise CameraError(f"Failed to get {name}: {e}") from e
 
+    def get_control_info(self, name: str) -> dict[str, Any]:
+        """Get full control information including value, range, and auto status.
+
+        Returns the complete driver response for a control, including current
+        value, min/max range, default, and auto mode status. Use this when
+        the full control metadata is needed (e.g., for API responses).
+
+        For just the current value, use get_control() which returns int.
+
+        Business context: MCP tools and APIs need complete control information
+        to display to users, including valid ranges for UI sliders and whether
+        auto mode is available/enabled. This method provides that without
+        exposing the internal _instance.
+
+        Args:
+            name: Control name (e.g., "Gain", "Exposure", "Temperature").
+
+        Returns:
+            Dict with control metadata:
+            - control: str - Control name
+            - value: int - Current value
+            - auto: bool - Whether auto mode is enabled
+            Additional fields may include min, max, default depending on driver.
+
+        Raises:
+            CameraNotConnectedError: If camera is not connected.
+            CameraError: If control name is invalid or query fails.
+
+        Example:
+            >>> info = camera.get_control_info("Gain")
+            >>> print(f"Gain: {info['value']} (auto={info['auto']})")
+        """
+        if self._instance is None:
+            raise CameraNotConnectedError("Camera is not connected")
+
+        try:
+            return self._instance.get_control(name)
+        except Exception as e:
+            if self._hooks.on_error:
+                self._hooks.on_error(e)
+            raise CameraError(f"Failed to get control info for {name}: {e}") from e
+
+    def set_control_info(self, name: str, value: int) -> dict[str, Any]:
+        """Set camera control and return full result information.
+
+        Sets a control value and returns the complete driver response including
+        the actual value set (may differ due to clamping) and auto status.
+        Use this when the result metadata is needed (e.g., for API responses).
+
+        For fire-and-forget control setting, use set_control() which returns None.
+
+        Business context: MCP tools need to return the actual value set by
+        hardware (which may clamp out-of-range values) and current auto status.
+        This method provides that confirmation without exposing _instance.
+
+        Args:
+            name: Control name (e.g., "Gain", "Exposure").
+            value: Integer value to set. Will be clamped to valid range.
+
+        Returns:
+            Dict with result metadata:
+            - control: str - Control name
+            - value: int - Actual value set (may differ from requested)
+            - auto: bool - Whether auto mode is enabled
+
+        Raises:
+            CameraNotConnectedError: If camera is not connected.
+            CameraError: If control name is invalid or setting fails.
+
+        Example:
+            >>> result = camera.set_control_info("Gain", 100)
+            >>> print(f"Gain set to {result['value']}")
+        """
+        if self._instance is None:
+            raise CameraNotConnectedError("Camera is not connected")
+
+        try:
+            result = self._instance.set_control(name, value)
+
+            # Track common controls for internal state
+            if name == "Gain":
+                self._current_gain = value
+            elif name == "Exposure":
+                self._current_exposure_us = value
+
+            return result
+        except Exception as e:
+            if self._hooks.on_error:
+                self._hooks.on_error(e)
+            raise CameraError(f"Failed to set {name}={value}: {e}") from e
+
     # Context manager support
 
     def __enter__(self) -> Camera:

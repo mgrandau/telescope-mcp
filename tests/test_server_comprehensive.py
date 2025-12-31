@@ -37,7 +37,7 @@ def cleanup_dashboard():
         None: Exceptions from stop_dashboard() are suppressed.
 
     Cleanup:
-        Calls stop_dashboard() and clears _dashboard_thread to ensure
+        Calls stop_dashboard() and clears _dashboard state to ensure
         clean state for next test.
 
     Business Context:
@@ -47,16 +47,16 @@ def cleanup_dashboard():
     # Cleanup before test (handle leftover from previous runs)
     stop_dashboard()
     time.sleep(0.1)
-    server_module._dashboard_thread = None
-    server_module._dashboard_server = None
+    server_module._dashboard.thread = None
+    server_module._dashboard.server = None
 
     yield
 
     # Cleanup after test
     stop_dashboard()
     time.sleep(0.1)
-    server_module._dashboard_thread = None
-    server_module._dashboard_server = None
+    server_module._dashboard.thread = None
+    server_module._dashboard.server = None
 
 
 class TestCreateServer:
@@ -220,7 +220,7 @@ class TestDashboardManagement:
 
         Assertion Strategy:
         Validates basic startup by confirming:
-        - _dashboard_thread is not None (thread created).
+        - _dashboard.thread is not None (thread created).
 
         Testing Principle:
         Validates core functionality, ensuring dashboard can be
@@ -237,7 +237,7 @@ class TestDashboardManagement:
         # Dashboard thread should exist
         from telescope_mcp import server as server_module
 
-        assert server_module._dashboard_thread is not None
+        assert server_module._dashboard.thread is not None
 
     def test_start_dashboard_already_running(self):
         """Verifies start_dashboard is idempotent when already running.

@@ -5,7 +5,8 @@ Sessions are the core abstraction for telescope data storage.
 """
 
 import json
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
@@ -13,6 +14,9 @@ from mcp.types import TextContent, Tool
 from telescope_mcp.data import LogLevel, SessionType
 from telescope_mcp.drivers.config import get_factory, get_session_manager
 from telescope_mcp.observability import get_logger
+
+if TYPE_CHECKING:
+    from telescope_mcp.data import SessionManager
 
 logger = get_logger(__name__)
 
@@ -80,7 +84,7 @@ TOOLS = [
             "properties": {
                 "level": {
                     "type": "string",
-                    "enum": ["DEBUG", "INFO", "WARNING", "ERROR"],
+                    "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                     "description": "Log level",
                     "default": "INFO",
                 },
@@ -121,9 +125,7 @@ TOOLS = [
     ),
     Tool(
         name="get_data_dir",
-        description=(
-            "Get the current data directory path where session files " "are stored"
-        ),
+        description="Get current data directory path for session storage",
         inputSchema={
             "type": "object",
             "properties": {},
@@ -235,10 +237,10 @@ def register(server: Server) -> None:
             None. All errors are caught and returned as TextContent with details.
 
         Example:
-            # AI agent starts an imaging session
+            # AI agent starts an observation session
             result = await call_tool(
                 "start_session",
-                {"session_type": "imaging", "target": "M31"}
+                {"session_type": "observation", "target": "M31"}
             )
             # Returns: [TextContent(text='{"session_id": "...", ...}')]
         """
@@ -275,6 +277,8 @@ async def _start_session(
     session_type: str,
     target: str | None,
     purpose: str | None,
+    *,
+    manager: "SessionManager | None" = None,
 ) -> list[TextContent]:
     """Start a new telescope session of the specified type.
 
@@ -295,6 +299,7 @@ async def _start_session(
             'Jupiter'). Optional for other session types.
         purpose: Description of session purpose for non-observation
             sessions. Optional but recommended.
+        manager: Optional SessionManager for dependency injection (testing).
 
     Returns:
         List with TextContent containing JSON:
@@ -312,7 +317,7 @@ async def _start_session(
         "obs_20250115_103000"
     """
     try:
-        manager = get_session_manager()
+        manager = manager or get_session_manager()
 
         # Validate session type
         try:
@@ -350,11 +355,19 @@ async def _start_session(
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error starting session: {e}")
-        return [TextContent(type="text", text=f"Error starting session: {e}")]
+        logger.exception("Error starting session")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
-async def _end_session() -> list[TextContent]:
+async def _end_session(
+    *,
+    manager: "SessionManager | None" = None,
+) -> list[TextContent]:
     """End the current active session and persist data.
 
     Closes the active session, writes all collected data to an ASDF
@@ -366,7 +379,7 @@ async def _end_session() -> list[TextContent]:
     configured data directory.
 
     Args:
-        None.
+        manager: Optional SessionManager for dependency injection (testing).
 
     Returns:
         List with TextContent containing JSON:
@@ -385,7 +398,7 @@ async def _end_session() -> list[TextContent]:
         "/data/telescope/obs_20250115_103000.asdf"
     """
     try:
-        manager = get_session_manager()
+        manager = manager or get_session_manager()
 
         session_id = manager.active_session_id
         session_type = manager.active_session_type
@@ -393,7 +406,10 @@ async def _end_session() -> list[TextContent]:
         if session_type == SessionType.IDLE:
             return [
                 TextContent(
-                    type="text", text="No active session to end (currently in idle)"
+                    type="text",
+                    text=json.dumps(
+                        {"error": "no_session", "message": "Currently in idle state"}
+                    ),
                 )
             ]
 
@@ -407,11 +423,19 @@ async def _end_session() -> list[TextContent]:
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error ending session: {e}")
-        return [TextContent(type="text", text=f"Error ending session: {e}")]
+        logger.exception("Error ending session")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
-async def _get_session_info() -> list[TextContent]:
+async def _get_session_info(
+    *,
+    manager: "SessionManager | None" = None,
+) -> list[TextContent]:
     """Get information about the currently active session.
 
     Returns detailed status of the active session including type,
@@ -422,7 +446,7 @@ async def _get_session_info() -> list[TextContent]:
     warning counts - useful for monitoring session health.
 
     Args:
-        None.
+        manager: Optional SessionManager for dependency injection (testing).
 
     Returns:
         List with TextContent containing JSON:
@@ -430,7 +454,7 @@ async def _get_session_info() -> list[TextContent]:
          "purpose": str|null, "start_time": str, "duration_seconds": float,
          "is_idle": bool, "metrics": {"frames_captured": int,
          "log_entries": int, "events": int, "errors": int, "warnings": int}}
-        Returns "No active session" if session manager unavailable.
+        Returns JSON error if session manager unavailable.
 
     Raises:
         None. Exceptions caught and returned as error text.
@@ -441,11 +465,18 @@ async def _get_session_info() -> list[TextContent]:
         >>> print(f"Duration: {data['duration_seconds']:.1f}s")
     """
     try:
-        manager = get_session_manager()
+        manager = manager or get_session_manager()
         session = manager.active_session
 
         if session is None:
-            return [TextContent(type="text", text="No active session")]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {"error": "no_session", "message": "No active session"}
+                    ),
+                )
+            ]
 
         result = {
             "session_id": session.session_id,
@@ -465,11 +496,22 @@ async def _get_session_info() -> list[TextContent]:
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error getting session info: {e}")
-        return [TextContent(type="text", text=f"Error getting session info: {e}")]
+        logger.exception("Error getting session info")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
-async def _session_log(level: str, message: str, source: str) -> list[TextContent]:
+async def _session_log(
+    level: str,
+    message: str,
+    source: str,
+    *,
+    manager: "SessionManager | None" = None,
+) -> list[TextContent]:
     """Log a message to the current telescope session.
 
     Adds a timestamped log entry to the active session's log collection.
@@ -480,12 +522,13 @@ async def _session_log(level: str, message: str, source: str) -> list[TextConten
     information relevant to the session that should be preserved.
 
     Args:
-        level: Log severity, one of 'DEBUG', 'INFO', 'WARNING', 'ERROR'.
-            Case-insensitive. INFO is typical for user messages.
+        level: Log severity, one of 'DEBUG', 'INFO', 'WARNING', 'ERROR',
+            'CRITICAL'. Case-insensitive. INFO is typical for user messages.
         message: Log message text. Can include any relevant details.
             No length limit but keep reasonable for readability.
         source: Identifier for the log source component. Use 'user'
             for manual entries, or component name for automated logs.
+        manager: Optional SessionManager for dependency injection (testing).
 
     Returns:
         List with TextContent containing JSON:
@@ -500,7 +543,7 @@ async def _session_log(level: str, message: str, source: str) -> list[TextConten
         >>> result = await _session_log("INFO", "Started M31 imaging", "user")
     """
     try:
-        manager = get_session_manager()
+        manager = manager or get_session_manager()
 
         try:
             log_level = LogLevel(level.upper())
@@ -524,11 +567,21 @@ async def _session_log(level: str, message: str, source: str) -> list[TextConten
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error logging: {e}")
-        return [TextContent(type="text", text=f"Error logging: {e}")]
+        logger.exception("Error logging")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
-async def _session_event(event: str, details: dict[str, Any]) -> list[TextContent]:
+async def _session_event(
+    event: str,
+    details: dict[str, Any],
+    *,
+    manager: "SessionManager | None" = None,
+) -> list[TextContent]:
     """Record a significant event in the current session.
 
     Events are discrete occurrences during a session that warrant
@@ -544,6 +597,7 @@ async def _session_event(event: str, details: dict[str, Any]) -> list[TextConten
         details: Additional event metadata as key-value pairs.
             Contents are event-specific. Example for tracking_lost:
             {"duration_seconds": 30, "recovery_action": "manual"}.
+        manager: Optional SessionManager for dependency injection (testing).
 
     Returns:
         List with TextContent containing JSON:
@@ -561,7 +615,7 @@ async def _session_event(event: str, details: dict[str, Any]) -> list[TextConten
         ... )
     """
     try:
-        manager = get_session_manager()
+        manager = manager or get_session_manager()
         manager.add_event(event, **details)
 
         result = {
@@ -572,8 +626,13 @@ async def _session_event(event: str, details: dict[str, Any]) -> list[TextConten
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error recording event: {e}")
-        return [TextContent(type="text", text=f"Error recording event: {e}")]
+        logger.exception("Error recording event")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
 async def _get_data_dir() -> list[TextContent]:
@@ -612,8 +671,13 @@ async def _get_data_dir() -> list[TextContent]:
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error getting data dir: {e}")
-        return [TextContent(type="text", text=f"Error getting data dir: {e}")]
+        logger.exception("Error getting data dir")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]
 
 
 async def _set_data_dir(path: str) -> list[TextContent]:
@@ -646,11 +710,21 @@ async def _set_data_dir(path: str) -> list[TextContent]:
         "updated"
     """
     try:
-        from pathlib import Path
-
         from telescope_mcp.drivers.config import set_data_dir
 
-        new_path = Path(path)
+        new_path = Path(path).resolve()
+
+        # Validate path is absolute after resolution
+        if not new_path.is_absolute():
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {"error": "validation", "message": "Path must be absolute"}
+                    ),
+                )
+            ]
+
         set_data_dir(new_path)
 
         result = {
@@ -664,5 +738,10 @@ async def _set_data_dir(path: str) -> list[TextContent]:
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error(f"Error setting data dir: {e}")
-        return [TextContent(type="text", text=f"Error setting data dir: {e}")]
+        logger.exception("Error setting data dir")
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "internal", "message": str(e)}),
+            )
+        ]

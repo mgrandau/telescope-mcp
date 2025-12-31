@@ -4,6 +4,8 @@ import argparse
 import asyncio
 import logging
 import threading
+from dataclasses import dataclass, field
+from typing import Literal
 
 import uvicorn
 from mcp.server import Server
@@ -15,12 +17,23 @@ from telescope_mcp.web.app import create_app
 
 logger = get_logger(__name__)
 
-# Dashboard server thread and uvicorn server instance
-_dashboard_thread: threading.Thread | None = None
-_dashboard_server: uvicorn.Server | None = None
+
+@dataclass
+class DashboardState:
+    """Container for dashboard server state.
+
+    Encapsulates the background thread and uvicorn server instance
+    for the web dashboard, avoiding scattered global variables.
+    """
+
+    thread: threading.Thread | None = field(default=None)
+    server: uvicorn.Server | None = field(default=None)
 
 
-def create_server(mode: str = "digital_twin") -> Server:
+_dashboard = DashboardState()
+
+
+def create_server(mode: Literal["hardware", "digital_twin"] = "digital_twin") -> Server:
     """Create and configure the MCP server for AI agent telescope control.
 
     Initializes the camera registry with the configured driver
@@ -74,7 +87,7 @@ def create_server(mode: str = "digital_twin") -> Server:
     return server
 
 
-def _run_dashboard(host: str, port: int) -> None:
+def _run_dashboard(host: str, port: int, log_level: str = "warning") -> None:
     """Run the dashboard server in a background thread.
 
     Creates and runs a FastAPI/Uvicorn server for the web dashboard.
@@ -87,12 +100,13 @@ def _run_dashboard(host: str, port: int) -> None:
     Args:
         host: Host address to bind to (127.0.0.1 or 0.0.0.0).
         port: Port to listen on (typically 8080).
+        log_level: Uvicorn log level (default "warning" to reduce noise).
 
     Returns:
         None. Blocks running server until shutdown.
 
     Raises:
-        OSError: If port already in use or binding fails.
+        None. Errors are caught and logged.
 
     Example:
         >>> thread = Thread(
@@ -100,20 +114,26 @@ def _run_dashboard(host: str, port: int) -> None:
         ... )
         >>> thread.start()
     """
-    global _dashboard_server
-    app = create_app()
-    config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        log_level="warning",  # Reduce noise in MCP mode
-        ws="websockets-sansio",  # Use new websockets API (avoids deprecation warnings)
-    )
-    _dashboard_server = uvicorn.Server(config)
-    _dashboard_server.run()
+    try:
+        app = create_app()
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level=log_level,
+            ws="websockets-sansio",  # Avoids deprecation warnings
+        )
+        _dashboard.server = uvicorn.Server(config)
+        _dashboard.server.run()
+    except OSError as e:
+        logger.error("Dashboard failed to start", error=str(e), host=host, port=port)
+    except Exception:
+        logger.exception("Unexpected error in dashboard server")
 
 
-def start_dashboard(host: str = "127.0.0.1", port: int = 8080) -> None:
+def start_dashboard(
+    host: str = "127.0.0.1", port: int = 8080, log_level: str = "warning"
+) -> None:
     """Start the web dashboard server in a background thread.
 
     Starts a daemon thread running the web dashboard. Safe to call
@@ -128,6 +148,7 @@ def start_dashboard(host: str = "127.0.0.1", port: int = 8080) -> None:
         host: Host address to bind to (default 127.0.0.1 for local only).
             Use 0.0.0.0 to allow remote access.
         port: Port to listen on (default 8080).
+        log_level: Uvicorn log level (default "warning" to reduce noise).
 
     Returns:
         None. Dashboard runs in background daemon thread.
@@ -140,18 +161,17 @@ def start_dashboard(host: str = "127.0.0.1", port: int = 8080) -> None:
         >>> # Dashboard available at http://hostname:8080
         >>> start_dashboard()  # Already running - no-op
     """
-    global _dashboard_thread
-    if _dashboard_thread is not None and _dashboard_thread.is_alive():
+    if _dashboard.thread is not None and _dashboard.thread.is_alive():
         logger.warning("Dashboard already running")
         return
 
-    _dashboard_thread = threading.Thread(
+    _dashboard.thread = threading.Thread(
         target=_run_dashboard,
-        args=(host, port),
+        args=(host, port, log_level),
         daemon=True,
-        name="telescope-dashboard",
+        name=f"telescope-dashboard-{host}:{port}",
     )
-    _dashboard_thread.start()
+    _dashboard.thread.start()
     logger.info(f"Dashboard started at http://{host}:{port}")
 
 
@@ -179,15 +199,17 @@ def stop_dashboard() -> None:
         >>> # ... use dashboard ...
         >>> stop_dashboard()  # Triggers graceful shutdown
     """
-    global _dashboard_server
-    if _dashboard_server is not None:
+    if _dashboard.server is not None:
         logger.info("Stopping dashboard server")
-        _dashboard_server.should_exit = True
-        _dashboard_server = None
+        _dashboard.server.should_exit = True
+        _dashboard.server = None
 
 
 async def run_server(
-    dashboard_host: str | None, dashboard_port: int | None, mode: str = "digital_twin"
+    dashboard_host: str | None,
+    dashboard_port: int | None,
+    mode: Literal["hardware", "digital_twin"] = "digital_twin",
+    dashboard_log_level: str = "warning",
 ) -> None:
     """Run the MCP server over stdio for AI agent communication.
 
@@ -198,6 +220,7 @@ async def run_server(
         dashboard_host: Host for dashboard, or None to disable dashboard.
         dashboard_port: Port for dashboard, or None to disable dashboard.
         mode: Driver mode - "hardware" or "digital_twin" (default).
+        dashboard_log_level: Uvicorn log level for dashboard (default "warning").
 
     Returns:
         None. Runs until stdin closes or process terminated.
@@ -206,16 +229,17 @@ async def run_server(
         None. Errors are logged, registry cleanup always attempted.
 
     Example:
+        >>> import asyncio
         >>> # Run with dashboard and hardware mode
-        >>> await run_server("127.0.0.1", 8080, "hardware")
+        >>> asyncio.run(run_server("127.0.0.1", 8080, "hardware"))
         >>> # Run without dashboard, simulation mode
-        >>> await run_server(None, None, "digital_twin")
+        >>> asyncio.run(run_server(None, None, "digital_twin"))
     """
     server = create_server(mode=mode)
 
     # Start dashboard if configured
     if dashboard_host and dashboard_port:
-        start_dashboard(dashboard_host, dashboard_port)
+        start_dashboard(dashboard_host, dashboard_port, dashboard_log_level)
 
     try:
         async with stdio_server() as (read_stream, write_stream):
@@ -253,28 +277,21 @@ def parse_args() -> argparse.Namespace:
         - dashboard_host: str | None - Host for web dashboard (None=no dashboard)
         - dashboard_port: int | None - Port for web dashboard (None=use default)
         - data_dir: str | None - Directory for ASDF session storage (None=default)
+        - mode: str - Driver mode ("hardware" or "digital_twin")
+        - latitude: float | None - Observer latitude in degrees
+        - longitude: float | None - Observer longitude in degrees
+        - height: float - Observer height above sea level in meters
 
     Raises:
         SystemExit: On invalid arguments (e.g., --help, bad port number).
-
-    Example:
-        >>> args = parse_args()  # From sys.argv
-        >>> if args.dashboard_host:
-        ...     print(f"Dashboard: {args.dashboard_host}:{args.dashboard_port}")
-
-    Raises:
-        SystemExit: If invalid arguments provided (handled by argparse).
 
     Example:
         >>> # Run with dashboard on all interfaces, custom data directory
         >>> # Command: python -m telescope_mcp.server --dashboard-host 0.0.0.0
         >>> #          --dashboard-port 8080 --data-dir /data/telescope
         >>> args = parse_args()
-        >>> print(f"Dashboard: {args.dashboard_host}:{args.dashboard_port}")
-        >>> print(f"Data: {args.data_dir}")
-        >>>
-        >>> # Development mode (localhost only)
-        >>> # Command: python -m telescope_mcp.server --dashboard-host 127.0.0.1
+        >>> if args.dashboard_host:
+        ...     print(f"Dashboard: {args.dashboard_host}:{args.dashboard_port}")
     """
     parser = argparse.ArgumentParser(
         description="Telescope MCP Server - Control cameras, motors, and sensors"
@@ -290,6 +307,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Port to run the web dashboard on (e.g., 8080)",
+    )
+    parser.add_argument(
+        "--dashboard-log-level",
+        type=str,
+        choices=["critical", "error", "warning", "info", "debug"],
+        default="warning",
+        help="Log level for dashboard server (default: warning)",
     )
     parser.add_argument(
         "--data-dir",
@@ -383,6 +407,16 @@ def main() -> None:
 
     # Configure observer location if specified
     if args.latitude is not None and args.longitude is not None:
+        # P2-2: Validate coordinate ranges
+        if not (-90 <= args.latitude <= 90):
+            raise ValueError(
+                f"Latitude must be between -90 and 90 degrees, got {args.latitude}"
+            )
+        if not (-180 <= args.longitude <= 180):
+            raise ValueError(
+                f"Longitude must be between -180 and 180 degrees, got {args.longitude}"
+            )
+
         from telescope_mcp.drivers.config import set_location
 
         set_location(
@@ -404,8 +438,15 @@ def main() -> None:
     manager.log("INFO", "Telescope MCP server starting", source="server")
 
     logger.info("Starting MCP server")
-    asyncio.run(run_server(args.dashboard_host, args.dashboard_port, args.mode))
+    asyncio.run(
+        run_server(
+            args.dashboard_host,
+            args.dashboard_port,
+            args.mode,
+            args.dashboard_log_level,
+        )
+    )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

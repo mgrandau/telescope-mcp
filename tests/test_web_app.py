@@ -9,15 +9,28 @@ Author: Test suite
 Date: 2025-12-18
 """
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
-import pytest
-from fastapi.testclient import TestClient
+# Mock cv2 before importing app to avoid Python 3.13 compatibility issues
+# cv2.typing references cv2.dnn.DictValue which doesn't exist in headless builds
+_mock_cv2 = MagicMock()
+_mock_cv2.__version__ = "4.12.0"
+_mock_cv2.FONT_HERSHEY_SIMPLEX = 0
+_mock_cv2.IMWRITE_JPEG_QUALITY = 1
+_mock_cv2.imencode = MagicMock(
+    return_value=(True, MagicMock(tobytes=lambda: b"\xff\xd8test_jpeg"))
+)
+_mock_cv2.putText = MagicMock()
+sys.modules["cv2"] = _mock_cv2
 
-# Import the app factory
-from telescope_mcp.web.app import create_app
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+# Import the app factory (after cv2 mock)
+from telescope_mcp.web.app import create_app  # noqa: E402
 
 
 @pytest.fixture
@@ -823,9 +836,8 @@ class TestCameraAPIEndpoints:
         Assertion Strategy:
         Validates input rejection by confirming:
         - HTTP 400 indicates client error (not server fault).
-        - Response contains "error" field with diagnostic message.
+        - Response contains "detail" field with diagnostic message.
         - Error message includes "Unknown control" for clarity.
-        - Response includes "valid" field listing acceptable controls.
         - API does not attempt to apply invalid setting.
 
         Testing Principle:
@@ -838,9 +850,8 @@ class TestCameraAPIEndpoints:
         assert response.status_code == 400
 
         data = response.json()
-        assert "error" in data
-        assert "Unknown control" in data["error"]
-        assert "valid" in data
+        assert "detail" in data
+        assert "Unknown control" in data["detail"]
 
     def test_set_camera_control_nonexistent_camera(self, client, mock_asi):
         """Verifies API returns HTTP 404 when targeting absent camera.
@@ -864,7 +875,7 @@ class TestCameraAPIEndpoints:
         Assertion Strategy:
         Validates resource checking by confirming:
         - HTTP 404 indicates resource not found (standard REST semantic).
-        - Response contains "error" field describing issue.
+        - Response contains "detail" field describing issue.
         - Error message includes "not found" for clarity.
         - API checks camera existence before attempting control change.
 
@@ -880,8 +891,8 @@ class TestCameraAPIEndpoints:
         assert response.status_code == 404
 
         data = response.json()
-        assert "error" in data
-        assert "not found" in data["error"].lower()
+        assert "detail" in data
+        assert "not found" in data["detail"].lower()
 
     def test_set_camera_control_sdk_error(self, client, mock_asi):
         """Verifies API handles SDK control failures with HTTP 500.
@@ -908,7 +919,7 @@ class TestCameraAPIEndpoints:
         Assertion Strategy:
         Validates SDK error handling by confirming:
         - HTTP 500 indicates server/hardware error (not client fault).
-        - Response contains "error" field with diagnostic information.
+        - Response contains "detail" field with diagnostic information.
         - API does not crash or hang despite SDK failure.
         - Error is propagated to client for visibility.
 
@@ -925,7 +936,7 @@ class TestCameraAPIEndpoints:
         assert response.status_code == 500
 
         data = response.json()
-        assert "error" in data
+        assert "detail" in data
 
 
 class TestMotorAPIEndpoints:
@@ -963,6 +974,9 @@ class TestMotorAPIEndpoints:
         validate both axes respond correctly to movement commands
         with proper speed handling and bidirectional support.
 
+        Note: Motor endpoints currently return not_implemented status
+        as hardware integration is pending.
+
         Args:
             client: FastAPI TestClient fixture.
             axis: Motor axis ("altitude" or "azimuth").
@@ -976,9 +990,7 @@ class TestMotorAPIEndpoints:
         Assertion Strategy:
         Validates motor command by confirming:
         - HTTP 200 indicates command accepted.
-        - Response status="ok" confirms execution.
-        - Response steps matches requested value.
-        - Response speed matches expected (default or custom).
+        - Response status="not_implemented" (pending hardware integration).
 
         Testing Principle:
         Validates motor control API contract for both axes.
@@ -991,14 +1003,14 @@ class TestMotorAPIEndpoints:
         assert response.status_code == 200
 
         data = response.json()
-        assert data["status"] == "ok"
-        assert data["steps"] == steps
-        assert data["speed"] == expected_speed
+        assert data["status"] == "not_implemented"
+        assert "message" in data
 
     def test_stop_motors(self, client):
         """Verifies POST /api/motor/stop halts all motor movement.
 
         Tests emergency stop functionality for safety.
+        Note: Currently returns not_implemented as hardware pending.
 
         Arrangement:
         1. Motors may be in motion or idle.
@@ -1010,13 +1022,13 @@ class TestMotorAPIEndpoints:
         Assertion Strategy:
         Validates emergency stop by confirming:
         - HTTP 200 indicates command processed.
-        - Response status="stopped" confirms halt.
+        - Response status="not_implemented" (pending hardware).
         """
         response = client.post("/api/motor/stop")
         assert response.status_code == 200
 
         data = response.json()
-        assert data["status"] == "stopped"
+        assert data["status"] == "not_implemented"
 
 
 class TestPositionAPIEndpoint:
@@ -1299,6 +1311,33 @@ class TestStaticFilesAndTemplates:
         assert app is not None
         assert len(app.routes) > 0
 
+    def test_static_mount_skipped_when_dir_missing(self):
+        """Verifies app still works when STATIC_DIR doesn't exist.
+
+        Tests the branch where STATIC_DIR.exists() returns False,
+        ensuring app initialization completes without static mount.
+
+        Arrangement:
+        1. Patch STATIC_DIR.exists() to return False.
+
+        Action:
+        Create app with missing static directory.
+
+        Assertion Strategy:
+        - App creates successfully.
+        - No static route mounted.
+        """
+        with patch("telescope_mcp.web.app.STATIC_DIR") as mock_static_dir:
+            mock_static_dir.exists.return_value = False
+
+            app = create_app()
+            assert app is not None
+
+            # App should work but static files won't be served
+            client = TestClient(app)
+            response = client.get("/")
+            assert response.status_code == 200
+
     def test_templates_directory_configured(self):
         """Verifies TEMPLATES_DIR is configured as Path object.
 
@@ -1525,6 +1564,9 @@ class TestEndToEndWorkflow:
         issue movement command. Represents typical telescope slew operation
         from dashboard.
 
+        Note: Motor endpoints currently return not_implemented status
+        as hardware integration is pending.
+
         Business context:
         Users initiate telescope movements from dashboard: check current
         position (altitude/azimuth), calculate required movement, issue
@@ -1570,4 +1612,168 @@ class TestEndToEndWorkflow:
         # Step 4: Stop all motors
         response = client.post("/api/motor/stop")
         assert response.status_code == 200
-        assert response.json()["status"] == "stopped"
+        assert response.json()["status"] == "not_implemented"
+
+
+class TestCameraOpenFailure:
+    """Tests for camera open failure path."""
+
+    def test_get_camera_open_failure(self, mock_asi):
+        """Verifies camera open failure is handled gracefully.
+
+        Tests that when Camera() constructor raises an exception,
+        _get_camera returns None and logs the error.
+
+        Arrangement:
+        1. mock_asi.Camera raises RuntimeError on construction.
+        2. Camera cache is empty (first access).
+
+        Action:
+        Attempt to get camera 0 via API that triggers _get_camera.
+
+        Assertion Strategy:
+        - Camera endpoint returns HTTP 404 (not found).
+        - No crash or unhandled exception.
+        """
+        # Make Camera constructor raise an exception
+        mock_asi.Camera.side_effect = RuntimeError("USB connection failed")
+
+        app = create_app()
+        client = TestClient(app)
+
+        # Try to set control on camera 0 - will try to open camera
+        response = client.post(
+            "/api/camera/0/control", params={"control": "ASI_GAIN", "value": 50}
+        )
+
+        # Should get 404 because _get_camera returns None
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data["detail"].lower()
+
+
+class TestCloseAllCameras:
+    """Tests for _close_all_cameras() function."""
+
+    def test_close_cameras_with_streaming(self, mock_asi):
+        """Verifies _close_all_cameras stops streaming cameras.
+
+        Tests that cameras currently streaming have stop_video_capture()
+        called before close().
+
+        Arrangement:
+        1. Camera 0 is open and streaming.
+        2. _camera_streaming[0] = True.
+
+        Action:
+        Call _close_all_cameras() (via lifespan shutdown).
+
+        Assertion Strategy:
+        - stop_video_capture() is called on streaming camera.
+        - close() is called on camera.
+        """
+        from telescope_mcp.web.app import (
+            _camera_streaming,
+            _cameras,
+            _close_all_cameras,
+        )
+
+        mock_camera = mock_asi.Camera.return_value
+
+        # Simulate an open, streaming camera
+        _cameras[0] = mock_camera
+        _camera_streaming[0] = True
+
+        # Close all cameras
+        _close_all_cameras()
+
+        # Verify stop_video_capture was called
+        mock_camera.stop_video_capture.assert_called_once()
+        mock_camera.close.assert_called_once()
+
+        # Verify dicts are cleared
+        assert len(_cameras) == 0
+        assert len(_camera_streaming) == 0
+
+    def test_close_cameras_error_handling(self, mock_asi):
+        """Verifies _close_all_cameras continues on per-camera errors.
+
+        Tests that if one camera raises an exception during close,
+        other cameras are still closed.
+
+        Arrangement:
+        1. Two cameras open (0 and 1).
+        2. Camera 0 raises exception on close().
+        3. Camera 1 closes normally.
+
+        Action:
+        Call _close_all_cameras().
+
+        Assertion Strategy:
+        - Both cameras have close() called.
+        - Exception doesn't prevent cleanup of other cameras.
+        - Dicts are cleared despite error.
+        """
+        from telescope_mcp.web.app import (
+            _camera_streaming,
+            _cameras,
+            _close_all_cameras,
+        )
+
+        mock_camera_0 = MagicMock()
+        mock_camera_0.close.side_effect = RuntimeError("Close failed")
+
+        mock_camera_1 = MagicMock()
+
+        _cameras.clear()
+        _camera_streaming.clear()
+        _cameras[0] = mock_camera_0
+        _cameras[1] = mock_camera_1
+        _camera_streaming[0] = False
+        _camera_streaming[1] = False
+
+        # Close all cameras - should not raise
+        _close_all_cameras()
+
+        # Both cameras should have close() attempted
+        mock_camera_0.close.assert_called_once()
+        mock_camera_1.close.assert_called_once()
+
+        # Dicts should be cleared
+        assert len(_cameras) == 0
+        assert len(_camera_streaming) == 0
+
+
+class TestMainFunction:
+    """Tests for main() entry point."""
+
+    def test_main_function_creates_app_and_runs(self):
+        """Verifies main() creates app and calls uvicorn.run.
+
+        Tests the entry point function to ensure it properly
+        configures and starts the web server.
+
+        Arrangement:
+        1. Patch uvicorn.run to prevent actual server startup.
+        2. Patch create_app to verify it's called.
+
+        Action:
+        Call main().
+
+        Assertion Strategy:
+        - create_app() is called.
+        - uvicorn.run() is called with correct host/port.
+        """
+        from telescope_mcp.web.app import main
+
+        with patch("telescope_mcp.web.app.uvicorn") as mock_uvicorn:
+            with patch("telescope_mcp.web.app.create_app") as mock_create_app:
+                mock_app = MagicMock()
+                mock_create_app.return_value = mock_app
+
+                main()
+
+                mock_create_app.assert_called_once()
+                mock_uvicorn.run.assert_called_once_with(
+                    mock_app, host="0.0.0.0", port=8080
+                )

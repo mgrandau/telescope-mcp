@@ -274,15 +274,17 @@ class TestSessionTools:
         Calls _end_session() with only IDLE active.
 
         Assertion Strategy:
-        Validates protection by confirming:
-        - result[0].text contains "No active session to end".
+        Validates protection by confirming JSON error response:
+        - result[0].text contains error "no_session".
 
         Testing Principle:
         Validates business logic, ensuring IDLE sessions
         cannot be manually ended (auto-managed)."""
         result = await sessions._end_session()
 
-        assert "No active session to end" in result[0].text
+        data = json.loads(result[0].text)
+        assert data["error"] == "no_session"
+        assert "idle" in data["message"].lower()
 
     @pytest.mark.asyncio
     async def test_session_log(self) -> None:
