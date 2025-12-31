@@ -54,7 +54,6 @@ from pathlib import Path
 from types import MappingProxyType, TracebackType
 from typing import TYPE_CHECKING, Any, TypedDict, final
 
-import cv2
 import numpy as np
 
 from telescope_mcp.observability import get_logger
@@ -861,6 +860,9 @@ class DigitalTwinCameraInstance:
             >>> frame1 = instance.capture(100_000)  # From m31.jpg
             >>> frame2 = instance.capture(200_000)  # Same m31.jpg
         """
+        # Lazy import cv2 to avoid Python 3.13 cv2.typing bug at module load
+        import cv2 as _cv2
+
         if self._config.image_path is None:
             return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
@@ -868,15 +870,15 @@ class DigitalTwinCameraInstance:
         if not path.is_file():
             return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
-        img = cv2.imread(str(path))
+        img = _cv2.imread(str(path))
         if img is None:
             return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
         # Resize to match camera resolution if needed
         img = self._resize_to_camera(img)
 
-        _, jpeg = cv2.imencode(
-            ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
+        _, jpeg = _cv2.imencode(
+            ".jpg", img, [_cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
         )
         return jpeg.tobytes()
 
@@ -913,6 +915,9 @@ class DigitalTwinCameraInstance:
             >>> frame2 = instance.capture(100_000)  # sky/002.jpg
             >>> # ... eventually loops back to sky/001.jpg
         """
+        # Lazy import cv2 to avoid Python 3.13 cv2.typing bug at module load
+        import cv2 as _cv2
+
         if not self._image_files:
             return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
@@ -926,15 +931,15 @@ class DigitalTwinCameraInstance:
         else:
             self._image_index = min(self._image_index, len(self._image_files) - 1)
 
-        img = cv2.imread(str(image_path))
+        img = _cv2.imread(str(image_path))
         if img is None:
             return self._capture_synthetic(_DEFAULT_FALLBACK_EXPOSURE_US)
 
         # Resize to match camera resolution
         img = self._resize_to_camera(img)
 
-        _, jpeg = cv2.imencode(
-            ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
+        _, jpeg = _cv2.imencode(
+            ".jpg", img, [_cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
         )
         return jpeg.tobytes()
 
@@ -962,12 +967,15 @@ class DigitalTwinCameraInstance:
             >>> img = cv2.imread("4000x3000.jpg")  # High-res image
             >>> resized = instance._resize_to_camera(img)  # Now 1920x1080
         """
+        # Lazy import cv2 to avoid Python 3.13 cv2.typing bug at module load
+        import cv2 as _cv2
+
         target_width = self._info["MaxWidth"]
         target_height = self._info["MaxHeight"]
 
         h, w = img.shape[:2]
         if w != target_width or h != target_height:
-            img = cv2.resize(img, (target_width, target_height))
+            img = _cv2.resize(img, (target_width, target_height))
 
         return img
 
@@ -1002,6 +1010,9 @@ class DigitalTwinCameraInstance:
             Noise level increases with gain setting to simulate real camera
             behavior. Text overlay shows camera ID, exposure, and gain.
         """
+        # Lazy import cv2 to avoid Python 3.13 cv2.typing bug at module load
+        import cv2 as _cv2
+
         width = self._info["MaxWidth"]
         height = self._info["MaxHeight"]
 
@@ -1013,36 +1024,36 @@ class DigitalTwinCameraInstance:
         img[:, ::_SYNTHETIC_GRID_SPACING] = [50, 50, 50]
 
         # Add center crosshair
-        cv2.line(img, (width // 2, 0), (width // 2, height), (0, 255, 0), 1)
-        cv2.line(img, (0, height // 2), (width, height // 2), (0, 255, 0), 1)
+        _cv2.line(img, (width // 2, 0), (width // 2, height), (0, 255, 0), 1)
+        _cv2.line(img, (0, height // 2), (width, height // 2), (0, 255, 0), 1)
 
         # Add circle at center
-        cv2.circle(img, (width // 2, height // 2), _CROSSHAIR_RADIUS, (0, 100, 0), 1)
+        _cv2.circle(img, (width // 2, height // 2), _CROSSHAIR_RADIUS, (0, 100, 0), 1)
 
         # Add text overlay
-        cv2.putText(
+        _cv2.putText(
             img,
             f"DIGITAL TWIN - Camera {self._camera_id}",
             (50, 50),
-            cv2.FONT_HERSHEY_SIMPLEX,
+            _cv2.FONT_HERSHEY_SIMPLEX,
             1,
             (255, 255, 255),
             2,
         )
-        cv2.putText(
+        _cv2.putText(
             img,
             f"Exposure: {exposure_us}us",
             (50, 100),
-            cv2.FONT_HERSHEY_SIMPLEX,
+            _cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
             (200, 200, 200),
             1,
         )
-        cv2.putText(
+        _cv2.putText(
             img,
             f"Gain: {self._controls['Gain']['value']}",
             (50, 130),
-            cv2.FONT_HERSHEY_SIMPLEX,
+            _cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
             (200, 200, 200),
             1,
@@ -1053,11 +1064,11 @@ class DigitalTwinCameraInstance:
         if gain > 0:
             noise_level = int(gain) // 10
             noise = np.random.randint(0, noise_level + 1, img.shape, dtype=np.uint8)
-            img = cv2.add(img, noise)
+            img = _cv2.add(img, noise)
 
         # Encode as JPEG
-        _, jpeg = cv2.imencode(
-            ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
+        _, jpeg = _cv2.imencode(
+            ".jpg", img, [_cv2.IMWRITE_JPEG_QUALITY, _DEFAULT_JPEG_QUALITY]
         )
         return jpeg.tobytes()
 

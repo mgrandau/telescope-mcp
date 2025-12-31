@@ -2352,8 +2352,10 @@ class TestASICameraInstanceJPEGEncodingFailure:
         """
         instance = ASICameraInstance(0, mock_camera)
 
-        with patch("telescope_mcp.drivers.cameras.asi.cv2.imencode") as mock_encode:
-            mock_encode.return_value = (False, None)
+        # cv2 is lazily imported inside _capture_raw_image, so patch it directly
+        with patch.dict("sys.modules", {"cv2": MagicMock()}) as mock_modules:
+            mock_cv2 = mock_modules["cv2"]
+            mock_cv2.imencode.return_value = (False, None)
 
             with pytest.raises(RuntimeError, match="Failed to encode image as JPEG"):
                 instance.capture(1)

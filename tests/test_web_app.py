@@ -9,28 +9,45 @@ Author: Test suite
 Date: 2025-12-18
 """
 
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-# Mock cv2 before importing app to avoid Python 3.13 compatibility issues
-# cv2.typing references cv2.dnn.DictValue which doesn't exist in headless builds
-_mock_cv2 = MagicMock()
-_mock_cv2.__version__ = "4.12.0"
-_mock_cv2.FONT_HERSHEY_SIMPLEX = 0
-_mock_cv2.IMWRITE_JPEG_QUALITY = 1
-_mock_cv2.imencode = MagicMock(
-    return_value=(True, MagicMock(tobytes=lambda: b"\xff\xd8test_jpeg"))
-)
-_mock_cv2.putText = MagicMock()
-sys.modules["cv2"] = _mock_cv2
+import numpy as np
+import pytest
+from fastapi.testclient import TestClient
 
-import numpy as np  # noqa: E402
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+from telescope_mcp.utils.image import ImageEncoder
+from telescope_mcp.web.app import create_app
 
-# Import the app factory (after cv2 mock)
-from telescope_mcp.web.app import create_app  # noqa: E402
+
+class MockImageEncoder:
+    """Mock image encoder for testing without cv2 dependency.
+
+    Provides minimal implementation of ImageEncoder protocol
+    that returns valid JPEG-like bytes without actual encoding.
+    """
+
+    def encode_jpeg(self, img: np.ndarray, quality: int = 85) -> bytes:
+        """Return mock JPEG bytes with valid magic header."""
+        return b"\xff\xd8mock_jpeg_data"
+
+    def put_text(
+        self,
+        img: np.ndarray,
+        text: str,
+        position: tuple[int, int],
+        scale: float,
+        color: int | tuple[int, int, int],
+        thickness: int,
+    ) -> None:
+        """No-op for testing."""
+        pass
+
+
+@pytest.fixture
+def mock_encoder() -> ImageEncoder:
+    """Provide mock image encoder for tests."""
+    return MockImageEncoder()
 
 
 @pytest.fixture
@@ -179,7 +196,7 @@ def client(mock_asi, mock_sdk_path):
     Returns:
         TestClient: Configured client for HTTP request testing.
     """
-    app = create_app()
+    app = create_app(encoder=MockImageEncoder())
     with TestClient(app) as test_client:
         yield test_client
 
@@ -1127,7 +1144,7 @@ class TestLifecycleManagement:
         Validates resource management, ensuring app can start, serve requests,
         and cleanly shut down without leaking resources or hanging.
         """
-        app = create_app()
+        app = create_app(encoder=MockImageEncoder())
 
         # Lifespan is tested by creating client (enters/exits context)
         with TestClient(app) as test_client:
@@ -1174,7 +1191,7 @@ class TestLifecycleManagement:
         mock_sdk_path.side_effect = RuntimeError("SDK not found")
 
         # Should still create app (logs warning but continues)
-        app = create_app()
+        app = create_app(encoder=MockImageEncoder())
         assert app is not None
 
         with TestClient(app) as test_client:
@@ -1306,7 +1323,7 @@ class TestStaticFilesAndTemplates:
         Validates app initialization, ensuring route registration
         completes during create_app() call.
         """
-        app = create_app()
+        app = create_app(encoder=MockImageEncoder())
         # Check that app has routes configured
         assert app is not None
         assert len(app.routes) > 0
@@ -1330,7 +1347,7 @@ class TestStaticFilesAndTemplates:
         with patch("telescope_mcp.web.app.STATIC_DIR") as mock_static_dir:
             mock_static_dir.exists.return_value = False
 
-            app = create_app()
+            app = create_app(encoder=MockImageEncoder())
             assert app is not None
 
             # App should work but static files won't be served
@@ -1638,7 +1655,7 @@ class TestCameraOpenFailure:
         # Make Camera constructor raise an exception
         mock_asi.Camera.side_effect = RuntimeError("USB connection failed")
 
-        app = create_app()
+        app = create_app(encoder=MockImageEncoder())
         client = TestClient(app)
 
         # Try to set control on camera 0 - will try to open camera

@@ -112,6 +112,10 @@ disable_error_code = ["call-arg", "no-untyped-call"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "--cov-report=term-missing --no-cov-on-fail"
+filterwarnings = [
+    # Suppress orphan coroutine warnings from AsyncMock cleanup in tests
+    "ignore:coroutine.*was never awaited:RuntimeWarning",
+]
 
 [tool.coverage.run]
 source = ["telescope_mcp"]

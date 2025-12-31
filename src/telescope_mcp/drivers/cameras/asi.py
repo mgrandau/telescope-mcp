@@ -38,7 +38,6 @@ from collections.abc import Mapping
 from types import MappingProxyType, TracebackType
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, final, runtime_checkable
 
-import cv2
 import numpy as np
 import zwoasi as asi
 
@@ -1074,8 +1073,11 @@ class ASICameraInstance:
         else:
             img_array = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width))
 
-        success, jpeg_data = cv2.imencode(
-            ".jpg", img_array, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
+        # Lazy import cv2 to avoid Python 3.13 cv2.typing bug at module load
+        import cv2 as _cv2
+
+        success, jpeg_data = _cv2.imencode(
+            ".jpg", img_array, [_cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
         )
         if not success:
             raise RuntimeError("Failed to encode image as JPEG")

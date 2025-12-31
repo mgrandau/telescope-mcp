@@ -302,9 +302,10 @@ class TestMainCoverage:
                     "telescope_mcp.drivers.config.get_session_manager"
                 ) as mock_mgr:
                     mock_mgr.return_value.log = MagicMock()
-                    with patch("telescope_mcp.server.asyncio.run") as mock_run:
-                        main()
-                        mock_run.assert_called_once()
+                    with patch("telescope_mcp.server.run_server") as mock_run:
+                        with patch("telescope_mcp.server.asyncio.run"):
+                            main()
+                            mock_run.assert_called_once()
 
     def test_main_with_data_dir(self):
         """Verifies main() configures data directory when specified.
@@ -341,9 +342,10 @@ class TestMainCoverage:
                         "telescope_mcp.drivers.config.get_session_manager"
                     ) as mock_mgr:
                         mock_mgr.return_value.log = MagicMock()
-                        with patch("telescope_mcp.server.asyncio.run"):
-                            main()
-                            mock_set_dir.assert_called_once()
+                        with patch("telescope_mcp.server.run_server"):
+                            with patch("telescope_mcp.server.asyncio.run"):
+                                main()
+                                mock_set_dir.assert_called_once()
 
     def test_main_with_location(self):
         """Verifies main() configures observer location when specified.
@@ -380,13 +382,14 @@ class TestMainCoverage:
                         "telescope_mcp.drivers.config.get_session_manager"
                     ) as mock_mgr:
                         mock_mgr.return_value.log = MagicMock()
-                        with patch("telescope_mcp.server.asyncio.run"):
-                            main()
-                            mock_set_loc.assert_called_once_with(
-                                lat=40.7128,
-                                lon=-74.0060,
-                                alt=10.0,
-                            )
+                        with patch("telescope_mcp.server.run_server"):
+                            with patch("telescope_mcp.server.asyncio.run"):
+                                main()
+                                mock_set_loc.assert_called_once_with(
+                                    lat=40.7128,
+                                    lon=-74.0060,
+                                    alt=10.0,
+                                )
 
     def test_main_invalid_latitude(self):
         """Verifies main() raises ValueError for invalid latitude.
@@ -466,9 +469,10 @@ class TestMainCoverage:
                     "telescope_mcp.drivers.config.get_session_manager"
                 ) as mock_mgr:
                     mock_mgr.return_value.log = MagicMock()
-                    with patch("telescope_mcp.server.asyncio.run") as mock_run:
-                        main()
-                        mock_run.assert_called_once()
+                    with patch("telescope_mcp.server.run_server") as mock_run_server:
+                        with patch("telescope_mcp.server.asyncio.run"):
+                            main()
+                            mock_run_server.assert_called_once()
 
 
 class TestParseArgsCoverage:

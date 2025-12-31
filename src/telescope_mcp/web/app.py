@@ -5,7 +5,6 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import cv2
 import numpy as np
 import uvicorn
 import zwoasi as asi
@@ -16,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from telescope_mcp.drivers.asi_sdk import get_sdk_library_path
 from telescope_mcp.observability import get_logger
+from telescope_mcp.utils.image import CV2ImageEncoder, ImageEncoder
 
 logger = get_logger(__name__)
 
@@ -29,6 +29,9 @@ _sdk_initialized = False
 _cameras: dict[int, asi.Camera] = {}  # Open camera instances
 _camera_streaming: dict[int, bool] = {}  # Track which cameras are streaming
 _camera_settings: dict[int, dict] = {}  # Store camera settings (exposure_us, gain)
+
+# Image encoder (injectable for testing)
+_encoder: ImageEncoder | None = None
 
 # Default settings
 DEFAULT_EXPOSURE_US = 100_000  # 100ms
@@ -194,7 +197,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _close_all_cameras()
 
 
-def create_app() -> FastAPI:
+def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
     """Create and configure the FastAPI telescope control application.
 
     Factory function that builds the complete web application with all
@@ -207,10 +210,13 @@ def create_app() -> FastAPI:
     - REST API for camera and motor control at /api/*
 
     This factory pattern allows testing with fresh app instances and
-    supports different configurations per environment.
+    supports different configurations per environment. The encoder
+    parameter enables dependency injection for testing without cv2.
 
     Args:
-        None.
+        encoder: Optional ImageEncoder for JPEG encoding. If None,
+            uses CV2ImageEncoder (real OpenCV). Pass mock encoder
+            for testing without cv2 dependency.
 
     Returns:
         Configured FastAPI application instance ready for uvicorn.run().
@@ -220,9 +226,15 @@ def create_app() -> FastAPI:
         None. Missing static/template dirs are handled gracefully.
 
     Example:
-        >>> app = create_app()
+        >>> app = create_app()  # Production with real cv2
         >>> uvicorn.run(app, host="0.0.0.0", port=8080)
+        >>> # Testing with mock encoder:
+        >>> mock_enc = MockImageEncoder()
+        >>> app = create_app(encoder=mock_enc)
     """
+    global _encoder
+    _encoder = encoder if encoder is not None else CV2ImageEncoder()
+
     app = FastAPI(
         title="Telescope Control",
         description="Web dashboard for telescope control",
@@ -971,17 +983,17 @@ async def _generate_camera_stream(
     if camera is None:
         # Yield error frame
         error_img = np.zeros((480, 640, 3), dtype=np.uint8)
-        cv2.putText(
+        assert _encoder is not None
+        _encoder.put_text(
             error_img,
             f"Camera {camera_id} not found",
             (50, 240),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
+            1.0,
             (0, 0, 255),
             2,
         )
-        _, jpeg = cv2.imencode(".jpg", error_img)
-        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n"
+        jpeg = _encoder.encode_jpeg(error_img)
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
         return
 
     try:
@@ -1033,13 +1045,10 @@ async def _generate_camera_stream(
                     )
 
                 # Encode as JPEG
-                _, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                assert _encoder is not None
+                jpeg = _encoder.encode_jpeg(img, quality=85)
 
-                yield (
-                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
-                    + jpeg.tobytes()
-                    + b"\r\n"
-                )
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
 
                 await asyncio.sleep(frame_interval)
 
@@ -1047,37 +1056,33 @@ async def _generate_camera_stream(
                 logger.warning(f"Frame capture error: {e}")
                 # Yield error frame but keep trying
                 frame_error_img = np.zeros((height, width), dtype=np.uint8)
-                cv2.putText(
+                assert _encoder is not None
+                _encoder.put_text(
                     frame_error_img,
                     f"Frame error: {str(e)[:30]}",
                     (10, height // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
                     255,
                     1,
                 )
-                _, jpeg = cv2.imencode(".jpg", frame_error_img)
-                yield (
-                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
-                    + jpeg.tobytes()
-                    + b"\r\n"
-                )
+                jpeg = _encoder.encode_jpeg(frame_error_img)
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
                 await asyncio.sleep(0.5)
 
     except Exception as e:  # pragma: no cover - stream fatal error
         logger.error(f"Video stream error for camera {camera_id}: {e}")
         error_img = np.zeros((480, 640, 3), dtype=np.uint8)
-        cv2.putText(
+        assert _encoder is not None
+        _encoder.put_text(
             error_img,
             f"Stream error: {str(e)[:40]}",
             (20, 240),
-            cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
             (0, 0, 255),
             2,
         )
-        _, jpeg = cv2.imencode(".jpg", error_img)
-        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n"
+        jpeg = _encoder.encode_jpeg(error_img)
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
     finally:  # pragma: no cover - cleanup after stream ends
         # Stop video capture
         try:

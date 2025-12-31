@@ -7,7 +7,10 @@ import pytest
 from telescope_mcp.devices.camera import (
     Camera,
     CameraConfig,
+    CameraError,
+    CameraHooks,
     CameraInfo,
+    CameraNotConnectedError,
     CaptureOptions,
     OverlayConfig,
     SystemClock,
@@ -464,6 +467,371 @@ class TestCameraControls:
         # DigitalTwin accepts but doesn't validate control values
         camera.set_control("Gain", 100)
         # Control should be set (verified by no exception)
+
+    def test_get_control_info_not_connected(self):
+        """Verifies get_control_info raises CameraNotConnectedError when disconnected.
+
+        Tests guard clause that prevents control queries on unconnected cameras.
+
+        Arrangement:
+        1. Create Camera without calling connect().
+        2. Camera._instance remains None.
+
+        Action:
+        Calls camera.get_control_info("Gain") on disconnected camera.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - CameraNotConnectedError is raised.
+        - Error message indicates disconnected state.
+
+        Testing Principle:
+        Validates defensive programming, ensuring operations fail fast
+        with clear errors rather than cryptic NoneType exceptions.
+        """
+        driver = DigitalTwinCameraDriver()
+        camera = Camera(driver, CameraConfig(camera_id=0))
+        # Do NOT connect - _instance remains None
+
+        with pytest.raises(CameraNotConnectedError) as exc_info:
+            camera.get_control_info("Gain")
+
+        assert "not connected" in str(exc_info.value).lower()
+
+    def test_get_control_info_error_triggers_hook(self):
+        """Verifies get_control_info calls hooks.on_error on driver failure.
+
+        Tests that driver exceptions are forwarded to error hooks
+        before being wrapped in CameraError.
+
+        Arrangement:
+        1. Create mock driver that raises on get_control.
+        2. Create CameraHooks with on_error callback.
+        3. Create Camera with both.
+
+        Action:
+        Calls camera.get_control_info("BadControl").
+
+        Assertion Strategy:
+        Validates hook invocation by confirming:
+        - CameraError is raised (wrapping original).
+        - hooks.on_error was called exactly once.
+        - Original exception passed to hook.
+
+        Testing Principle:
+        Validates observer pattern, ensuring error hooks
+        receive exceptions for logging/metrics before re-raising.
+        """
+        from unittest.mock import Mock
+
+        # Create mock instance that connects but fails on get_control
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"camera_id": 0, "name": "Mock"}
+        mock_instance.get_controls.return_value = {}
+        mock_instance.get_control.side_effect = ValueError("Invalid control")
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        error_callback = Mock()
+        hooks = CameraHooks(on_error=error_callback)
+
+        camera = Camera(mock_driver, CameraConfig(camera_id=0), hooks=hooks)
+        camera.connect()
+
+        with pytest.raises(CameraError) as exc_info:
+            camera.get_control_info("BadControl")
+
+        assert "Invalid control" in str(exc_info.value)
+        error_callback.assert_called_once()
+        # Verify original exception passed to hook
+        call_args = error_callback.call_args[0][0]
+        assert isinstance(call_args, ValueError)
+
+    def test_set_control_info_not_connected(self):
+        """Verifies set_control_info raises CameraNotConnectedError when disconnected.
+
+        Tests guard clause that prevents control setting on unconnected cameras.
+
+        Arrangement:
+        1. Create Camera without calling connect().
+        2. Camera._instance remains None.
+
+        Action:
+        Calls camera.set_control_info("Gain", 100) on disconnected camera.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - CameraNotConnectedError is raised.
+        - Error message indicates disconnected state.
+
+        Testing Principle:
+        Validates defensive programming, ensuring operations fail fast
+        with clear errors rather than cryptic NoneType exceptions.
+        """
+        driver = DigitalTwinCameraDriver()
+        camera = Camera(driver, CameraConfig(camera_id=0))
+        # Do NOT connect - _instance remains None
+
+        with pytest.raises(CameraNotConnectedError) as exc_info:
+            camera.set_control_info("Gain", 100)
+
+        assert "not connected" in str(exc_info.value).lower()
+
+    def test_set_control_info_tracks_gain(self):
+        """Verifies set_control_info tracks Gain value internally.
+
+        Tests that setting Gain control updates _current_gain
+        for internal state tracking (used for metadata/status queries).
+
+        Arrangement:
+        1. Create and connect camera via fixture pattern.
+        2. Initial gain state is from default config.
+
+        Action:
+        Calls camera.set_control_info("Gain", 200).
+
+        Assertion Strategy:
+        Validates state tracking by confirming:
+        - No exception raised.
+        - _current_gain updated to 200.
+
+        Testing Principle:
+        Validates internal state consistency, ensuring gain
+        changes are tracked for status reporting APIs.
+        """
+        driver = DigitalTwinCameraDriver()
+        camera = Camera(driver, CameraConfig(camera_id=0))
+        camera.connect()
+
+        camera.set_control_info("Gain", 200)
+
+        assert camera._current_gain == 200
+
+        camera.disconnect()
+
+    def test_set_control_info_tracks_exposure(self):
+        """Verifies set_control_info tracks Exposure value internally.
+
+        Tests that setting Exposure control updates _current_exposure_us
+        for internal state tracking (used for metadata/status queries).
+
+        Arrangement:
+        1. Create and connect camera via fixture pattern.
+        2. Initial exposure state is unknown.
+
+        Action:
+        Calls camera.set_control_info("Exposure", 500000).
+
+        Assertion Strategy:
+        Validates state tracking by confirming:
+        - No exception raised.
+        - _current_exposure_us updated to 500000.
+
+        Testing Principle:
+        Validates internal state consistency, ensuring exposure
+        changes are tracked for status reporting APIs.
+        """
+        driver = DigitalTwinCameraDriver()
+        camera = Camera(driver, CameraConfig(camera_id=0))
+        camera.connect()
+
+        camera.set_control_info("Exposure", 500000)
+
+        assert camera._current_exposure_us == 500000
+
+        camera.disconnect()
+
+    def test_set_control_info_error_triggers_hook(self):
+        """Verifies set_control_info calls hooks.on_error on driver failure.
+
+        Tests that driver exceptions are forwarded to error hooks
+        before being wrapped in CameraError.
+
+        Arrangement:
+        1. Create mock driver that raises on set_control after connect.
+        2. Create CameraHooks with on_error callback.
+        3. Create Camera with both.
+
+        Action:
+        Calls camera.set_control_info("Gain", 100).
+
+        Assertion Strategy:
+        Validates hook invocation by confirming:
+        - CameraError is raised (wrapping original).
+        - hooks.on_error was called exactly once.
+        - Original exception passed to hook.
+
+        Testing Principle:
+        Validates observer pattern, ensuring error hooks
+        receive exceptions for logging/metrics before re-raising.
+        """
+        from unittest.mock import Mock
+
+        # Create mock instance that connects successfully
+        # but fails on set_control after connection (not during connect defaults)
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"camera_id": 0, "name": "Mock"}
+        mock_instance.get_controls.return_value = {}
+        # Allow first 2 calls (Gain, Exposure defaults in connect), fail third
+        call_count = {"n": 0}
+
+        def set_control_with_counter(name, value):
+            call_count["n"] += 1
+            if call_count["n"] > 2:
+                raise RuntimeError("Hardware failure")
+            return {"control": name, "value": value, "auto": False}
+
+        mock_instance.set_control.side_effect = set_control_with_counter
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        error_callback = Mock()
+        hooks = CameraHooks(on_error=error_callback)
+
+        camera = Camera(mock_driver, CameraConfig(camera_id=0), hooks=hooks)
+        camera.connect()  # Uses 2 set_control calls for defaults
+
+        with pytest.raises(CameraError) as exc_info:
+            camera.set_control_info("Gain", 100)  # Third call fails
+
+        assert "Hardware failure" in str(exc_info.value)
+        error_callback.assert_called_once()
+        # Verify original exception passed to hook
+        call_args = error_callback.call_args[0][0]
+        assert isinstance(call_args, RuntimeError)
+
+    def test_get_control_info_error_without_hook(self):
+        """Verifies get_control_info raises CameraError without triggering hook.
+
+        Tests exception wrapping when no on_error hook is configured.
+        Branch coverage for: if self._hooks.on_error: (False path)
+
+        Arrangement:
+        1. Create mock driver that raises on get_control.
+        2. Create Camera without hooks (default CameraHooks).
+
+        Action:
+        Calls camera.get_control_info("BadControl").
+
+        Assertion Strategy:
+        Validates error wrapping by confirming:
+        - CameraError is raised.
+        - Error message contains original exception info.
+
+        Testing Principle:
+        Validates graceful degradation, ensuring errors propagate
+        correctly even when no observers are registered.
+        """
+        from unittest.mock import Mock
+
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"camera_id": 0, "name": "Mock"}
+        mock_instance.get_controls.return_value = {}
+        mock_instance.get_control.side_effect = ValueError("Unknown control")
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        # No hooks - default CameraHooks with on_error=None
+        camera = Camera(mock_driver, CameraConfig(camera_id=0))
+        camera.connect()
+
+        with pytest.raises(CameraError) as exc_info:
+            camera.get_control_info("BadControl")
+
+        assert "Unknown control" in str(exc_info.value)
+
+    def test_set_control_info_error_without_hook(self):
+        """Verifies set_control_info raises CameraError without triggering hook.
+
+        Tests exception wrapping when no on_error hook is configured.
+        Branch coverage for: if self._hooks.on_error: (False path)
+
+        Arrangement:
+        1. Create mock driver that raises on set_control after connect.
+        2. Create Camera without hooks (default CameraHooks).
+
+        Action:
+        Calls camera.set_control_info("Gain", 100).
+
+        Assertion Strategy:
+        Validates error wrapping by confirming:
+        - CameraError is raised.
+        - Error message contains original exception info.
+
+        Testing Principle:
+        Validates graceful degradation, ensuring errors propagate
+        correctly even when no observers are registered.
+        """
+        from unittest.mock import Mock
+
+        mock_instance = Mock()
+        mock_instance.get_info.return_value = {"camera_id": 0, "name": "Mock"}
+        mock_instance.get_controls.return_value = {}
+
+        call_count = {"n": 0}
+
+        def set_control_with_counter(name, value):
+            call_count["n"] += 1
+            if call_count["n"] > 2:
+                raise RuntimeError("Driver error")
+            return {"control": name, "value": value, "auto": False}
+
+        mock_instance.set_control.side_effect = set_control_with_counter
+
+        mock_driver = Mock()
+        mock_driver.open.return_value = mock_instance
+
+        # No hooks - default CameraHooks with on_error=None
+        camera = Camera(mock_driver, CameraConfig(camera_id=0))
+        camera.connect()
+
+        with pytest.raises(CameraError) as exc_info:
+            camera.set_control_info("Gain", 100)
+
+        assert "Driver error" in str(exc_info.value)
+
+    def test_set_control_info_other_control(self):
+        """Verifies set_control_info works for non-Gain/Exposure controls.
+
+        Tests the else branch when name is neither "Gain" nor "Exposure",
+        ensuring no internal state tracking occurs for other controls.
+        Branch coverage for: if name == "Gain": ... elif name == "Exposure": (else)
+
+        Arrangement:
+        1. Create and connect camera via DigitalTwinDriver.
+        2. Record initial gain/exposure state.
+
+        Action:
+        Calls camera.set_control_info("WB_R", 50) for white balance red.
+
+        Assertion Strategy:
+        Validates selective tracking by confirming:
+        - No exception raised.
+        - _current_gain unchanged.
+        - _current_exposure_us unchanged.
+
+        Testing Principle:
+        Validates selective state tracking, ensuring only Gain/Exposure
+        are tracked internally while other controls pass through.
+        """
+        driver = DigitalTwinCameraDriver()
+        camera = Camera(driver, CameraConfig(camera_id=0))
+        camera.connect()
+
+        initial_gain = camera._current_gain
+        initial_exposure = camera._current_exposure_us
+
+        # WB_R is not Gain or Exposure - should not update tracking
+        camera.set_control_info("WB_R", 50)
+
+        # Internal tracking should be unchanged
+        assert camera._current_gain == initial_gain
+        assert camera._current_exposure_us == initial_exposure
+
+        camera.disconnect()
 
 
 class TestCameraController:
