@@ -24,12 +24,25 @@ def cleanup_dashboard():
     between tests. Runs cleanup both before and after to handle
     leftover servers from previous test runs.
 
+    Args:
+        None: Autouse fixture takes no arguments.
+
     Yields:
         None: Test runs during yield.
+
+    Returns:
+        Generator[None, None, None]: Pytest fixture generator.
+
+    Raises:
+        None: Exceptions from stop_dashboard() are suppressed.
 
     Cleanup:
         Calls stop_dashboard() and clears _dashboard_thread to ensure
         clean state for next test.
+
+    Business Context:
+        Dashboard server binds to port 8080. Without cleanup, port
+        remains bound causing subsequent test failures.
     """
     # Cleanup before test (handle leftover from previous runs)
     stop_dashboard()

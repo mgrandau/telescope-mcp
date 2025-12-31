@@ -32,6 +32,34 @@ if TYPE_CHECKING:
 # Import Clock from camera module to avoid duplication
 from telescope_mcp.devices.camera import Clock, SystemClock
 
+__all__ = [
+    # Constants
+    "TIMING_THRESHOLD_GOOD_MS",
+    "TIMING_THRESHOLD_ACCEPTABLE_MS",
+    "TIMING_THRESHOLD_POOR_MS",
+    # Dataclasses
+    "SyncCaptureConfig",
+    "SyncCaptureResult",
+    # Exceptions
+    "CameraControllerError",
+    "CameraNotFoundError",
+    "SyncCaptureError",
+    # Main class
+    "CameraController",
+]
+
+
+# --- Timing Thresholds ---
+# Named constants for synchronization quality assessment
+TIMING_THRESHOLD_GOOD_MS: float = 50.0
+"""Timing error below this indicates excellent synchronization."""
+
+TIMING_THRESHOLD_ACCEPTABLE_MS: float = 200.0
+"""Timing error below this is acceptable for most applications."""
+
+TIMING_THRESHOLD_POOR_MS: float = 500.0
+"""Timing error above this may cause platesolve failures."""
+
 
 @dataclass
 class SyncCaptureConfig:
@@ -80,46 +108,32 @@ class SyncCaptureResult:
 
     @property
     def timing_error_ms(self) -> float:
-        """Timing error in milliseconds (convenience accessor).
+        """Timing error in milliseconds.
 
-        Converts timing_error_us (microseconds) to milliseconds for easier
-        reading in logs, UI displays, and diagnostics. Positive values indicate
-        secondary started late, negative early. Magnitude indicates
-        synchronization quality.
+        Converts timing_error_us to milliseconds for logs and diagnostics.
+        Positive = secondary late, negative = secondary early.
 
-        Business context: Critical metric for assessing dual-camera
-        synchronization quality in telescope operations. Platesolving workflows
-        require finder and main camera captures taken at same moment (within
-        ~100ms) to ensure both frames show same sky position. Large timing
-        errors (>500ms) may cause platesolve failures if telescope drifted
-        between captures. Used in quality monitoring ("are captures
-        synchronized well enough?"), performance tuning (adjusting clock
-        resolution, thread priorities), and troubleshooting ("why did alignment
-        fail?"). Logged to session metadata for post-observation analysis.
+        Business context: Platesolving requires both images to show stars in
+        nearly identical positions. Timing errors > 500ms cause noticeable
+        star drift due to Earth's rotation, degrading alignment accuracy.
 
-        Implementation details: Simple conversion: timing_error_us / 1000.0.
-        Returns float with sub-millisecond precision (e.g., 1.234ms). Sign
-        preserved: positive = secondary late, negative = secondary early.
-        Typical values: 0-50ms (good synchronization), 50-200ms (acceptable),
-        >200ms (poor - may affect platesolving). Zero indicates perfect timing
-        (rare - usually 1-20ms due to thread scheduling jitter).
+        Quality thresholds:
+            - < TIMING_THRESHOLD_GOOD_MS (50ms): Excellent sync
+            - < TIMING_THRESHOLD_ACCEPTABLE_MS (200ms): Acceptable
+            - > TIMING_THRESHOLD_POOR_MS (500ms): May cause platesolve failures
 
         Args:
-            No arguments (property accessor).
+            self: SyncCaptureResult instance containing timing_error_us.
 
         Returns:
-            Timing error in milliseconds as float. Range typically -500.0 to
-            +500.0 (extreme cases), commonly -50.0 to +50.0 for well-tuned
-            systems. Precision to 0.001ms (1 microsecond).
+            Timing error in milliseconds as float.
 
         Raises:
-            No exceptions raised. Pure calculation on stored value.
+            No exceptions raised; pure arithmetic conversion.
 
         Example:
-            >>> result = controller.sync_capture(config)
-            >>> if abs(result.timing_error_ms) > 100:
-            ...     logger.warning(f"Poor sync: {result.timing_error_ms:.1f}ms error")
-            >>> print(f"Timing: {result.timing_error_ms:+.2f}ms")  # +1.23ms or -2.45ms
+            >>> if abs(result.timing_error_ms) > TIMING_THRESHOLD_GOOD_MS:
+            ...     logger.warning(f"Poor sync: {result.timing_error_ms:.1f}ms")
         """
         return self.timing_error_us / 1000.0
 
@@ -131,15 +145,91 @@ class CameraControllerError(Exception):
 
 
 class CameraNotFoundError(CameraControllerError):
-    """Raised when referenced camera doesn't exist."""
+    """Raised when referenced camera doesn't exist.
 
-    pass
+    Attributes:
+        camera_name: The name that was not found.
+    """
+
+    def __init__(self, camera_name: str) -> None:
+        """Initialize with the camera name that wasn't found.
+
+        Stores the camera name as a structured attribute for programmatic
+        error handling, enabling callers to suggest corrections or list
+        available cameras.
+
+        Business context: In multi-camera setups, typos in camera names are
+        common. Exposing camera_name allows UI to show "Did you mean 'finder'?"
+        suggestions or list registered cameras.
+
+        Args:
+            camera_name: The name that was looked up but not registered.
+                Stored in self.camera_name for later access.
+
+        Returns:
+            None. Exception instance ready to be raised.
+
+        Raises:
+            No exceptions raised during initialization.
+
+        Example:
+            >>> try:
+            ...     controller.get_camera("funder")  # typo
+            ... except CameraNotFoundError as e:
+            ...     print(f"'{e.camera_name}' not found")
+        """
+        self.camera_name = camera_name
+        super().__init__(f"Camera '{camera_name}' not found")
 
 
 class SyncCaptureError(CameraControllerError):
-    """Raised when synchronized capture fails."""
+    """Raised when synchronized capture fails.
 
-    pass
+    Attributes:
+        camera_role: Which camera failed ('primary', 'secondary', or None).
+        original_error: The underlying exception if available.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        camera_role: str | None = None,
+        original_error: Exception | None = None,
+    ) -> None:
+        """Initialize with failure details.
+
+        Creates structured exception with context for programmatic handling.
+        Attributes enable targeted recovery (e.g., retry specific camera).
+
+        Business context: During long sync captures (minutes), failures need
+        clear attribution. Knowing which camera failed allows retry logic
+        to attempt recovery on just that device, preserving the other's frame.
+
+        Args:
+            message: Human-readable error description for logs and display.
+            camera_role: 'primary', 'secondary', or None if not camera-specific.
+                Enables targeted retry logic.
+            original_error: The underlying exception that caused the failure.
+                Enables detailed debugging and exception chaining.
+
+        Returns:
+            None. Exception instance ready to be raised.
+
+        Raises:
+            No exceptions raised during initialization.
+
+        Example:
+            >>> try:
+            ...     result = controller.sync_capture(config)
+            ... except SyncCaptureError as e:
+            ...     if e.camera_role == "secondary":
+            ...         # Retry secondary only
+            ...         pass
+        """
+        self.camera_role = camera_role
+        self.original_error = original_error
+        super().__init__(message)
 
 
 class CameraController:
@@ -176,80 +266,70 @@ class CameraController:
     ) -> None:
         """Create controller with cameras and optional clock.
 
-        Initializes the controller with a collection of named cameras.
-        The clock can be injected for deterministic timing in tests.
+        Initializes the controller with an optional initial set of cameras
+        and a clock abstraction for timing operations.
 
-        Business context: Multi-camera astrophotography requires coordinated
-        captures. This controller manages named cameras enabling sync
-        operations between finder and main imaging cameras.
+        Business context: The clock parameter enables deterministic testing
+        by injecting a mock clock. Production uses SystemClock for real
+        timing; tests use MockClock for instant, predictable execution.
 
         Args:
             cameras: Dict mapping camera names to Camera instances.
+                Names should be descriptive ("finder", "main", "guide").
+                Cameras should typically be connected before adding.
             clock: Clock implementation for timing (default: SystemClock).
+                Inject MockClock for testing sync_capture timing logic.
 
         Returns:
-            None. Controller initialized, ready for camera operations.
+            None. Controller ready for add_camera() or sync_capture().
 
         Raises:
-            No exceptions raised during initialization.
+            No exceptions raised. Empty cameras dict is valid initial state.
 
         Example:
-            controller = CameraController({
-                "finder": finder_camera,
-                "main": main_camera,
-            })
+            >>> # Production usage
+            >>> controller = CameraController({
+            ...     "finder": finder_camera,
+            ...     "main": main_camera,
+            ... })
+            >>> # Testing with mock clock
+            >>> controller = CameraController(clock=MockClock())
         """
         self._cameras: dict[str, Camera] = cameras or {}
         self._clock = clock or SystemClock()
 
-    def add_camera(self, name: str, camera: Camera) -> None:
+    def add_camera(
+        self,
+        name: str,
+        camera: Camera,
+        *,
+        overwrite: bool = False,
+    ) -> None:
         """Add a camera to the controller.
 
         Registers a camera under the given name for use in sync operations.
-        Camera should be connected before adding. The name becomes the key for
-        subsequent get_camera() calls and config references.
-
-        Business context: Enables runtime camera registration for flexible
-        multi-camera setups. Supports dynamic camera addition as hardware is
-        connected, hot-swapping cameras without controller restart, and
-        descriptive naming that clarifies role (e.g., "main_imaging",
-        "finder_guide", "autoguider"). Essential for observatory setups where
-        camera configuration may change per observation session or target.
-
-        Implementation details: Does not validate camera state or connectivity -
-        caller should ensure camera is connected and configured before
-        registration. Duplicate names will overwrite previous registration
-        without warning. Consider validating camera.is_connected before adding
-        in production code.
+        Camera should be connected before adding.
 
         Args:
-            name: Unique name for the camera (e.g., "finder", "main",
-                "autoguider"). Used as key in sync_capture config. Should be
-                descriptive and match names used elsewhere in the system for
-                consistency.
-            camera: Camera instance, typically already connected via
-                Camera.connect(). Should have driver initialized and be ready
-                for capture operations.
+            name: Unique name for the camera (e.g., "finder", "main").
+            camera: Camera instance, typically already connected.
+            overwrite: If True, replace existing camera with same name.
+                If False (default), raise ValueError on duplicate.
 
         Returns:
-            None. Camera is registered and immediately available for operations.
+            None. Camera registered and immediately available.
 
         Raises:
-            None. Duplicate names silently overwrite. Consider adding validation.
+            ValueError: If name already registered and overwrite=False.
 
         Example:
-            >>> # Basic registration
             >>> controller.add_camera("guide", guide_camera)
-            >>> controller.add_camera("main", main_camera)
-            >>>
-            >>> # Dynamic setup for multi-camera observatory
-            >>> registry = get_registry()
-            >>> for camera_id in registry.discovered_camera_ids:
-            ...     camera = registry.get(camera_id)
-            ...     name = f"camera_{camera_id}"
-            ...     controller.add_camera(name, camera)
-            >>> print(f"Registered {len(controller.camera_names)} cameras")
+            >>> controller.add_camera("guide", new_camera, overwrite=True)
         """
+        if name in self._cameras and not overwrite:
+            raise ValueError(
+                f"Camera '{name}' already registered. Use overwrite=True to replace."
+            )
         self._cameras[name] = camera
 
     def remove_camera(self, name: str) -> Camera | None:
@@ -284,45 +364,37 @@ class CameraController:
             Camera instance.
 
         Raises:
-            CameraNotFoundError: If name not registered.
+            CameraNotFoundError: If name not registered. The exception's
+                camera_name attribute contains the requested name.
 
         Example:
             camera = controller.get_camera("main")
             result = camera.capture()
         """
         if name not in self._cameras:
-            raise CameraNotFoundError(f"Camera '{name}' not found")
+            raise CameraNotFoundError(name)
         return self._cameras[name]
 
     @property
     def camera_names(self) -> list[str]:
-        """List of registered camera names for iteration and UI display.
+        """List of registered camera names.
 
-        Returns the names of all cameras currently managed by this controller.
-        Useful for building UIs, validating camera availability, and iterating
-        over all cameras for batch operations.
+        Business context: Used by UI and diagnostics to enumerate available
+        cameras without exposing internal dict. Order preserved for consistent
+        display and iteration in status reports.
 
-        Business context: Enables dynamic UI generation showing available
-        cameras, validation of camera references in configurations, and bulk
-        operations across all cameras. Essential for multi-camera setups where
-        camera availability may change at runtime.
+        Args:
+            self: CameraController instance.
 
         Returns:
-            List of camera names (strings) in registration order. Empty list if
-            no cameras registered. Names correspond to keys used in register()
-            and get_camera().
+            List of camera names in registration order. Empty if none registered.
 
         Raises:
-            None. Always succeeds, returning empty list if no cameras.
+            No exceptions raised; returns empty list if no cameras.
 
         Example:
-            >>> controller.register("main", main_camera)
-            >>> controller.register("finder", finder_camera)
-            >>> print(controller.camera_names)
-            ['main', 'finder']
             >>> for name in controller.camera_names:
-            ...     camera = controller.get_camera(name)
-            ...     print(f"{name}: {camera.is_connected}")
+            ...     print(f"{name}: {controller.get_camera(name).is_connected}")
         """
         return list(self._cameras.keys())
 
@@ -334,142 +406,81 @@ class CameraController:
         """Calculate delay before starting secondary capture for temporal centering.
 
         Determines the optimal delay to start the secondary camera exposure so
-        that it's temporally centered within the primary camera's exposure. This
-        ensures both cameras capture the same moment in time at their respective
-        exposure midpoints, critical for accurate alignment and tracking.
+        that it's temporally centered within the primary camera's exposure.
 
         Formula: delay = (primary / 2) - (secondary / 2)
 
-        Business context: Essential for synchronized multi-camera astrophotography
-        where a long-exposure main camera is guided by a shorter-exposure finder
-        camera. By centering exposures, tracking corrections measured in the
-        finder frame correspond to the main frame's temporal midpoint, minimizing
-        field rotation and drift artifacts. Used in guided imaging to ensure
-        guide corrections represent the science exposure's actual position.
-
-        Implementation details: Uses integer division for microsecond precision.
-        For very long primary exposures (>30 minutes), secondary should be
-        centered to avoid accumulation of tracking errors. The delay can be
-        quite long (tens of seconds) for typical long-exposure scenarios.
-
         Args:
             primary_exposure_us: Primary camera exposure time in microseconds.
-                Typically the main imaging camera with long exposure (1s-10min).
+                Must be positive.
             secondary_exposure_us: Secondary camera exposure time in
-                microseconds. Typically the guide/finder camera with short
-                exposure (100ms-1s).
+                microseconds. Must be positive.
 
         Returns:
             Delay in microseconds to wait after starting primary before starting
-            secondary. Ensures secondary's temporal midpoint aligns with
-            primary's. Result may be 0 if secondary exposure equals or exceeds
-            primary (no delay).
+            secondary. Returns 0 if secondary >= primary (no delay needed).
 
         Raises:
-            None. Always returns a valid delay value.
+            ValueError: If either exposure time is not positive.
 
         Example:
-            >>> # Typical astrophotography: 176s main, 312ms guide
             >>> delay = controller.calculate_sync_timing(176_000_000, 312_000)
             >>> print(f"Wait {delay / 1_000_000:.1f}s before starting guide")
             Wait 87.8s before starting guide
-            >>>
-            >>> # Verify centering
-            >>> primary_mid = 176_000_000 / 2  # 88s
-            >>> secondary_start = delay / 1_000_000  # 87.844s
-            >>> secondary_mid = secondary_start + (312_000 / 2 / 1_000_000)
-            >>> print(f"Midpoints: primary={primary_mid:.1f}s, "
-            ...       f"secondary={secondary_mid:.1f}s")
-            Midpoints: primary=88.0s, secondary=88.0s
         """
+        if primary_exposure_us <= 0:
+            raise ValueError(
+                f"primary_exposure_us must be positive, got {primary_exposure_us}"
+            )
+        if secondary_exposure_us <= 0:
+            raise ValueError(
+                f"secondary_exposure_us must be positive, got {secondary_exposure_us}"
+            )
+
+        # If secondary is longer than primary, no delay needed
+        if secondary_exposure_us >= primary_exposure_us:
+            return 0
+
         primary_midpoint = primary_exposure_us // 2
         secondary_half = secondary_exposure_us // 2
         return primary_midpoint - secondary_half
 
     def sync_capture(self, config: SyncCaptureConfig) -> SyncCaptureResult:
-        """Capture with secondary centered in primary exposure for temporal alignment.
+        """Capture with secondary centered in primary exposure.
 
-        Coordinates two cameras to capture simultaneously, with the secondary
-        exposure centered within the primary exposure. Ensures both cameras
-        capture the same temporal moment at their respective exposure midpoints,
-        critical for accurate alignment and tracking in astrophotography.
+        Coordinates two cameras so secondary exposure is temporally centered
+        within primary exposure. Both cameras capture the same moment at their
+        respective exposure midpoints.
 
-        Business context: Essential for synchronized multi-camera astrophotography
-        where precise temporal alignment is required. Primary use case is plate
-        solving for telescope alignment: a long-exposure finder camera captures
-        sufficient stars for plate solving (determining telescope pointing),
-        while a short-exposure main camera captures a quick frame at the same
-        moment for alignment verification. This ensures the plate solve result
-        accurately represents where the main camera was pointing, accounting for
-        atmospheric refraction, mount flexure, and tracking errors that vary
-        over time.
-
-        Additional use cases:
-        - Autoguiding: Guide camera long exposure centered on science camera
-          exposure
-        - Multi-wavelength imaging: Synchronized captures across different
-          filters
-        - Stereo imaging: Synchronized captures for 3D reconstruction
-        - Event capture: Recording transient events across multiple cameras
-
-        Timeline for 176s primary, 312ms secondary:
+        Timeline for 176s primary, 312ms secondary::
 
             Primary:   |================176s================|
             Secondary:              |312ms|
                        ^            ^
-                       t=0          t=87.844s (midpoint - 156ms)
-
-        The secondary exposure starts at:
-            (primary_exposure / 2) - (secondary_exposure / 2)
-
-        So the CENTER of secondary aligns with CENTER of primary, ensuring both
-        cameras see the sky at the same moment despite different exposure
-        durations.
-
-        Implementation details: Uses ThreadPoolExecutor for concurrent camera
-        control. Primary capture starts immediately, secondary waits for
-        calculated delay before starting. Both captures block until complete.
-        Timing measurements use monotonic clock to avoid wall clock
-        discontinuities. Timing error is typically <10ms on modern systems but
-        may increase under heavy system load.
+                       t=0          t=87.844s
 
         Args:
-            config: Sync capture configuration specifying:
-                - Camera names (must be registered via add_camera)
-                - Exposure times in microseconds
-                - Optional gain overrides for each camera
+            config: Sync capture configuration with camera names, exposure
+                times (microseconds), and optional gain overrides.
 
         Returns:
-            SyncCaptureResult containing:
-                - Both captured frames with metadata
-                - Timing measurements (ideal vs actual delay)
-                - Timing error for quality assessment
-            Use timing_error_ms < 50ms as "good" threshold for most
-            applications.
+            SyncCaptureResult with both frames, timing measurements, and
+            timing_error_ms for quality assessment (< 50ms is good).
 
         Raises:
-            CameraNotFoundError: If camera name not registered via add_camera.
-            SyncCaptureError: If either capture fails due to hardware error,
-                timeout, or camera disconnect. Original exception chained.
+            CameraNotFoundError: If camera name not registered.
+            SyncCaptureError: If capture fails. Check camera_role and
+                original_error attributes for details.
 
         Example:
-            >>> # Typical plate solving scenario
             >>> result = controller.sync_capture(SyncCaptureConfig(
-            ...     primary="finder",      # Long exposure for many stars
-            ...     secondary="main",      # Quick frame for alignment
-            ...     primary_exposure_us=176_000_000,  # 176 seconds
-            ...     secondary_exposure_us=312_000,    # 312 ms
-            ...     primary_gain=50,       # Lower gain for finder
-            ...     secondary_gain=100,    # Higher gain for quick main frame
+            ...     primary="finder",
+            ...     secondary="main",
+            ...     primary_exposure_us=176_000_000,
+            ...     secondary_exposure_us=312_000,
             ... ))
-            >>> print(f"Timing error: {result.timing_error_ms:.1f}ms")
-            Timing error: 3.2ms
-            >>>
-            >>> # Check timing quality
-            >>> if result.timing_error_ms < 50:
-            ...     print("Excellent temporal alignment")
-            ...     # Use finder frame for plate solving
-            ...     # Use main frame for alignment verification
+            >>> if abs(result.timing_error_ms) < TIMING_THRESHOLD_GOOD_MS:
+            ...     print("Excellent sync")
         """
         primary_cam = self.get_camera(config.primary)
         secondary_cam = self.get_camera(config.secondary)
@@ -494,46 +505,31 @@ class CameraController:
         secondary_start_wall: datetime | None = None
 
         def capture_primary() -> None:
-            """Thread worker capturing primary camera frame (finder/guide).
+            """Thread worker for primary camera capture (starts immediately).
 
-            Executes in dedicated thread capturing primary camera frame
-            immediately without delay. Records start timestamps (monotonic for
-            timing calculations, wall-clock for metadata). Catches all
-            exceptions storing in primary_error for main thread handling. Uses
-            nonlocal to communicate results back to sync_capture scope.
+            Records timestamps and captures primary frame. Exceptions stored
+            in primary_error for main thread handling via nonlocal.
 
-            Business context: Primary camera typically finder/guide (short
-            exposure, wide field) capturing stars for platesolving while
-            secondary (main imager) captures verification frame. Primary starts
-            immediately establishing timing reference point. Threading enables
-            overlap: while primary exposing (e.g., 2s finder exposure),
-            secondary thread waits calculated delay then starts (e.g., 1.9s
-            wait then 0.2s main exposure). Without threading, captures would be
-            sequential losing synchronization.
+            Business context: Primary camera (typically long-exposure finder)
+            starts immediately while secondary waits. Timestamps enable
+            timing error calculation for platesolve quality assessment.
 
-            Implementation: Records self._clock.monotonic() for high-precision
-            timing, datetime.now(UTC) for human-readable timestamps. Calls
-            primary_cam.capture_raw() (no overlay) with configured
-            exposure/gain. Exceptions stored in primary_error (checked by main
-            thread after join). Nonlocal variables modified: primary_result
-            (CaptureResult), primary_error (Exception), primary_start_mono
-            (float), primary_start_wall (datetime). Thread executor ensures
-            clean cleanup even on exception.
+            Implementation:
+                1. Record monotonic timestamp (for delay calculation)
+                2. Record wall-clock timestamp (for metadata/logs)
+                3. Call capture_raw with configured exposure/gain
+                4. Store result or exception via nonlocal
 
             Args:
-                No arguments. Uses enclosing scope variables via nonlocal.
+                Uses enclosing scope: primary_cam, config, self._clock.
+                Modifies via nonlocal: primary_result, primary_error,
+                    primary_start_mono, primary_start_wall.
 
             Returns:
-                None. Results stored in nonlocal variables (primary_result,
-                primary_error, primary_start_mono, primary_start_wall).
+                None. Results stored in enclosing scope variables.
 
             Raises:
-                No exceptions raised. Errors captured in primary_error for
-                main thread to handle after join().
-
-            Example:
-                >>> # Called internally by ThreadPoolExecutor
-                >>> executor.submit(capture_primary)  # Starts immediately
+                No exceptions raised; all caught and stored in primary_error.
             """
             nonlocal \
                 primary_result, \
@@ -551,43 +547,33 @@ class CameraController:
                 primary_error = e
 
         def capture_secondary() -> None:
-            """Thread worker capturing secondary camera frame with delay.
+            """Thread worker for secondary camera capture (waits for delay).
 
-            Executes in dedicated thread sleeping for calculated delay (temporal
-            centering: makes exposure midpoints align), then capturing secondary
-            camera frame. Records start timestamps. Catches all exceptions
-            storing in secondary_error. Uses nonlocal for result communication.
+            Sleeps for calculated delay to center exposures, then captures.
+            Exceptions stored in secondary_error for main thread via nonlocal.
 
-            Business context: Secondary camera typically main imager (long
-            exposure, narrow field) capturing verification frame at moment
-            finder solves. Delay ensures both cameras capture same sky position
-            despite different exposure times. Example: finder 2s exposure
-            (midpoint 1s), main 0.2s exposure needs 0.9s delay so midpoint
-            aligns at 1s. Critical for platesolving accuracy - misaligned
-            captures show different sky positions due to telescope
-            drift/tracking errors, causing solve failures or inaccurate
-            alignment models.
+            Business context: Secondary camera (typically fast guide/main)
+            waits until its exposure would be temporally centered within
+            the primary's exposure, minimizing star position drift.
 
-            Implementation: Sleeps delay_seconds (calculated by
-            calculate_sync_timing) using self._clock.sleep(), then records
-            timestamps and calls secondary_cam.capture_raw(). Sleep blocks
-            thread without busy-waiting. Monotonic clock used for timing
-            precision (immune to system clock adjustments). Exceptions stored
-            in secondary_error (checked after join). Nonlocal variables:
-            secondary_result (CaptureResult), secondary_error (Exception),
-            secondary_start_mono (float), secondary_start_wall (datetime).
-            Thread executor handles cleanup.
+            Implementation:
+                1. Sleep for calculated delay_seconds
+                2. Record monotonic timestamp (for actual delay measurement)
+                3. Record wall-clock timestamp (for metadata/logs)
+                4. Call capture_raw with configured exposure/gain
+                5. Store result or exception via nonlocal
 
             Args:
-                No arguments. Uses enclosing scope variables via nonlocal.
+                Uses enclosing scope: secondary_cam, config, delay_seconds,
+                    self._clock.
+                Modifies via nonlocal: secondary_result, secondary_error,
+                    secondary_start_mono, secondary_start_wall.
 
             Returns:
-                None. Results stored in nonlocal variables (secondary_result,
-                secondary_error, secondary_start_mono, secondary_start_wall).
+                None. Results stored in enclosing scope variables.
 
             Raises:
-                No exceptions raised. Errors captured in secondary_error for
-                main thread to handle after join().
+                No exceptions raised; all caught and stored in secondary_error.
             """
             nonlocal \
                 secondary_result, \
@@ -616,17 +602,29 @@ class CameraController:
             primary_future.result()
             secondary_future.result()
 
-        # Check for errors
+        # Check for errors (use structured exceptions with context)
         if primary_error:
             raise SyncCaptureError(
-                f"Primary capture failed: {primary_error}"
+                f"Primary capture failed: {primary_error}",
+                camera_role="primary",
+                original_error=primary_error,
             ) from primary_error
         if secondary_error:
             raise SyncCaptureError(
-                f"Secondary capture failed: {secondary_error}"
+                f"Secondary capture failed: {secondary_error}",
+                camera_role="secondary",
+                original_error=secondary_error,
             ) from secondary_error
         if primary_result is None or secondary_result is None:
-            raise SyncCaptureError("Capture returned None")
+            raise SyncCaptureError(
+                "Capture returned None unexpectedly",
+                camera_role="primary" if primary_result is None else "secondary",
+            )
+
+        # Timing is guaranteed non-None here: set before capture_raw in try block,
+        # and any exception would have been caught and raised above
+        assert primary_start_wall is not None  # for type checker
+        assert secondary_start_wall is not None  # for type checker
 
         # Calculate actual timing
         actual_delay_seconds = secondary_start_mono - primary_start_mono
@@ -636,8 +634,8 @@ class CameraController:
         return SyncCaptureResult(
             primary_frame=primary_result,
             secondary_frame=secondary_result,
-            primary_start=primary_start_wall,  # type: ignore
-            secondary_start=secondary_start_wall,  # type: ignore
+            primary_start=primary_start_wall,
+            secondary_start=secondary_start_wall,
             ideal_secondary_start_us=delay_us,
             actual_secondary_start_us=actual_delay_us,
             timing_error_us=timing_error_us,

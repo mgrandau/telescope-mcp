@@ -40,6 +40,10 @@ class LogLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 
+# Maximum length for target name in session ID (for filename safety)
+MAX_TARGET_SLUG_LENGTH = 20
+
+
 class Session:
     """A telescope session that collects data and writes to ASDF.
 
@@ -80,8 +84,8 @@ class Session:
             target: Target object name (e.g., "M31") for observations.
             purpose: Purpose description for alignment/experiment sessions.
             location: Observer location dict with lat, lon, alt keys.
-            auto_rotate: Whether to auto-rotate idle sessions.
-            rotate_interval_hours: Hours between auto-rotations.
+            auto_rotate: Reserved for SessionManager idle rotation.
+            rotate_interval_hours: Reserved for SessionManager idle rotation.
 
         Returns:
             None. Session initialized and ready for logging.
@@ -140,35 +144,17 @@ class Session:
     def _generate_session_id(self) -> str:
         """Generate a unique session ID for ASDF filename.
 
-        Creates an ID from session type, optional target, and timestamp.
         Format: '{type}_{target}_{YYYYMMDD_HHMMSS}' or '{type}_{YYYYMMDD_HHMMSS}'.
-        Target name is slugified (lowercase, spaces to underscores, max 20 chars).
-
-        Business context: Session IDs serve as both unique identifiers and
-        human-readable filenames. Including target enables easy identification
-        when browsing ASDF files. Timestamp ensures uniqueness even for
-        same-target observations.
-
-        Args:
-            No arguments. Uses self.session_type, self.target, self.start_time.
+        Target is slugified (lowercase, spaces to underscores, max 20 chars).
 
         Returns:
-            str: Unique session ID like 'observation_m31_20251214_210000'
-                or 'alignment_20251214_203000'.
-
-        Raises:
-            No exceptions raised.
-
-        Example:
-            >>> session = Session(SessionType.OBSERVATION, Path("/data"), target="M31")
-            >>> session.session_id
-            'observation_m31_20251214_210000'
+            Unique session ID like 'observation_m31_20251214_210000'.
         """
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
 
         if self.target:
             # observation_m31_20251214_210000
-            target_slug = self.target.lower().replace(" ", "_")[:20]
+            target_slug = self.target.lower().replace(" ", "_")[:MAX_TARGET_SLUG_LENGTH]
             return f"{self.session_type.value}_{target_slug}_{timestamp}"
         else:
             # alignment_20251214_203000 or idle_20251214_180000
@@ -203,8 +189,8 @@ class Session:
         if self._closed:
             raise RuntimeError("Cannot log to a closed session")
 
-        if isinstance(level, str):
-            level = LogLevel(level.upper())
+        if not isinstance(level, LogLevel):
+            level = LogLevel(str(level).upper())
 
         log_entry = {
             "time": datetime.now(UTC).isoformat(),
@@ -368,37 +354,16 @@ class Session:
         if calibration_type not in self._calibration:
             self._calibration[calibration_type] = []
 
-        if isinstance(self._calibration[calibration_type], list):
-            self._calibration[calibration_type].append(data)
-        else:
-            self._calibration[calibration_type] = data
+        self._calibration[calibration_type].append(data)
 
     def _build_asdf_tree(self) -> dict[str, Any]:
         """Build the ASDF tree structure from session data.
 
-        Assembles all session data (meta, cameras, telemetry, calibration,
-        observability) into the hierarchical structure expected by ASDF.
-        Sets end_time and calculates duration.
-
-        Business context: ASDF files store telescope observation data in a
-        standardized format. This method structures in-memory data for
-        serialization, enabling post-session analysis with astropy tools.
-
-        Args:
-            No arguments. Uses internal state (_logs, _events, _cameras, etc.).
+        Assembles meta, cameras, telemetry, calibration, and observability
+        into the hierarchical structure for ASDF serialization.
 
         Returns:
-            dict: Complete ASDF tree with keys: meta, cameras, telemetry,
-                calibration, observability. Ready for asdf.AsdfFile().
-
-        Raises:
-            No exceptions raised.
-
-        Example:
-            >>> # Called internally by close()
-            >>> tree = session._build_asdf_tree()
-            >>> tree['meta']['session_type']
-            'observation'
+            Complete ASDF tree ready for asdf.AsdfFile().
         """
         self._end_time = datetime.now(UTC)
         duration_seconds = (self._end_time - self.start_time).total_seconds()
@@ -432,26 +397,10 @@ class Session:
         """Get the output path for the ASDF file.
 
         Organizes files by date: data_dir/YYYY/MM/DD/session_id.asdf.
-        Creates directories if they don't exist.
-
-        Business context: Date-based directory structure enables easy
-        browsing and archival of observation data. Automatic directory
-        creation simplifies deployment without manual setup.
-
-        Args:
-            No arguments. Uses self.data_dir, self.start_time, self.session_id.
+        Creates directories if needed.
 
         Returns:
-            Path: Full path where ASDF file will be written, e.g.,
-                '/data/telescope/2025/12/14/observation_m31_20251214_210000.asdf'.
-
-        Raises:
-            No exceptions raised. Creates directories as needed.
-
-        Example:
-            >>> path = session._get_output_path()
-            >>> str(path)
-            '/data/telescope/2025/12/14/observation_m31_20251214_210000.asdf'
+            Full path for the ASDF file.
         """
         # Organize by date: data_dir/YYYY/MM/DD/session_id.asdf
         date_path = self.start_time.strftime("%Y/%m/%d")
@@ -501,102 +450,36 @@ class Session:
     def is_closed(self) -> bool:
         """Check if session is closed (written to disk, immutable).
 
-        Returns True if session closed via close() method (written to ASDF
-        file, cannot accept new data). All add_* methods (add_frame,
-        add_event, add_telemetry, add_calibration) raise
-        RuntimeError on closed sessions. False indicates active session
-        accepting data.
-
-        Business context: Essential for preventing data corruption in
-        long-running telescope systems where session objects may persist in
-        memory after closing. Guards against accidental writes to finalized
-        session files (ASDF format doesn't support appending). Used in error
-        handling ("why did add_frame fail?"), workflow validation ("is this
-        session still active?"), and session lifecycle management (close old
-        session before starting new one). Critical for data integrity in
-        multi-hour observations where hundreds of frames accumulated -
-        accidentally reopening closed session would corrupt ASDF file.
-
-        Implementation details: Returns self._closed boolean set by close()
-        method. Initially False (set in __init__), becomes True after close()
-        writes tree to ASDF and calls af.close(). Immutable state - once
-        closed, stays closed (no reopen mechanism). Checked by all add_*
-        methods before modifying tree data structure. Zero-cost operation
-        (simple attribute access).
-
-        Args:
-            None. Property access pattern (not a method call).
+        Returns True after close() has been called. Closed sessions
+        reject all add_* methods with RuntimeError.
 
         Returns:
-            True if session closed (immutable, written to disk). False if
-            active (accepting data).
-
-        Raises:
-            None. Always returns boolean - never raises exceptions.
+            True if closed, False if still active.
 
         Example:
-            >>> session = Session(SessionType.OBSERVATION, name="M31")
-            >>> session.add_frame(frame_data, metadata)
-            >>> assert session.is_closed == False  # Still active
+            >>> session = Session(SessionType.OBSERVATION, Path("/data"), target="M31")
+            >>> session.is_closed
+            False
             >>> session.close()
-            >>> assert session.is_closed == True  # Now immutable
-            >>> try:
-            ...     session.add_frame(more_data, metadata)  # Fails
-            ... except RuntimeError as e:
-            ...     print(f"Cannot add to closed session: {e}")
+            >>> session.is_closed
+            True
         """
         return self._closed
 
     @property
     def duration_seconds(self) -> float:
-        """Get session duration in seconds (elapsed time since start).
+        """Get session duration in seconds.
 
-        Returns elapsed time since session start (start_time). For active
-        sessions, calculates duration to current moment (datetime.now). For
-        closed sessions, uses finalized end_time from close() method. Useful
-        for monitoring, logging, and session metadata.
-
-        Business context: Critical metric for observation session monitoring
-        and analysis. Long sessions (>2 hours) may indicate successful
-        deep-sky imaging campaigns or stuck workflows needing intervention.
-        Short sessions (<5 minutes) may indicate setup issues or failed
-        observations. Used in dashboards ("current session: 1h 23m running"),
-        alerting ("session exceeded 4 hour limit"), and post-observation
-        analysis ("total observing time tonight: 6.5h"). Essential for
-        calculating efficiency metrics (frames per hour, duty cycle,
-        overhead time).
-
-        Implementation details: Computes (end - start_time).total_seconds()
-        where end is self._end_time (if closed) or datetime.now(UTC) (if
-        active). Uses UTC to avoid daylight saving issues during overnight
-        sessions. Returns float with subsecond precision (e.g., 3661.234 =
-        1h 1m 1.234s). Active session duration continuously increases (call
-        multiple times for progress tracking). Closed session duration fixed
-        (snapshot at close() time). Typical values: 300-14400 seconds
-        (5min-4h) for astronomy sessions.
-
-        Args:
-            None. Property access pattern (not a method call).
+        For active sessions, returns time since start. For closed sessions,
+        returns the final duration (start to close time).
 
         Returns:
-            Duration in seconds as float. Range typically 0.0 (just started)
-            to 14400.0 (4 hours). Sub-second precision available (e.g.,
-            1234.567 seconds). Always non-negative.
-
-        Raises:
-            None. Always computes valid duration - never raises exceptions.
+            Duration in seconds as float (e.g., 3661.5 = ~1 hour).
 
         Example:
-            >>> session = Session(SessionType.OBSERVATION, name="M31")
-            >>> time.sleep(5)
-            >>> print(f"Session running {session.duration_seconds:.1f}s")  # ~5.0s
-            >>> session.add_frame(frame_data, metadata)  # Add more frames...
-            >>> session.close()
-            >>> print(f"Session completed in {session.duration_seconds:.1f}s")
-            >>> # Format for human-readable display
-            >>> hours, remainder = divmod(session.duration_seconds, 3600)
-            >>> minutes, seconds = divmod(remainder, 60)
-            >>> print(f"Duration: {int(hours)}h {int(minutes)}m {seconds:.1f}s")
+            >>> session = Session(SessionType.OBSERVATION, Path("/data"), target="M31")
+            >>> # ... do work ...
+            >>> print(f"Running for {session.duration_seconds:.1f}s")
         """
         end = self._end_time or datetime.now(UTC)
         return (end - self.start_time).total_seconds()

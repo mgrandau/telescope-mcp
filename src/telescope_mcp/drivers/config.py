@@ -421,11 +421,22 @@ def _copy_config_with_mode(mode: DriverMode) -> DriverConfig:
 
     Helper to avoid duplicated config copying in use_hardware/use_digital_twin.
 
+    Business context: When switching between hardware and simulation modes,
+    users expect their configured paths, camera IDs, and serial ports to
+    persist. This helper ensures mode switches preserve all other settings.
+
     Args:
         mode: New DriverMode (HARDWARE or DIGITAL_TWIN).
 
     Returns:
         DriverConfig with specified mode and all other settings from current factory.
+
+    Raises:
+        No exceptions raised. Uses current factory's config values.
+
+    Example:
+        >>> config = _copy_config_with_mode(DriverMode.DIGITAL_TWIN)
+        >>> configure(config)  # Switch to twin, keep data_dir etc.
     """
     factory = get_factory()
     return DriverConfig(

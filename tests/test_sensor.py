@@ -1280,7 +1280,26 @@ class TestSensorEdgeCases:
         call_count = [0]
 
         def create_mock_instance(sensor_id: int | str = 0) -> Mock:
-            """Create mock instance - first fails read, second succeeds."""
+            """Create mock sensor instance with conditional read behavior.
+
+            Factory function for mock sensors where first instance fails
+            on read() but second instance succeeds, simulating recovery.
+
+            Args:
+                sensor_id: Sensor ID (unused, matches driver signature).
+
+            Returns:
+                Mock sensor with get_info(), close(), and conditional read().
+                First call raises RuntimeError, subsequent return valid reading.
+
+            Raises:
+                RuntimeError: First instance's read() raises to trigger recovery.
+
+            Business Context:
+                Simulates hardware failure requiring reconnection. First
+                sensor instance becomes unresponsive, forcing driver to
+                create new connection.
+            """
             call_count[0] += 1
             mock = Mock()
             mock.get_info.return_value = {"type": "mock", "name": "Mock Sensor"}
@@ -1499,7 +1518,24 @@ class TestSensorEdgeCases:
         call_count = [0]
 
         def open_failing(sensor_id: int | str = 0) -> Mock:
-            """First open succeeds, rest fail."""
+            """Factory function where first open succeeds but reconnects fail.
+
+            Simulates scenario where initial connection works but hardware
+            becomes unavailable for reconnection attempts.
+
+            Args:
+                sensor_id: Sensor ID (unused, matches driver signature).
+
+            Returns:
+                Mock instance on first call only.
+
+            Raises:
+                RuntimeError: On all calls after the first.
+
+            Business Context:
+                Models hardware failure where device is physically
+                disconnected or powered off after initial connection.
+            """
             call_count[0] += 1
             if call_count[0] == 1:
                 return mock_instance
@@ -1550,7 +1586,24 @@ class TestSensorEdgeCases:
         call_count = [0]
 
         def open_with_partial_failure(sensor_id: int | str = 0) -> Mock:
-            """First open succeeds, second fails, third succeeds."""
+            """Factory function simulating transient reconnection failure.
+
+            Initial open and third open succeed; second open (first reconnect)
+            fails. Simulates USB bus reset or temporary hardware unavailability.
+
+            Args:
+                sensor_id: Sensor ID (unused, matches driver signature).
+
+            Returns:
+                Mock instance on calls 1 and 3+.
+
+            Raises:
+                RuntimeError: On second call only (first reconnect attempt).
+
+            Business Context:
+                Models transient hardware issues like USB bus resets
+                where first reconnect fails but subsequent succeed.
+            """
             call_count[0] += 1
             if call_count[0] == 1:
                 return mock_instance  # Initial connect

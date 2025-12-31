@@ -554,6 +554,49 @@ class TestGlobalConfiguration:
             factory = get_factory()
             assert factory.config.data_dir == Path(tmpdir)
 
+    def test_set_data_dir_shutdown_exception_ignored(self):
+        """Verifies set_data_dir() ignores shutdown exceptions during reconfiguration.
+
+        Tests graceful handling when session manager shutdown fails.
+
+        Arrangement:
+        1. Create mock session manager with failing shutdown().
+        2. Set global _session_manager to mock.
+
+        Action:
+        Call set_data_dir() which should trigger shutdown.
+
+        Assertion Strategy:
+        Validates graceful failure by confirming:
+        - set_data_dir() completes without raising.
+        - _session_manager is reset to None after failure.
+
+        Testing Principle:
+        Validates defensive coding - shutdown failures during
+        reconfiguration should not prevent new configuration."""
+        from unittest.mock import Mock
+
+        import telescope_mcp.drivers.config as config_module
+
+        # Create mock that raises on shutdown
+        mock_manager = Mock()
+        mock_manager.shutdown.side_effect = RuntimeError("Shutdown failed")
+
+        # Inject mock into module global
+        original_manager = config_module._session_manager
+        config_module._session_manager = mock_manager
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Should complete without raising despite shutdown failure
+                set_data_dir(tmpdir)
+
+                # Manager should be reset to None
+                assert config_module._session_manager is None
+        finally:
+            # Restore original state
+            config_module._session_manager = original_manager
+
     def test_set_location(self):
         """Verifies set_location() stores lat/lon/alt in global configuration.
 

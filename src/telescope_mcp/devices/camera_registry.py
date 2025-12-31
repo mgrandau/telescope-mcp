@@ -314,21 +314,17 @@ class CameraRegistry:
             self._discovery_cache = {}
 
             for cam_id, info in raw.items():
-                # Handle both dict and CameraInfo from driver
-                if isinstance(info, CameraInfo):
-                    self._discovery_cache[cam_id] = info
-                else:
-                    # Convert dict to CameraInfo
-                    self._discovery_cache[cam_id] = CameraInfo(
-                        camera_id=cam_id,
-                        name=info.get("name", f"Camera {cam_id}"),
-                        max_width=info.get("max_width", 0),
-                        max_height=info.get("max_height", 0),
-                        is_color=info.get("is_color", False),
-                        bayer_pattern=info.get("bayer_pattern"),
-                        supported_bins=info.get("supported_bins", [1]),
-                        controls=info.get("controls", {}),
-                    )
+                # Convert dict to CameraInfo (all drivers return dicts)
+                self._discovery_cache[cam_id] = CameraInfo(
+                    camera_id=cam_id,
+                    name=info.get("name", f"Camera {cam_id}"),
+                    max_width=info.get("max_width", 0),
+                    max_height=info.get("max_height", 0),
+                    is_color=info.get("is_color", False),
+                    bayer_pattern=info.get("bayer_pattern"),
+                    supported_bins=info.get("supported_bins", [1]),
+                    controls=info.get("controls", {}),
+                )
 
         return self._discovery_cache
 

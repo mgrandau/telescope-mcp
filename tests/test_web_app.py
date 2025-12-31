@@ -229,7 +229,27 @@ class TestStreamGenerator:
 
     @pytest.fixture
     def stream_mocks(self):
-        """Create mocks for stream generator testing."""
+        """Create mocks for stream generator testing.
+
+        Provides isolated test environment with mocked ASI SDK.
+
+        Args:
+            self: Test class instance.
+
+        Yields:
+            Tuple[MagicMock, MagicMock]: (mock_asi module, mock_camera instance)
+            configured for 640x480 grayscale capture with test frame.
+
+        Returns:
+            Generator yielding mock tuple for test duration.
+
+        Raises:
+            None: Fixture setup does not raise exceptions.
+
+        Business Context:
+            Stream generator tests need consistent mock environment
+            without real hardware dependencies.
+        """
         with (
             patch("telescope_mcp.web.app.asi") as mock_asi,
             patch("telescope_mcp.web.app._cameras", {}),
@@ -262,9 +282,22 @@ class TestStreamGenerator:
         Tests that _generate_camera_stream produces properly formatted
         MJPEG frames with boundary markers and JPEG content.
 
-        Business context:
-        MJPEG streaming requires proper multipart formatting for browser
-        compatibility. Each frame must have --frame boundary and valid JPEG.
+        Arrangement:
+            1. Patch _get_camera to return mock camera.
+            2. Create generator with camera_id=0, fps=10.
+
+        Action:
+            Await first frame from generator.
+
+        Assertion Strategy:
+            Validates MJPEG format by confirming:
+            - Frame contains "--frame" boundary marker.
+            - Frame contains "Content-Type: image/jpeg" header.
+            - Frame contains JPEG magic bytes (\\xff\\xd8).
+
+        Testing Principle:
+            Validates MJPEG multipart format for browser compatibility.
+            Each frame must have proper boundary and valid JPEG content.
         """
         from telescope_mcp.web.app import _generate_camera_stream
 
@@ -291,6 +324,23 @@ class TestStreamGenerator:
 
         Tests that exposure_us and gain parameters are passed to camera
         control methods when starting the stream.
+
+        Arrangement:
+            1. Patch _get_camera to return mock camera.
+            2. Create generator with exposure_us=50000, gain=100, fps=5.
+
+        Action:
+            Await first frame to trigger camera setup.
+
+        Assertion Strategy:
+            Validates camera configuration by confirming:
+            - set_control_value called with ASI_GAIN=100.
+            - set_control_value called with ASI_EXPOSURE=50000.
+            - start_video_capture called once.
+
+        Testing Principle:
+            Validates exposure/gain parameter propagation from API
+            request to hardware control calls.
         """
         from telescope_mcp.web.app import _generate_camera_stream
 
@@ -317,9 +367,21 @@ class TestStreamGenerator:
         Tests error handling when requested camera ID doesn't exist,
         ensuring stream returns visual error rather than crashing.
 
-        Business context:
-        Invalid camera IDs should produce visible error frames in stream
-        for immediate user feedback during troubleshooting.
+        Arrangement:
+            1. Patch _get_camera to return None (camera not found).
+            2. Request camera_id=99 (non-existent).
+
+        Action:
+            Await frames from generator.
+
+        Assertion Strategy:
+            Validates error handling by confirming:
+            - First frame is valid MJPEG (boundary + content-type).
+            - Second await raises StopAsyncIteration (generator completes).
+
+        Testing Principle:
+            Validates graceful degradation, returning visual error frame
+            for immediate user feedback instead of crashing stream.
         """
         from telescope_mcp.web.app import _generate_camera_stream
 
@@ -342,9 +404,22 @@ class TestStreamGenerator:
         Tests fault tolerance when camera.capture_video_frame() raises
         an exception, ensuring stream continues with error frames.
 
-        Business context:
-        USB disconnects or driver errors should produce visible error
-        frames rather than crashing the stream.
+        Arrangement:
+            1. Configure mock_camera.capture_video_frame to raise RuntimeError.
+            2. Patch _get_camera to return the failing mock.
+
+        Action:
+            Await first frame from generator.
+
+        Assertion Strategy:
+            Validates fault tolerance by confirming:
+            - Frame contains MJPEG boundary marker.
+            - Frame contains content-type header.
+            - Frame contains valid JPEG magic bytes.
+
+        Testing Principle:
+            Validates resilience to USB disconnects or driver errors,
+            producing visible error frames rather than crashing stream.
         """
         from telescope_mcp.web.app import _generate_camera_stream
 
@@ -369,6 +444,23 @@ class TestStreamGenerator:
 
         Tests that _camera_settings dict is consulted for exposure/gain
         when not explicitly provided to the generator.
+
+        Arrangement:
+            1. Pre-populate _camera_settings with exposure_us=75000, gain=80.
+            2. Patch _get_camera to return mock camera.
+
+        Action:
+            Create generator without explicit exposure/gain parameters
+            and await first frame.
+
+        Assertion Strategy:
+            Validates settings lookup by confirming:
+            - set_control_value called with ASI_GAIN=80.
+            - set_control_value called with ASI_EXPOSURE=75000.
+
+        Testing Principle:
+            Validates settings persistence, using stored values
+            when user doesn't provide explicit parameters.
         """
         from telescope_mcp.web.app import _generate_camera_stream
 
@@ -397,6 +489,25 @@ class TestStreamGenerator:
 
         Tests that the generator loop exits cleanly when the streaming
         flag is set to False, enabling controlled stream shutdown.
+
+        Arrangement:
+            1. Create streaming_dict tracker.
+            2. Patch _camera_streaming with tracker.
+            3. Create generator for camera_id=0.
+
+        Action:
+            1. Await first frame (starts streaming, sets flag True).
+            2. Clear streaming flag to False.
+            3. Await next frame.
+
+        Assertion Strategy:
+            Validates shutdown by confirming:
+            - After first frame, streaming_dict[0] is True.
+            - After clearing flag, StopAsyncIteration raised.
+
+        Testing Principle:
+            Validates controlled shutdown, enabling clean stream
+            termination via flag without resource leaks.
         """
         from telescope_mcp.web.app import _generate_camera_stream
 
@@ -1069,9 +1180,21 @@ class TestCameraStateManagement:
         Tests that camera enumeration via API doesn't trigger camera open
         operations - cameras should only be opened when streaming.
 
-        Business context:
-        Lazy initialization reduces startup time and USB bandwidth contention.
-        Camera list queries should be fast without hardware operations.
+        Arrangement:
+            1. Client and mock_asi fixtures provide test environment.
+            2. No cameras have been opened yet.
+
+        Action:
+            Issue GET /api/cameras request.
+
+        Assertion Strategy:
+            Validates lazy initialization by confirming:
+            - HTTP 200 response.
+            - Response contains count >= 0.
+
+        Testing Principle:
+            Validates lazy initialization, reducing startup time
+            and USB bandwidth by deferring camera opens.
         """
         # List cameras should work without opening them
         response = client.get("/api/cameras")
@@ -1125,9 +1248,21 @@ class TestCameraStateManagement:
         Tests that gain/exposure adjustments made via control API are
         stored for subsequent use.
 
-        Business context:
-        Users adjust exposure/gain to optimize for conditions. Settings
-        should persist across API calls.
+        Arrangement:
+            1. Client and mock_asi fixtures provide test environment.
+            2. Camera 0 available.
+
+        Action:
+            POST to /api/camera/0/control with ASI_GAIN=150.
+
+        Assertion Strategy:
+            Validates persistence by confirming:
+            - HTTP 200 response.
+            - Response indicates success.
+
+        Testing Principle:
+            Validates settings persistence, enabling users to
+            adjust exposure/gain that persists across API calls.
         """
         # Set a control value
         response = client.post(
@@ -1299,9 +1434,23 @@ class TestConcurrentAccess:
         Tests thread-safety by issuing multiple camera control changes
         in rapid succession, ensuring no conflicts or state corruption.
 
-        Business context:
-        Users may rapidly adjust exposure/gain sliders in UI. API must
-        handle burst traffic without deadlocks or corrupted state.
+        Arrangement:
+            1. Client and mock_asi fixtures provide test environment.
+            2. Camera 0 available.
+            3. Sequence of 5 gain values prepared.
+
+        Action:
+            POST 5 consecutive control requests with gain values
+            [50, 100, 150, 100, 50].
+
+        Assertion Strategy:
+            Validates thread-safety by confirming:
+            - All 5 responses return HTTP 200.
+            - No exceptions or state corruption.
+
+        Testing Principle:
+            Validates concurrency safety for rapid UI slider
+            adjustments without deadlocks or corruption.
         """
         # Issue multiple control changes rapidly
         for gain_value in [50, 100, 150, 100, 50]:

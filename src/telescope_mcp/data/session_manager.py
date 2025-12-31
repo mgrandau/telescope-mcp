@@ -31,7 +31,7 @@ class SessionManager:
         sessions = SessionManager(data_dir=Path("/data/telescope"))
 
         # Logs go to idle session
-        sessions.log("INFO", "Server started")
+        sessions.log(LogLevel.INFO, "Server started")
 
         # Start observation (closes idle session)
         sessions.start_session(SessionType.OBSERVATION, target="M31")
@@ -64,7 +64,8 @@ class SessionManager:
 
         Args:
             data_dir: Base directory for ASDF file storage.
-            location: Default observer location {lat, lon, alt} in degrees/meters.
+            location: Default observer location {lat, lon, alt} where lat/lon
+                are in degrees and alt is meters above sea level.
             auto_rotate_idle: Whether to auto-rotate idle sessions periodically.
             idle_rotate_hours: Hours between idle session rotations.
 
@@ -95,31 +96,8 @@ class SessionManager:
     def _ensure_idle_session(self) -> None:
         """Create idle session if no session is active.
 
-        Internal method that maintains the "always have a session" invariant.
-        Called after session end and during operations that require a session.
-        Idle sessions capture logs when no observation is in progress.
-
-        Business context: The telescope system should always have an active
-        session for logging. Idle sessions capture background activity,
-        system health, and environmental data between observations.
-
-        Implementation: Checks _active_session and creates new IDLE session
-        with default location and rotation settings from manager config.
-
-        Args:
-            No arguments. Uses manager configuration.
-
-        Returns:
-            None. Sets _active_session to new idle Session.
-
-        Raises:
-            No exceptions raised.
-
-        Example:
-            >>> # Called internally after end_session()
-            >>> manager._ensure_idle_session()
-            >>> manager.current_session.session_type
-            SessionType.IDLE
+        Maintains the "always have a session" invariant. Called after session
+        end and during operations that require a session.
         """
         if self._active_session is None:
             self._active_session = Session(
@@ -144,7 +122,8 @@ class SessionManager:
         of the specified type. Use for observations, alignments, or experiments.
 
         Args:
-            session_type: Type of session (observation, alignment, experiment, idle).
+            session_type: Type of session (observation, alignment, experiment,
+                maintenance, idle).
             target: Target object name for observations (e.g., "M31", "Jupiter").
             purpose: Description for alignment/experiment sessions.
             location: Override default observer location.
@@ -162,8 +141,8 @@ class SessionManager:
                 purpose="Orion Nebula imaging",
             )
         """
-        if isinstance(session_type, str):
-            session_type = SessionType(session_type.lower())
+        if not isinstance(session_type, SessionType):
+            session_type = SessionType(str(session_type).lower())
 
         # Close existing session
         if self._active_session is not None:
@@ -176,6 +155,12 @@ class SessionManager:
             target=target,
             purpose=purpose,
             location=location or self.location,
+        )
+
+        logger.info(
+            "Started %s session: %s",
+            session_type.value,
+            target or purpose or self._active_session.session_id,
         )
 
         return self._active_session
@@ -246,7 +231,8 @@ class SessionManager:
             )
         """
         self._ensure_idle_session()
-        self._active_session.log(level, message, source, **context)  # type: ignore[union-attr]
+        assert self._active_session is not None
+        self._active_session.log(level, message, source, **context)
 
     def add_event(self, event: str, **details: Any) -> None:
         """Record an event to current session.
@@ -275,7 +261,8 @@ class SessionManager:
             )
         """
         self._ensure_idle_session()
-        self._active_session.add_event(event, **details)  # type: ignore[union-attr]
+        assert self._active_session is not None
+        self._active_session.add_event(event, **details)
 
     def add_frame(
         self,
@@ -311,7 +298,8 @@ class SessionManager:
             )
         """
         self._ensure_idle_session()
-        self._active_session.add_frame(  # type: ignore[union-attr]
+        assert self._active_session is not None
+        self._active_session.add_frame(
             camera, frame, camera_info=camera_info, settings=settings
         )
 
@@ -341,7 +329,8 @@ class SessionManager:
             )
         """
         self._ensure_idle_session()
-        self._active_session.add_telemetry(telemetry_type, **data)  # type: ignore[union-attr]
+        assert self._active_session is not None
+        self._active_session.add_telemetry(telemetry_type, **data)
 
     def add_calibration(self, calibration_type: str, data: Any) -> None:
         """Add calibration data to current session.
@@ -364,88 +353,46 @@ class SessionManager:
             sessions.add_calibration("alignment", {"rotation": 1.5, "scale": 0.98})
         """
         self._ensure_idle_session()
-        self._active_session.add_calibration(calibration_type, data)  # type: ignore[union-attr]
+        assert self._active_session is not None
+        self._active_session.add_calibration(calibration_type, data)
 
     @property
     def active_session(self) -> Session | None:
-        """Get currently active session (direct access to session methods).
+        """Get currently active session for direct access.
 
         Returns Session object for direct method access (add_frame, add_event,
-        add_telemetry, close). May be idle session (SessionType.IDLE) if no
-        observation in progress. None only after shutdown() called.
+        add_telemetry, close). May be idle session if no observation in progress.
+        None only after shutdown() called.
 
-        Business context: Provides direct access to session for advanced use
-        cases requiring methods not exposed through SessionManager facade. Used
-        when needing session metadata (session_id, start_time, duration_seconds),
-        low-level add_* methods with custom error handling, or session
-        introspection for debugging. Most applications should use
-        SessionManager.add_frame() etc. instead (simpler, auto-creates session).
-        Essential for testing, diagnostics, and integrations requiring full
-        Session API.
-
-        Implementation details: Returns self._active_session which is Session
-        instance or None. Initially None, becomes Session after first
-        start_session() or lazy-created idle session by _ensure_idle_session().
-        Stays same Session instance until close_session() called (then becomes
-        None) or new start_session() (replaces with new Session). None only
-        after explicit shutdown() - normal operation always has Session (idle
-        if no observation). Zero-cost attribute access.
-
-        Args:
-            None. Property access pattern (not a method call).
+        Most applications should use SessionManager.add_frame() etc. instead
+        (simpler, auto-creates session). Use this for session metadata access
+        (session_id, duration_seconds) or advanced use cases.
 
         Returns:
-            Active Session instance (may be idle session with SessionType.IDLE),
-            or None if shutdown() called and manager no longer operational.
-
-        Raises:
-            None. Always returns Session or None - never raises exceptions.
+            Active Session instance, or None after shutdown().
 
         Example:
-            >>> manager = SessionManager()
-            >>> session = manager.active_session  # May be None initially
-            >>> manager.start_session(SessionType.OBSERVATION, "M31")
-            >>> session = manager.active_session  # Now a Session object
-            >>> duration = session.duration_seconds
-            >>> print(f"Session {session.session_id} running {duration:.1f}s")
-            >>> # Direct access to session methods
-            >>> session.add_metadata("observer", "John Doe")
-            >>> # Or use manager facade (preferred)
-            >>> manager.add_metadata("telescope", 'SCT 8"')
+            >>> manager.start_session(SessionType.OBSERVATION, target="M31")
+            >>> session = manager.active_session
+            >>> print(f"{session.session_id}: {session.duration_seconds:.1f}s")
         """
         return self._active_session
 
     @property
     def active_session_type(self) -> SessionType | None:
-        """Get the type of the currently active session for workflow logic.
+        """Get the type of the currently active session.
 
-        Returns the session type which categorizes the current observing activity.
-        Used to determine appropriate data handling, validation, and metadata
-        collection based on session context.
-
-        Business context: Enables context-aware application behavior where
-        different session types have different requirements. OBSERVATION
-        sessions may require dark frames and flatfields, ALIGNMENT sessions
-        focus on plate solving, and EXPERIMENT sessions may have custom
-        metadata. Critical for automated workflows that adapt behavior based
-        on observation goals.
+        Used for context-aware behavior where different session types have
+        different requirements (e.g., OBSERVATION needs calibration frames).
 
         Returns:
-            SessionType enum (OBSERVATION, ALIGNMENT, EXPERIMENT, or IDLE) if a
-            session is active, or None if no session is currently active. Use
-            this to check session context before operations that depend on
-            session type.
-
-        Raises:
-            None. Always succeeds, returning None when no session active.
+            SessionType enum (OBSERVATION, ALIGNMENT, EXPERIMENT, MAINTENANCE,
+            or IDLE) if session active, None otherwise.
 
         Example:
-            >>> manager = SessionManager()
-            >>> manager.start_session(SessionType.OBSERVATION, "M31")
+            >>> manager.start_session(SessionType.OBSERVATION, target="M31")
             >>> if manager.active_session_type == SessionType.OBSERVATION:
-            ...     print("Taking science frames with calibrations")
-            >>> else:
-            ...     print("Not in observation mode")
+            ...     print("Taking science frames")
         """
         if self._active_session:
             return self._active_session.session_type
@@ -453,58 +400,19 @@ class SessionManager:
 
     @property
     def active_session_id(self) -> str | None:
-        """Get ID of currently active session (filename-safe unique identifier).
+        """Get ID of currently active session.
 
-        Returns session ID string in format 'YYYYMMDD_HHMMSS_type' (e.g.,
-        '20251218_203045_observation'). Used for file naming (ASDF files
-        written to data_dir/session_id.asdf), logging correlation, UI display.
-        None if no session active (rare - manager auto-creates idle sessions).
-
-        Business context: Essential for correlating data across systems in
-        telescope operations. Session ID appears in log files ("processing
-        frame for session 20251218_203045_observation"), file paths
-        (data/20251218_203045_observation.asdf), UI displays ("Current Session:
-        20251218_203045"), and external integrations (sending session ID to
-        platesolving service). Enables finding all artifacts from specific
-        observation session (ASDF file, logs, backup images, calibration
-        frames). Time-based format provides natural chronological sorting and
-        human-readable context ("that was December 18, 2025 at 8:30pm").
-        Unique across all sessions preventing file collisions.
-
-        Implementation details: Delegates to self._active_session.session_id
-        if session exists, else None. Session ID generated during
-        Session.__init__() using datetime.now().strftime() and
-        session_type.value. Format: '%Y%m%d_%H%M%S_{type}' (e.g.,
-        20251218_203045_observation). Type suffix enables filtering ("all
-        observation sessions today: 20251218_*_observation.asdf"). IDs unique
-        to 1-second resolution (sufficient for manual operations, potential
-        collision for automated rapid session creation). Read-only - cannot
-        modify after creation.
-
-        Args:
-            None. Property access pattern (not a method call).
+        Returns session ID string in format '{type}_{target}_{YYYYMMDD_HHMMSS}'
+        (e.g., 'observation_m31_20251218_203045'). Used for file naming,
+        logging correlation, and UI display.
 
         Returns:
-            Session ID string like '20251218_203045_observation', or None if no
-            active session (only after shutdown). String length typically 25-35
-            characters depending on type name.
-
-        Raises:
-            None. Always returns string or None - never raises exceptions.
+            Session ID string, or None after shutdown().
 
         Example:
-            >>> manager = SessionManager()
-            >>> manager.start_session(SessionType.OBSERVATION, "M31")
-            >>> session_id = manager.active_session_id
-            >>> print(f"Session ID: {session_id}")  # 20251218_203045_obs
-            >>> # Use in logging
-            >>> logger.info("Capture completed", session_id=session_id)
-            >>> # Use in file paths
-            >>> backup_path = f"/backup/{session_id}_frame_{i:04d}.fits"
-            >>> # Parse timestamp from ID
-            >>> parts = session_id.split('_')
-            >>> timestamp_str = parts[0] + parts[1]  # 20251218203045
-            >>> dt = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
+            >>> manager.start_session(SessionType.OBSERVATION, target="M31")
+            >>> print(f"Session: {manager.active_session_id}")
+            observation_m31_20251231_004500
         """
         if self._active_session:
             return self._active_session.session_id

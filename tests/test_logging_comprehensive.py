@@ -840,6 +840,24 @@ class TestStructuredLogRecord:
         """Verifies StructuredLogRecord stores structured_data from kwargs.
 
         Tests direct instantiation of StructuredLogRecord to cover __init__.
+
+        Arrangement:
+            1. Prepare structured_data dict with camera_id and exposure_ms.
+
+        Action:
+            Create StructuredLogRecord with all parameters including
+            structured_data kwarg.
+
+        Assertion Strategy:
+            Validates storage by confirming:
+            - name matches "test.logger".
+            - levelno equals logging.INFO.
+            - msg equals "Test message".
+            - structured_data dict preserved exactly.
+
+        Testing Principle:
+            Validates custom LogRecord subclass stores additional
+            structured_data attribute for contextual logging.
         """
         record = StructuredLogRecord(
             name="test.logger",
@@ -860,7 +878,24 @@ class TestStructuredLogRecord:
         assert record.structured_data == {"camera_id": 0, "exposure_ms": 100}
 
     def test_init_without_structured_data(self):
-        """Verifies StructuredLogRecord defaults structured_data to empty dict."""
+        """Verifies StructuredLogRecord defaults structured_data to empty dict.
+
+        Tests graceful handling when structured_data not provided.
+
+        Arrangement:
+            1. Prepare minimal LogRecord parameters (no structured_data).
+
+        Action:
+            Create StructuredLogRecord omitting structured_data kwarg.
+
+        Assertion Strategy:
+            Validates default by confirming:
+            - structured_data is empty dict {}.
+
+        Testing Principle:
+            Validates defensive initialization, providing safe default
+            when optional structured_data not provided.
+        """
         record = StructuredLogRecord(
             name="test.logger",
             level=logging.WARNING,
@@ -874,7 +909,25 @@ class TestStructuredLogRecord:
         assert record.structured_data == {}
 
     def test_init_with_args_formatting(self):
-        """Verifies StructuredLogRecord handles %-style format args."""
+        """Verifies StructuredLogRecord handles %-style format args.
+
+        Tests message formatting compatibility with LogRecord base class.
+
+        Arrangement:
+            1. Prepare format string with %d placeholder.
+            2. Prepare args tuple with integer value.
+
+        Action:
+            Create StructuredLogRecord and call getMessage().
+
+        Assertion Strategy:
+            Validates formatting by confirming:
+            - getMessage() returns "Value: 42".
+
+        Testing Principle:
+            Validates backwards compatibility with standard Python
+            logging %-style string formatting.
+        """
         record = StructuredLogRecord(
             name="test.logger",
             level=logging.INFO,
@@ -897,45 +950,202 @@ class TestFormatValue:
     """Direct tests for _format_value helper function."""
 
     def test_format_value_none(self):
-        """Verifies _format_value returns 'null' for None."""
+        """Verifies _format_value returns 'null' for None.
+
+        Tests JSON-style null representation.
+
+        Arrangement:
+            1. None value as input.
+
+        Action:
+            Call _format_value(None).
+
+        Assertion Strategy:
+            Validates null handling by confirming:
+            - Returns string "null".
+
+        Testing Principle:
+            Validates JSON-compatible formatting for None values
+            in structured log output.
+        """
         assert _format_value(None) == "null"
 
     def test_format_value_simple_string(self):
-        """Verifies _format_value returns string as-is without spaces."""
+        """Verifies _format_value returns string as-is without spaces.
+
+        Tests pass-through for simple string values.
+
+        Arrangement:
+            1. Simple strings without spaces.
+
+        Action:
+            Call _format_value with "hello" and "world".
+
+        Assertion Strategy:
+            Validates pass-through by confirming:
+            - "hello" returns "hello".
+            - "world" returns "world".
+
+        Testing Principle:
+            Validates minimal formatting for simple strings,
+            preserving readability in log output.
+        """
         assert _format_value("hello") == "hello"
         assert _format_value("world") == "world"
 
     def test_format_value_string_with_spaces(self):
-        """Verifies _format_value quotes strings containing spaces."""
+        """Verifies _format_value quotes strings containing spaces.
+
+        Tests quoting behavior for multi-word strings.
+
+        Arrangement:
+            1. Strings containing spaces.
+
+        Action:
+            Call _format_value with spaced strings.
+
+        Assertion Strategy:
+            Validates quoting by confirming:
+            - "hello world" becomes '"hello world"'.
+            - "has spaces here" becomes '"has spaces here"'.
+
+        Testing Principle:
+            Validates proper quoting for log parsability when
+            string values contain whitespace.
+        """
         assert _format_value("hello world") == '"hello world"'
         assert _format_value("has spaces here") == '"has spaces here"'
 
     def test_format_value_dict(self):
-        """Verifies _format_value JSON-serializes dictionaries."""
+        """Verifies _format_value JSON-serializes dictionaries.
+
+        Tests JSON encoding for dict values.
+
+        Arrangement:
+            1. Simple dict {"key": "value"}.
+
+        Action:
+            Call _format_value with dict.
+
+        Assertion Strategy:
+            Validates JSON by confirming:
+            - Returns '{"key": "value"}' string.
+
+        Testing Principle:
+            Validates JSON serialization for complex structured
+            data in log output.
+        """
         result = _format_value({"key": "value"})
         assert result == '{"key": "value"}'
 
     def test_format_value_list(self):
-        """Verifies _format_value JSON-serializes lists."""
+        """Verifies _format_value JSON-serializes lists.
+
+        Tests JSON encoding for list values.
+
+        Arrangement:
+            1. Simple list [1, 2, 3].
+
+        Action:
+            Call _format_value with list.
+
+        Assertion Strategy:
+            Validates JSON by confirming:
+            - Returns "[1, 2, 3]" string.
+
+        Testing Principle:
+            Validates JSON serialization for array-type
+            structured data in log output.
+        """
         result = _format_value([1, 2, 3])
         assert result == "[1, 2, 3]"
 
     def test_format_value_integer(self):
-        """Verifies _format_value converts integers via str()."""
+        """Verifies _format_value converts integers via str().
+
+        Tests string conversion for numeric values.
+
+        Arrangement:
+            1. Integer values 42 and -100.
+
+        Action:
+            Call _format_value with integers.
+
+        Assertion Strategy:
+            Validates conversion by confirming:
+            - 42 returns "42".
+            - -100 returns "-100".
+
+        Testing Principle:
+            Validates simple string conversion for primitive
+            numeric types in log output.
+        """
         assert _format_value(42) == "42"
         assert _format_value(-100) == "-100"
 
     def test_format_value_float(self):
-        """Verifies _format_value converts floats via str()."""
+        """Verifies _format_value converts floats via str().
+
+        Tests string conversion for floating-point values.
+
+        Arrangement:
+            1. Float value 3.14.
+
+        Action:
+            Call _format_value with float.
+
+        Assertion Strategy:
+            Validates conversion by confirming:
+            - 3.14 returns "3.14".
+
+        Testing Principle:
+            Validates simple string conversion for float
+            types in log output.
+        """
         assert _format_value(3.14) == "3.14"
 
     def test_format_value_bool(self):
-        """Verifies _format_value converts booleans via str()."""
+        """Verifies _format_value converts booleans via str().
+
+        Tests string conversion for boolean values.
+
+        Arrangement:
+            1. Boolean values True and False.
+
+        Action:
+            Call _format_value with booleans.
+
+        Assertion Strategy:
+            Validates conversion by confirming:
+            - True returns "True".
+            - False returns "False".
+
+        Testing Principle:
+            Validates Python-style boolean string representation
+            in log output.
+        """
         assert _format_value(True) == "True"
         assert _format_value(False) == "False"
 
     def test_format_value_nested_dict(self):
-        """Verifies _format_value handles nested structures."""
+        """Verifies _format_value handles nested structures.
+
+        Tests JSON serialization for complex nested data.
+
+        Arrangement:
+            1. Nested dict {"outer": {"inner": [1, 2]}}.
+
+        Action:
+            Call _format_value with nested dict.
+
+        Assertion Strategy:
+            Validates JSON roundtrip by confirming:
+            - json.loads(result) equals original structure.
+
+        Testing Principle:
+            Validates correct JSON serialization for arbitrarily
+            nested structured data.
+        """
         result = _format_value({"outer": {"inner": [1, 2]}})
         parsed = json.loads(result)
         assert parsed == {"outer": {"inner": [1, 2]}}
@@ -950,7 +1160,27 @@ class TestStructuredFormatterCoverage:
     """Additional coverage tests for StructuredFormatter."""
 
     def test_format_include_structured_false(self):
-        """Verifies StructuredFormatter omits structured data when disabled."""
+        """Verifies StructuredFormatter omits structured data when disabled.
+
+        Tests include_structured=False configuration option.
+
+        Arrangement:
+            1. Create StructuredFormatter with include_structured=False.
+            2. Create LogRecord with structured_data attribute.
+
+        Action:
+            Format the record.
+
+        Assertion Strategy:
+            Validates omission by confirming:
+            - "Test message" appears in output.
+            - "camera_id" NOT in output.
+            - "key=" NOT in output.
+
+        Testing Principle:
+            Validates formatter configuration allowing structured
+            data suppression for cleaner log output.
+        """
         formatter = StructuredFormatter(include_structured=False)
         record = logging.LogRecord(
             name="test",
@@ -971,7 +1201,26 @@ class TestStructuredFormatterCoverage:
         assert "key=" not in formatted
 
     def test_format_without_structured_data_attribute(self):
-        """Verifies StructuredFormatter handles records without structured_data."""
+        """Verifies StructuredFormatter handles records without structured_data.
+
+        Tests graceful handling of standard LogRecord (not StructuredLogRecord).
+
+        Arrangement:
+            1. Create StructuredFormatter (default config).
+            2. Create standard LogRecord without structured_data attribute.
+
+        Action:
+            Format the record.
+
+        Assertion Strategy:
+            Validates graceful handling by confirming:
+            - "Plain message" appears in output.
+            - No exception raised.
+
+        Testing Principle:
+            Validates backwards compatibility with standard Python
+            LogRecord instances.
+        """
         formatter = StructuredFormatter()
         record = logging.LogRecord(
             name="test",
@@ -997,7 +1246,25 @@ class TestSessionLogHandler:
     """Tests for SessionLogHandler class."""
 
     def test_init_stores_getter(self):
-        """Verifies SessionLogHandler stores the manager getter function."""
+        """Verifies SessionLogHandler stores the manager getter function.
+
+        Tests handler initialization with custom manager getter.
+
+        Arrangement:
+            1. Create MagicMock as getter function.
+
+        Action:
+            Create SessionLogHandler with getter and INFO level.
+
+        Assertion Strategy:
+            Validates storage by confirming:
+            - _get_manager is the mock getter.
+            - level equals logging.INFO.
+
+        Testing Principle:
+            Validates dependency injection pattern for handler,
+            enabling lazy session manager lookup.
+        """
         mock_getter = MagicMock(return_value=None)
         handler = SessionLogHandler(mock_getter, level=logging.INFO)
 
@@ -1005,14 +1272,51 @@ class TestSessionLogHandler:
         assert handler.level == logging.INFO
 
     def test_init_default_level(self):
-        """Verifies SessionLogHandler defaults to NOTSET level."""
+        """Verifies SessionLogHandler defaults to NOTSET level.
+
+        Tests handler initialization without explicit level.
+
+        Arrangement:
+            1. Create MagicMock as getter function.
+
+        Action:
+            Create SessionLogHandler without level argument.
+
+        Assertion Strategy:
+            Validates default by confirming:
+            - level equals logging.NOTSET.
+
+        Testing Principle:
+            Validates sensible default allowing parent logger
+            to control filtering.
+        """
         mock_getter = MagicMock(return_value=None)
         handler = SessionLogHandler(mock_getter)
 
         assert handler.level == logging.NOTSET
 
     def test_emit_forwards_to_manager(self):
-        """Verifies emit() forwards log records to session manager."""
+        """Verifies emit() forwards log records to session manager.
+
+        Tests primary log forwarding functionality.
+
+        Arrangement:
+            1. Create mock session manager.
+            2. Create getter returning the mock.
+            3. Create handler with getter.
+            4. Create LogRecord with structured_data.
+
+        Action:
+            Call handler.emit(record).
+
+        Assertion Strategy:
+            Validates forwarding by confirming:
+            - manager.log called once with level, message, source, camera_id.
+
+        Testing Principle:
+            Validates log integration, bridging Python logging
+            to telescope session manager.
+        """
         mock_manager = MagicMock()
         mock_getter = MagicMock(return_value=mock_manager)
         handler = SessionLogHandler(mock_getter)
@@ -1038,7 +1342,27 @@ class TestSessionLogHandler:
         )
 
     def test_emit_skips_when_manager_none(self):
-        """Verifies emit() skips silently when manager getter returns None."""
+        """Verifies emit() skips silently when manager getter returns None.
+
+        Tests graceful no-op when no session is active.
+
+        Arrangement:
+            1. Create getter returning None.
+            2. Create handler with getter.
+            3. Create LogRecord.
+
+        Action:
+            Call handler.emit(record).
+
+        Assertion Strategy:
+            Validates no-op by confirming:
+            - No exception raised.
+            - Getter was called once.
+
+        Testing Principle:
+            Validates defensive handling, allowing logging
+            when session manager not yet initialized.
+        """
         mock_getter = MagicMock(return_value=None)
         handler = SessionLogHandler(mock_getter)
 
@@ -1057,7 +1381,26 @@ class TestSessionLogHandler:
         mock_getter.assert_called_once()
 
     def test_emit_handles_exception(self):
-        """Verifies emit() catches exceptions and calls handleError."""
+        """Verifies emit() catches exceptions and calls handleError.
+
+        Tests error handling during log forwarding.
+
+        Arrangement:
+            1. Create mock manager with log raising RuntimeError.
+            2. Create handler with mock handleError.
+            3. Create LogRecord.
+
+        Action:
+            Call handler.emit(record).
+
+        Assertion Strategy:
+            Validates error handling by confirming:
+            - handleError called once with record.
+
+        Testing Principle:
+            Validates robustness, preventing session manager
+            errors from breaking application logging.
+        """
         mock_manager = MagicMock()
         mock_manager.log.side_effect = RuntimeError("Manager failed")
         mock_getter = MagicMock(return_value=mock_manager)
@@ -1079,10 +1422,48 @@ class TestSessionLogHandler:
         handler.handleError.assert_called_once_with(record)
 
     def test_emit_recursion_guard(self):
-        """Verifies emit() prevents recursive calls within same thread."""
+        """Verifies emit() prevents recursive calls within same thread.
+
+        Tests thread-local recursion prevention.
+
+        Arrangement:
+            1. Create call_count tracker.
+            2. Create manager.log that calls emit recursively.
+            3. Create handler with recursive manager.
+
+        Action:
+            Call handler.emit(record).
+
+        Assertion Strategy:
+            Validates guard by confirming:
+            - call_count equals 1 (recursion blocked).
+
+        Testing Principle:
+            Validates recursion protection, preventing infinite
+            loops when logging triggers more logging.
+        """
         call_count = 0
 
         def recursive_log(*args, **kwargs):
+            """Helper that attempts recursive emit call.
+
+            Simulates scenario where session manager's log method
+            triggers additional logging that would cause recursion.
+
+            Args:
+                *args: Positional arguments (unused).
+                **kwargs: Keyword arguments (unused).
+
+            Returns:
+                None: Side-effect only function.
+
+            Raises:
+                None: No exceptions raised directly.
+
+            Business Context:
+                Session manager logging could trigger additional log
+                events, creating infinite recursion without guard.
+            """
             nonlocal call_count
             call_count += 1
             # Simulate recursion by calling emit again
@@ -1110,7 +1491,26 @@ class TestSessionLogHandler:
         assert call_count == 1
 
     def test_emit_without_structured_data(self):
-        """Verifies emit() works when record lacks structured_data."""
+        """Verifies emit() works when record lacks structured_data.
+
+        Tests handling of standard LogRecord without extra attribute.
+
+        Arrangement:
+            1. Create mock manager.
+            2. Create LogRecord without structured_data attribute.
+
+        Action:
+            Call handler.emit(record).
+
+        Assertion Strategy:
+            Validates handling by confirming:
+            - manager.log called with level, message, source only.
+            - No extra kwargs from structured_data.
+
+        Testing Principle:
+            Validates backwards compatibility with standard
+            Python LogRecord instances.
+        """
         mock_manager = MagicMock()
         mock_getter = MagicMock(return_value=mock_manager)
         handler = SessionLogHandler(mock_getter)
@@ -1144,7 +1544,25 @@ class TestLogContextCoverage:
     """Additional coverage tests for LogContext."""
 
     def test_exit_with_none_token(self):
-        """Verifies LogContext.__exit__ handles None token gracefully."""
+        """Verifies LogContext.__exit__ handles None token gracefully.
+
+        Tests defensive handling when context never entered.
+
+        Arrangement:
+            1. Create LogContext but don't enter via 'with'.
+            2. Manually set _token to None.
+
+        Action:
+            Call __exit__ directly.
+
+        Assertion Strategy:
+            Validates safety by confirming:
+            - No exception raised on __exit__.
+
+        Testing Principle:
+            Validates defensive programming, handling edge case
+            where __exit__ called without matching __enter__.
+        """
         ctx = LogContext(key="value")
         # Don't enter - token remains None
         ctx._token = None
@@ -1153,7 +1571,27 @@ class TestLogContextCoverage:
         ctx.__exit__(None, None, None)
 
     def test_context_override_existing_keys(self):
-        """Verifies nested LogContext overrides parent keys."""
+        """Verifies nested LogContext overrides parent keys.
+
+        Tests context variable stacking and restoration.
+
+        Arrangement:
+            1. Enter outer LogContext with key="outer".
+            2. Enter nested LogContext with key="inner".
+
+        Action:
+            Access _log_context at each nesting level.
+
+        Assertion Strategy:
+            Validates stacking by confirming:
+            - Outer context shows key="outer".
+            - Inner context shows key="inner".
+            - After inner exit, key restored to "outer".
+
+        Testing Principle:
+            Validates context variable semantics, ensuring nested
+            scopes properly override and restore values.
+        """
         from telescope_mcp.observability.logging import _log_context
 
         with LogContext(key="outer"):
@@ -1178,7 +1616,26 @@ class TestLoggerLevelBranches:
     """Test log methods when level is disabled (early return branches)."""
 
     def test_debug_when_disabled(self):
-        """Verifies debug() returns early when DEBUG not enabled."""
+        """Verifies debug() returns early when DEBUG not enabled.
+
+        Tests level-based filtering optimization.
+
+        Arrangement:
+            1. Reset and configure logging with WARNING level.
+            2. Get logger and set to WARNING.
+            3. Add StringIO stream handler.
+
+        Action:
+            Call logger.debug("This should not appear").
+
+        Assertion Strategy:
+            Validates filtering by confirming:
+            - Stream output is empty.
+
+        Testing Principle:
+            Validates early return optimization, avoiding
+            formatting overhead when level disabled.
+        """
         reset_logging()
         configure_logging(level=logging.WARNING, force=True)
         logger = get_logger("test.level.debug")
@@ -1194,7 +1651,26 @@ class TestLoggerLevelBranches:
         assert stream.getvalue() == ""
 
     def test_debug_when_enabled(self):
-        """Verifies debug() logs when DEBUG level enabled."""
+        """Verifies debug() logs when DEBUG level enabled.
+
+        Tests successful debug logging path.
+
+        Arrangement:
+            1. Reset and configure logging with DEBUG level.
+            2. Get logger and set to DEBUG.
+            3. Add StringIO stream handler with formatter.
+
+        Action:
+            Call logger.debug("Debug message", key="value").
+
+        Assertion Strategy:
+            Validates logging by confirming:
+            - "Debug message" appears in output.
+
+        Testing Principle:
+            Validates happy path for debug logging with
+            structured data.
+        """
         reset_logging()
         configure_logging(level=logging.DEBUG, force=True)
         logger = get_logger("test.level.debug.enabled")
@@ -1211,7 +1687,26 @@ class TestLoggerLevelBranches:
         assert "Debug message" in output
 
     def test_info_when_disabled(self):
-        """Verifies info() returns early when INFO not enabled."""
+        """Verifies info() returns early when INFO not enabled.
+
+        Tests level-based filtering for INFO level.
+
+        Arrangement:
+            1. Reset and configure logging with ERROR level.
+            2. Get logger and set to ERROR.
+            3. Add StringIO stream handler.
+
+        Action:
+            Call logger.info("This should not appear").
+
+        Assertion Strategy:
+            Validates filtering by confirming:
+            - Stream output is empty.
+
+        Testing Principle:
+            Validates INFO level filtering when only ERROR
+            and above are enabled.
+        """
         reset_logging()
         configure_logging(level=logging.ERROR, force=True)
         logger = get_logger("test.level.info")
@@ -1226,7 +1721,26 @@ class TestLoggerLevelBranches:
         assert stream.getvalue() == ""
 
     def test_warning_when_disabled(self):
-        """Verifies warning() returns early when WARNING not enabled."""
+        """Verifies warning() returns early when WARNING not enabled.
+
+        Tests level-based filtering for WARNING level.
+
+        Arrangement:
+            1. Reset and configure logging with CRITICAL level.
+            2. Get logger and set to CRITICAL.
+            3. Add StringIO stream handler.
+
+        Action:
+            Call logger.warning("This should not appear").
+
+        Assertion Strategy:
+            Validates filtering by confirming:
+            - Stream output is empty.
+
+        Testing Principle:
+            Validates WARNING level filtering when only CRITICAL
+            is enabled.
+        """
         reset_logging()
         configure_logging(level=logging.CRITICAL, force=True)
         logger = get_logger("test.level.warning")
@@ -1241,7 +1755,26 @@ class TestLoggerLevelBranches:
         assert stream.getvalue() == ""
 
     def test_error_when_disabled(self):
-        """Verifies error() returns early when ERROR not enabled."""
+        """Verifies error() returns early when ERROR not enabled.
+
+        Tests level-based filtering for ERROR level.
+
+        Arrangement:
+            1. Reset and configure logging above CRITICAL.
+            2. Get logger and set above CRITICAL.
+            3. Add StringIO stream handler.
+
+        Action:
+            Call logger.error("This should not appear").
+
+        Assertion Strategy:
+            Validates filtering by confirming:
+            - Stream output is empty.
+
+        Testing Principle:
+            Validates ERROR level filtering when level set
+            above all standard levels.
+        """
         reset_logging()
         configure_logging(level=logging.CRITICAL + 1, force=True)
         logger = get_logger("test.level.error")
@@ -1256,7 +1789,26 @@ class TestLoggerLevelBranches:
         assert stream.getvalue() == ""
 
     def test_critical_when_disabled(self):
-        """Verifies critical() returns early when CRITICAL not enabled."""
+        """Verifies critical() returns early when CRITICAL not enabled.
+
+        Tests level-based filtering for highest standard level.
+
+        Arrangement:
+            1. Reset and configure logging at CRITICAL + 10.
+            2. Get logger and set to CRITICAL + 10.
+            3. Add StringIO stream handler.
+
+        Action:
+            Call logger.critical("This should not appear").
+
+        Assertion Strategy:
+            Validates filtering by confirming:
+            - Stream output is empty.
+
+        Testing Principle:
+            Validates even CRITICAL level filtering when custom
+            higher level threshold is set.
+        """
         reset_logging()
         configure_logging(level=logging.CRITICAL + 10, force=True)
         logger = get_logger("test.level.critical")
@@ -1280,7 +1832,26 @@ class TestGetLoggerAutoConfig:
     """Test get_logger automatic configuration behavior."""
 
     def test_get_logger_auto_configures(self):
-        """Verifies get_logger auto-configures when not yet configured."""
+        """Verifies get_logger auto-configures when not yet configured.
+
+        Tests automatic initialization on first logger request.
+
+        Arrangement:
+            1. Reset logging to unconfigured state.
+            2. Verify _configured is False.
+
+        Action:
+            Call get_logger("test.autoconfig").
+
+        Assertion Strategy:
+            Validates auto-config by confirming:
+            - _configured becomes True.
+            - Logger is StructuredLogger instance.
+
+        Testing Principle:
+            Validates lazy initialization, enabling logging
+            without explicit configure_logging call.
+        """
         reset_logging()
         from telescope_mcp.observability import logging as log_module
 
@@ -1302,7 +1873,25 @@ class TestBranchCoverage:
     """Tests specifically targeting partial branch coverage."""
 
     def test_log_with_extra_dict(self):
-        """Verifies _log handles pre-existing extra dict (branch 458->460)."""
+        """Verifies _log handles pre-existing extra dict (branch 458->460).
+
+        Tests edge case where extra dict already provided.
+
+        Arrangement:
+            1. Reset and configure logging with DEBUG level.
+            2. Get logger and add stream handler with formatter.
+
+        Action:
+            Call logger.info with both extra dict and kwargs.
+
+        Assertion Strategy:
+            Validates handling by confirming:
+            - "Test message" appears in output.
+
+        Testing Principle:
+            Validates branch coverage for _log method when
+            caller passes explicit extra dict.
+        """
         reset_logging()
         configure_logging(level=logging.DEBUG, force=True)
         logger = get_logger("test.extra.dict")
@@ -1320,7 +1909,26 @@ class TestBranchCoverage:
         assert "Test message" in output
 
     def test_structured_formatter_with_custom_fmt(self):
-        """Verifies StructuredFormatter accepts custom format string."""
+        """Verifies StructuredFormatter accepts custom format string.
+
+        Tests format string customization.
+
+        Arrangement:
+            1. Create StructuredFormatter with custom fmt.
+            2. Create LogRecord with structured_data.
+
+        Action:
+            Format the record.
+
+        Assertion Strategy:
+            Validates custom format by confirming:
+            - Output starts with "INFO: Custom format test".
+            - "key=value" still appended.
+
+        Testing Principle:
+            Validates format string flexibility while preserving
+            structured data appending behavior.
+        """
         custom_fmt = "%(levelname)s: %(message)s"
         formatter = StructuredFormatter(fmt=custom_fmt)
 
@@ -1342,7 +1950,25 @@ class TestBranchCoverage:
         assert "key=value" in formatted
 
     def test_structured_formatter_with_custom_datefmt(self):
-        """Verifies StructuredFormatter accepts custom date format."""
+        """Verifies StructuredFormatter accepts custom date format.
+
+        Tests date format string customization.
+
+        Arrangement:
+            1. Create StructuredFormatter with custom datefmt.
+            2. Create LogRecord with empty structured_data.
+
+        Action:
+            Format the record.
+
+        Assertion Strategy:
+            Validates custom date by confirming:
+            - "Date format test" appears in output.
+
+        Testing Principle:
+            Validates date format customization for different
+            timestamp display preferences.
+        """
         formatter = StructuredFormatter(datefmt="%Y-%m-%d")
 
         record = logging.LogRecord(

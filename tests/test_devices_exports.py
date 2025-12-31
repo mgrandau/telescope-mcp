@@ -16,19 +16,26 @@ class TestDevicesExports:
     """Verify devices module export integrity."""
 
     def test_all_exports_importable(self) -> None:
-        """Every item in __all__ should be importable.
+        """Verifies every item in __all__ is importable from the module.
 
-        Ensures __all__ doesn't list non-existent symbols that would
+        Tests that __all__ doesn't list non-existent symbols that would
         cause 'from telescope_mcp.devices import *' to fail.
 
-        Args:
-            None.
+        Arrangement:
+            1. Import devices module (already done at module level).
+            2. Access devices.__all__ list.
 
-        Returns:
-            None. Asserts on import failures.
+        Action:
+            Iterate __all__ and verify each name exists via hasattr/getattr.
 
-        Raises:
-            AssertionError: If any __all__ item not in module.
+        Assertion Strategy:
+            Validates export integrity by confirming:
+            - Each name in __all__ exists as module attribute.
+            - Each exported object is not None.
+
+        Testing Principle:
+            Validates API contract, ensuring __all__ accurately reflects
+            available public symbols.
         """
         for name in devices.__all__:
             assert hasattr(devices, name), f"__all__ lists '{name}' but not in module"
@@ -37,20 +44,26 @@ class TestDevicesExports:
             assert obj is not None, f"'{name}' is None"
 
     def test_no_namespace_pollution(self) -> None:
-        """Public namespace should only contain __all__ items + submodules.
+        """Verifies public namespace only contains __all__ items + submodules.
 
-        Verifies only expected names are in the public namespace. Python
-        automatically adds submodules to package namespace when imported,
-        so camera, controller, registry, sensor are expected.
+        Tests that only expected names are in the public namespace. Python
+        automatically adds submodules to package namespace when imported.
 
-        Args:
-            None.
+        Arrangement:
+            1. Build allowed set from __all__ + expected submodules.
+            2. Get actual public names via dir() filtering.
 
-        Returns:
-            None. Asserts on unexpected exports.
+        Action:
+            Compute set difference between actual and allowed names.
 
-        Raises:
-            AssertionError: If non-__all__ public names found (except submodules).
+        Assertion Strategy:
+            Validates namespace cleanliness by confirming:
+            - No unexpected public names exist.
+            - Only __all__ items and submodule names are public.
+
+        Testing Principle:
+            Validates encapsulation, ensuring internal implementation
+            details don't leak into public namespace.
         """
         allowed = set(devices.__all__)
         # Python adds submodules to package namespace when they're imported from
@@ -68,39 +81,53 @@ class TestDevicesExports:
         assert not unexpected, f"Unexpected public names in namespace: {unexpected}"
 
     def test_all_count_matches_comment(self) -> None:
-        """__all__ count should match documented total.
+        """Verifies __all__ count matches documented total in source comment.
 
-        Verifies the '# Total: N exports' comment at end of __all__
+        Tests that '# Total: N exports' comment at end of __all__
         matches the actual count. Prevents comment drift.
 
-        Args:
-            None.
+        Arrangement:
+            1. Access devices.__all__ list.
+            2. Expected count is 30 per source comment.
 
-        Returns:
-            None. Asserts on count mismatch.
+        Action:
+            Count items in __all__ and compare to documented value.
 
-        Raises:
-            AssertionError: If count doesn't match 30.
+        Assertion Strategy:
+            Validates documentation accuracy by confirming:
+            - len(__all__) equals documented count of 30.
+
+        Testing Principle:
+            Validates documentation currency, ensuring code comments
+            accurately reflect implementation.
         """
         assert (
             len(devices.__all__) == 30
         ), f"Expected 30 exports (per comment), got {len(devices.__all__)}"
 
     def test_export_categories(self) -> None:
-        """Verify expected symbols exist in each category.
+        """Verifies expected symbols exist in each export category.
 
         Spot-checks that key symbols from each category (Camera, Controller,
-        Registry, Sensor) are present. Catches accidental removal of
-        important exports.
+        Registry, Sensor) are present. Catches accidental removal.
 
-        Args:
-            None.
+        Arrangement:
+            1. Define key exports per category (Camera, Controller, etc.).
+            2. Combine into single list of required symbols.
 
-        Returns:
-            None. Asserts on missing key exports.
+        Action:
+            Check each key symbol is in __all__.
 
-        Raises:
-            AssertionError: If any key export missing.
+        Assertion Strategy:
+            Validates API completeness by confirming:
+            - All Camera symbols present (Camera, CameraConfig, etc.).
+            - All Controller symbols present.
+            - All Registry symbols present.
+            - All Sensor symbols present.
+
+        Testing Principle:
+            Validates API stability, ensuring essential public symbols
+            are never accidentally removed from exports.
         """
         # Key exports that must exist
         camera_exports = ["Camera", "CameraConfig", "CaptureResult", "CameraInfo"]
@@ -116,19 +143,26 @@ class TestDevicesExports:
             assert name in devices.__all__, f"Key export '{name}' missing from __all__"
 
     def test_star_import_works(self) -> None:
-        """'from telescope_mcp.devices import *' should work without error.
+        """Verifies 'from telescope_mcp.devices import *' works correctly.
 
-        Verifies the star import mechanism works correctly. This is the
-        ultimate test of __all__ integrity.
+        Tests that star import mechanism works. This is the ultimate test
+        of __all__ integrity - if it fails, users can't use star import.
 
-        Args:
-            None.
+        Arrangement:
+            1. Create empty namespace dict for isolated exec.
+            2. Prepare star import statement string.
 
-        Returns:
-            None. Asserts on import failure.
+        Action:
+            Execute star import in isolated namespace via exec().
 
-        Raises:
-            AssertionError: If star import fails or doesn't populate namespace.
+        Assertion Strategy:
+            Validates import mechanism by confirming:
+            - exec() completes without ImportError.
+            - All __all__ items appear in resulting namespace.
+
+        Testing Principle:
+            Validates user experience, ensuring star import works
+            as documented for convenience imports.
         """
         # Create isolated namespace for star import
         namespace: dict[str, object] = {}
@@ -139,19 +173,26 @@ class TestDevicesExports:
             assert name in namespace, f"Star import missing '{name}'"
 
     def test_no_circular_import(self) -> None:
-        """Module should import without circular import errors.
+        """Verifies module imports without circular import errors.
 
-        Verifies fresh import works. Catches circular dependencies
-        between devices submodules.
+        Tests fresh import works after clearing module cache. Catches
+        circular dependencies between devices submodules.
 
-        Args:
-            None.
+        Arrangement:
+            1. Remove all telescope_mcp.devices.* from sys.modules.
+            2. Prepare to call importlib.import_module.
 
-        Returns:
-            None. Asserts on import failure.
+        Action:
+            Import telescope_mcp.devices fresh without cache.
 
-        Raises:
-            AssertionError: If import fails.
+        Assertion Strategy:
+            Validates import safety by confirming:
+            - Fresh import completes without ImportError.
+            - No circular dependency exception raised.
+
+        Testing Principle:
+            Validates module architecture, ensuring submodule imports
+            don't create circular dependency chains.
         """
         import importlib
         import sys
