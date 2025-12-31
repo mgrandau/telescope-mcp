@@ -96,8 +96,28 @@ class SessionManager:
     def _ensure_idle_session(self) -> None:
         """Create idle session if no session is active.
 
-        Maintains the "always have a session" invariant. Called after session
-        end and during operations that require a session.
+        Maintains the "always have a session" invariant by creating an IDLE
+        session whenever the manager has no active session. This ensures logs
+        and events are never lost, even between explicit sessions.
+
+        Business context: Telescope operations generate important data even
+        outside formal observation sessions (startup diagnostics, calibration,
+        debugging). Idle sessions capture this data so nothing is lost.
+
+        Args:
+            None. Checks and modifies self._active_session.
+
+        Returns:
+            None. Creates session as side effect if needed.
+
+        Raises:
+            None. Always succeeds.
+
+        Example:
+            >>> manager._active_session = None  # Simulate no session
+            >>> manager._ensure_idle_session()
+            >>> manager._active_session.session_type
+            SessionType.IDLE
         """
         if self._active_session is None:
             self._active_session = Session(
@@ -364,12 +384,22 @@ class SessionManager:
         add_telemetry, close). May be idle session if no observation in progress.
         None only after shutdown() called.
 
+        Business context: Direct session access enables advanced workflows
+        like conditional frame capture based on session state, or accessing
+        metrics not exposed through SessionManager's simplified API.
+
         Most applications should use SessionManager.add_frame() etc. instead
         (simpler, auto-creates session). Use this for session metadata access
         (session_id, duration_seconds) or advanced use cases.
 
+        Args:
+            None. Property accessor.
+
         Returns:
             Active Session instance, or None after shutdown().
+
+        Raises:
+            None. Always succeeds.
 
         Example:
             >>> manager.start_session(SessionType.OBSERVATION, target="M31")
@@ -385,9 +415,15 @@ class SessionManager:
         Used for context-aware behavior where different session types have
         different requirements (e.g., OBSERVATION needs calibration frames).
 
+        Args:
+            None. Property accessor.
+
         Returns:
             SessionType enum (OBSERVATION, ALIGNMENT, EXPERIMENT, MAINTENANCE,
             or IDLE) if session active, None otherwise.
+
+        Raises:
+            None. Always succeeds.
 
         Example:
             >>> manager.start_session(SessionType.OBSERVATION, target="M31")
@@ -406,8 +442,18 @@ class SessionManager:
         (e.g., 'observation_m31_20251218_203045'). Used for file naming,
         logging correlation, and UI display.
 
+        Business context: Session IDs are the primary correlation key across
+        logs, ASDF files, and UI. Displayed in dashboard header and embedded
+        in all log entries for troubleshooting.
+
+        Args:
+            None. Property accessor.
+
         Returns:
             Session ID string, or None after shutdown().
+
+        Raises:
+            None. Always succeeds.
 
         Example:
             >>> manager.start_session(SessionType.OBSERVATION, target="M31")

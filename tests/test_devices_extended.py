@@ -677,6 +677,30 @@ class TestCameraControls:
         call_count = {"n": 0}
 
         def set_control_with_counter(name, value):
+            """Mock set_control that fails after 2 successful calls.
+
+            Simulates hardware failure occurring after initial camera
+            configuration (Gain/Exposure defaults set during connect()).
+
+            Business context:
+            Tests Camera error recovery when hardware fails mid-operation.
+            First 2 calls succeed (initial config), third triggers error.
+
+            Args:
+                name: Control name (e.g., "Gain", "Exposure").
+                value: Control value to set.
+
+            Returns:
+                dict: Control status dict if call_count <= 2.
+
+            Raises:
+                RuntimeError: When call_count > 2, simulating hardware failure.
+
+            Example:
+                >>> set_control_with_counter("Gain", 100)  # 1st call: OK
+                >>> set_control_with_counter("Exposure", 1000)  # 2nd: OK
+                >>> set_control_with_counter("Offset", 10)  # 3rd: raises
+            """
             call_count["n"] += 1
             if call_count["n"] > 2:
                 raise RuntimeError("Hardware failure")
@@ -774,6 +798,30 @@ class TestCameraControls:
         call_count = {"n": 0}
 
         def set_control_with_counter(name, value):
+            """Mock set_control that fails after 2 successful calls.
+
+            Simulates driver error occurring after initial camera
+            configuration (Gain/Exposure defaults set during connect()).
+
+            Business context:
+            Tests Camera error handling when driver fails mid-operation.
+            First 2 calls succeed (initial config), third triggers error.
+
+            Args:
+                name: Control name (e.g., "Gain", "Exposure").
+                value: Control value to set.
+
+            Returns:
+                dict: Control status dict if call_count <= 2.
+
+            Raises:
+                RuntimeError: When call_count > 2, simulating driver error.
+
+            Example:
+                >>> set_control_with_counter("Gain", 100)  # 1st call: OK
+                >>> set_control_with_counter("Exposure", 1000)  # 2nd: OK
+                >>> set_control_with_counter("Offset", 10)  # 3rd: raises
+            """
             call_count["n"] += 1
             if call_count["n"] > 2:
                 raise RuntimeError("Driver error")

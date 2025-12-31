@@ -270,21 +270,142 @@ class TestCameraToolsCoverage:
 
     @pytest.fixture
     def call_tool_handler(self):
-        """Fixture that captures the registered call_tool handler.
+        """Pytest fixture capturing the registered call_tool handler function.
 
-        Returns the async function registered with server.call_tool().
+        Creates a mock MCP server to intercept handler registration,
+        allowing direct invocation of the call_tool dispatcher for testing
+        tool routing without full MCP server setup.
+
+        Business context:
+            Tool dispatch testing requires access to the registered handler
+            function. This fixture captures it during registration so tests
+            can invoke specific tool branches directly, validating routing
+            logic and parameter extraction independently of MCP transport.
+
+        Arrangement:
+            1. Create MockServer class mimicking MCP Server decorator API.
+            2. list_tools() returns identity decorator (captures but passes through).
+            3. call_tool() decorator captures handler function in nonlocal variable.
+            4. Call cameras.register(mock_server) to trigger registration.
+
+        Args:
+            self: Test class instance (implicit for pytest method fixtures).
+
+        Returns:
+            Callable: The async function registered with server.call_tool(),
+                which dispatches tool invocations to handler functions.
+                Signature: async def handler(name: str, params: dict)
+                -> list[TextContent]
+
+        Raises:
+            None. Fixture setup is deterministic with no external dependencies.
+
+        Example:
+            >>> async def test_dispatch(self, call_tool_handler):
+            ...     result = await call_tool_handler("list_cameras", {})
+            ...     assert len(result) == 1
+
+        Testing Principle:
+            Validates registration lifecycle, capturing handlers for isolated
+            testing of dispatch logic without full MCP server infrastructure.
         """
         handler = None
 
         class MockServer:
             def list_tools(self):
+                """Return decorator for list_tools registration.
+
+                Business context:
+                Mock MCP server list_tools() for handler capture.
+
+                Args:
+                    None: This method takes no arguments.
+
+                Returns:
+                    Callable: Identity decorator that passes through function.
+
+                Raises:
+                    None: This method does not raise any exceptions.
+
+                Example:
+                    >>> mock = MockServer()
+                    >>> @mock.list_tools()
+                    ... async def handler(): pass
+                """
+
                 def decorator(fn):
+                    """Identity decorator returning function unchanged.
+
+                    Stores the decorated function unchanged, enabling
+                    registration without modification.
+
+                    Business context:
+                    Intercepts MCP registration to enable isolated handler testing
+                    without requiring full server lifecycle.
+
+                    Args:
+                        fn: The handler function being registered via decorator.
+
+                    Returns:
+                        The original function unchanged, preserving call signature.
+
+                    Raises:
+                        None: This function does not raise any exceptions.
+
+                    Example:
+                        >>> @decorator
+                        ... async def handler(): pass
+                        >>> assert handler is not None
+                    """
                     return fn
 
                 return decorator
 
             def call_tool(self):
+                """Return decorator that captures call_tool handler.
+
+                Business context:
+                Captures registered handler for isolated testing.
+
+                Args:
+                    None: This method takes no arguments.
+
+                Returns:
+                    Callable: Decorator that stores handler in nonlocal variable.
+
+                Raises:
+                    None: This method does not raise any exceptions.
+
+                Example:
+                    >>> mock = MockServer()
+                    >>> @mock.call_tool()
+                    ... async def handler(name, args): pass
+                """
+
                 def decorator(fn):
+                    """Capture handler function in nonlocal variable for test access.
+
+                    Stores the decorated function in nonlocal variable,
+                    enabling direct handler invocation in test assertions.
+
+                    Business context:
+                    Intercepts MCP registration to enable isolated handler testing
+                    without requiring full server lifecycle.
+
+                    Args:
+                        fn: The handler function being registered via decorator.
+
+                    Returns:
+                        The original function unchanged, preserving call signature.
+
+                    Raises:
+                        None: This function does not raise any exceptions.
+
+                    Example:
+                        >>> @decorator
+                        ... async def handler(): pass
+                        >>> assert captured_handler is handler
+                    """
                     nonlocal handler
                     handler = fn
                     return fn
@@ -297,10 +418,26 @@ class TestCameraToolsCoverage:
 
     @pytest.mark.asyncio
     async def test_call_tool_list_cameras(self, call_tool_handler):
-        """Verifies call_tool dispatches list_cameras correctly.
+        """Verifies call_tool dispatches list_cameras correctly to _list_cameras.
+
+        Tests the dispatcher routing branch for camera enumeration tool.
+
+        Arrangement:
+            1. Capture call_tool handler via fixture.
+            2. Mock _list_cameras to return canned response.
+            3. Prepare empty params dict (list_cameras takes no arguments).
+
+        Action:
+            Invokes call_tool handler with name="list_cameras" and empty params.
+
+        Assertion Strategy:
+            Validates dispatcher routing by confirming:
+            - _list_cameras was called exactly once.
+            - Correct handler invoked for tool name.
 
         Testing Principle:
-        Covers line 215 (list_cameras branch).
+            Validates dispatcher routing, ensuring list_cameras branch executes
+            and routes to the correct internal handler function.
         """
         with patch.object(cameras, "_list_cameras") as mock_fn:
             mock_fn.return_value = [MagicMock(text='{"count": 0}')]
@@ -309,10 +446,26 @@ class TestCameraToolsCoverage:
 
     @pytest.mark.asyncio
     async def test_call_tool_get_camera_info(self, call_tool_handler):
-        """Verifies call_tool dispatches get_camera_info correctly.
+        """Verifies call_tool dispatches get_camera_info with camera_id extraction.
+
+        Tests the dispatcher routing and parameter extraction for camera info tool.
+
+        Arrangement:
+            1. Capture call_tool handler via fixture.
+            2. Mock _get_camera_info to return empty dict response.
+            3. Prepare params dict with camera_id=0.
+
+        Action:
+            Invokes call_tool handler with name="get_camera_info" and params.
+
+        Assertion Strategy:
+            Validates parameter passing by confirming:
+            - _get_camera_info called with correct camera_id (0).
+            - Argument extracted correctly from params dict.
 
         Testing Principle:
-        Covers line 217 (get_camera_info branch).
+            Validates parameter passing, ensuring camera_id flows through
+            dispatcher to the internal handler function correctly.
         """
         with patch.object(cameras, "_get_camera_info") as mock_fn:
             mock_fn.return_value = [MagicMock(text="{}")]
@@ -321,10 +474,26 @@ class TestCameraToolsCoverage:
 
     @pytest.mark.asyncio
     async def test_call_tool_capture_frame(self, call_tool_handler):
-        """Verifies call_tool dispatches capture_frame correctly.
+        """Verifies call_tool dispatches capture_frame with all parameters.
+
+        Tests the dispatcher routing and multi-parameter extraction for capture tool.
+
+        Arrangement:
+            1. Capture call_tool handler via fixture.
+            2. Mock _capture_frame to return empty response.
+            3. Prepare params dict with camera_id=0, exposure_us=50000, gain=25.
+
+        Action:
+            Invokes call_tool handler with name="capture_frame" and full params.
+
+        Assertion Strategy:
+            Validates multi-parameter extraction by confirming:
+            - _capture_frame called with (0, 50000, 25).
+            - All three parameters (camera_id, exposure_us, gain) extracted.
 
         Testing Principle:
-        Covers lines 219-223 (capture_frame branch).
+            Validates multi-parameter extraction, ensuring all capture arguments
+            flow through dispatcher correctly to the internal handler.
         """
         with patch.object(cameras, "_capture_frame") as mock_fn:
             mock_fn.return_value = [MagicMock(text="{}")]
@@ -335,10 +504,27 @@ class TestCameraToolsCoverage:
 
     @pytest.mark.asyncio
     async def test_call_tool_capture_frame_defaults(self, call_tool_handler):
-        """Verifies call_tool uses defaults for capture_frame.
+        """Verifies call_tool applies default values for omitted capture_frame params.
+
+        Tests default parameter handling when optional arguments are not provided.
+
+        Arrangement:
+            1. Capture call_tool handler via fixture.
+            2. Mock _capture_frame to return empty response.
+            3. Prepare params with only camera_id=1 (omit exposure_us and gain).
+
+        Action:
+            Invokes call_tool handler with name="capture_frame" missing optional params.
+
+        Assertion Strategy:
+            Validates default parameter handling by confirming:
+            - _capture_frame called with camera_id=1.
+            - Default exposure_us=100000 applied.
+            - Default gain=50 applied.
 
         Testing Principle:
-        Covers default values in capture_frame dispatch.
+            Validates default parameter handling, ensuring omitted optional arguments
+            receive sensible defaults for convenient API usage.
         """
         with patch.object(cameras, "_capture_frame") as mock_fn:
             mock_fn.return_value = [MagicMock(text="{}")]
@@ -347,10 +533,26 @@ class TestCameraToolsCoverage:
 
     @pytest.mark.asyncio
     async def test_call_tool_set_camera_control(self, call_tool_handler):
-        """Verifies call_tool dispatches set_camera_control correctly.
+        """Verifies call_tool dispatches set_camera_control with all arguments.
+
+        Tests the dispatcher routing for camera control write operations.
+
+        Arrangement:
+            1. Capture call_tool handler via fixture.
+            2. Mock _set_camera_control to return empty response.
+            3. Prepare params with camera_id=0, control="Gain", value=100.
+
+        Action:
+            Invokes call_tool handler with name="set_camera_control" and params.
+
+        Assertion Strategy:
+            Validates control mutation routing by confirming:
+            - _set_camera_control called with (0, "Gain", 100).
+            - Control name and value extracted correctly from params.
 
         Testing Principle:
-        Covers lines 225-229 (set_camera_control branch).
+            Validates control mutation routing, ensuring write operations
+            dispatch correctly to the internal handler with all arguments.
         """
         with patch.object(cameras, "_set_camera_control") as mock_fn:
             mock_fn.return_value = [MagicMock(text="{}")]
@@ -362,10 +564,26 @@ class TestCameraToolsCoverage:
 
     @pytest.mark.asyncio
     async def test_call_tool_get_camera_control(self, call_tool_handler):
-        """Verifies call_tool dispatches get_camera_control correctly.
+        """Verifies call_tool dispatches get_camera_control with correct arguments.
+
+        Tests the dispatcher routing for camera control read operations.
+
+        Arrangement:
+            1. Capture call_tool handler via fixture.
+            2. Mock _get_camera_control to return empty response.
+            3. Prepare params with camera_id=0, control="Temperature".
+
+        Action:
+            Invokes call_tool handler with name="get_camera_control" and params.
+
+        Assertion Strategy:
+            Validates control query routing by confirming:
+            - _get_camera_control called with (0, "Temperature").
+            - Control name extracted correctly for read operation.
 
         Testing Principle:
-        Covers lines 231-234 (get_camera_control branch).
+            Validates control query routing, ensuring read operations
+            dispatch correctly to the internal handler function.
         """
         with patch.object(cameras, "_get_camera_control") as mock_fn:
             mock_fn.return_value = [MagicMock(text="{}")]
@@ -376,10 +594,26 @@ class TestCameraToolsCoverage:
 
     @pytest.mark.asyncio
     async def test_call_tool_unknown_tool(self, call_tool_handler):
-        """Verifies call_tool returns error for unknown tool names.
+        """Verifies call_tool returns structured error for unknown tool names.
+
+        Tests the error handling path when an unrecognized tool is requested.
+
+        Arrangement:
+            1. Capture call_tool handler via fixture.
+            2. No mocks needed - testing error path directly.
+            3. Prepare unrecognized tool name "nonexistent_tool".
+
+        Action:
+            Invokes call_tool handler with name="nonexistent_tool" and empty params.
+
+        Assertion Strategy:
+            Validates error handling by confirming:
+            - Response contains error="unknown_tool".
+            - Message includes the unknown tool name for debugging.
 
         Testing Principle:
-        Covers else branch in call_tool dispatcher (lines 235-241).
+            Validates error handling, ensuring unknown tools return clear,
+            structured errors that help clients identify invalid requests.
         """
         result = await call_tool_handler("nonexistent_tool", {})
 
@@ -393,10 +627,27 @@ class TestCameraToolsCoverage:
     # -------------------------------------------------------------------------
 
     def test_tools_constant_exists(self):
-        """Verifies TOOLS constant is properly defined.
+        """Verifies TOOLS constant is properly defined with all camera tools.
+
+        Tests the module-level constant that defines available camera MCP tools.
+
+        Arrangement:
+            1. No setup needed - testing module-level constant.
+            2. cameras.TOOLS should be populated at module load time.
+
+        Action:
+            Accesses cameras.TOOLS and extracts tool names via list comprehension.
+
+        Assertion Strategy:
+            Validates module API surface by confirming:
+            - TOOLS attribute exists on module.
+            - Exactly 5 tools defined (list_cameras, get_camera_info, capture_frame,
+              set_camera_control, get_camera_control).
+            - All expected tool names present in the list.
 
         Testing Principle:
-        Ensures module-level TOOLS list is accessible and non-empty.
+            Validates module API surface, ensuring TOOLS constant is complete
+            for MCP server registration and client discovery protocols.
         """
         assert hasattr(cameras, "TOOLS")
         assert len(cameras.TOOLS) == 5
@@ -412,29 +663,129 @@ class TestCameraToolsCoverage:
     # -------------------------------------------------------------------------
 
     def test_register_attaches_handlers(self):
-        """Verifies register() attaches handlers to server.
+        """Verifies register() attaches both list_tools and call_tool handlers.
+
+        Tests the registration function that connects handlers to MCP server.
+
+        Arrangement:
+            1. Create MockServer with list_tools() and call_tool() decorator methods.
+            2. Track decorator invocations via nonlocal boolean flags.
+            3. Decorators return identity function to allow registration.
+
+        Action:
+            Calls cameras.register(mock_server) to attach handlers to server.
+
+        Assertion Strategy:
+            Validates registration lifecycle by confirming:
+            - list_tools() decorator was invoked (tool listing capability).
+            - call_tool() decorator was invoked (tool invocation capability).
 
         Testing Principle:
-        Ensures register() calls server.list_tools() and server.call_tool().
+            Validates registration lifecycle, ensuring both handlers attach
+            correctly for MCP server tool discovery and invocation protocols.
         """
         list_tools_called = False
         call_tool_called = False
 
         class MockServer:
             def list_tools(self):
+                """Track list_tools decorator invocation.
+
+                Business context:
+                Verifies register() calls list_tools() on server.
+
+                Args:
+                    None: This method takes no arguments.
+
+                Returns:
+                    Callable: Identity decorator for registration.
+
+                Raises:
+                    None: This method does not raise any exceptions.
+
+                Example:
+                    >>> mock = MockServer()
+                    >>> @mock.list_tools()
+                    ... async def handler(): pass
+                """
                 nonlocal list_tools_called
                 list_tools_called = True
 
                 def decorator(fn):
+                    """Identity decorator returning function unchanged.
+
+                    Stores the decorated function unchanged, enabling
+                    registration without modification.
+
+                    Business context:
+                    Intercepts MCP registration to enable isolated handler testing
+                    without requiring full server lifecycle.
+
+                    Args:
+                        fn: The handler function being registered via decorator.
+
+                    Returns:
+                        The original function unchanged, preserving call signature.
+
+                    Raises:
+                        None: This function does not raise any exceptions.
+
+                    Example:
+                        >>> @decorator
+                        ... async def handler(): pass
+                        >>> assert handler is not None
+                    """
                     return fn
 
                 return decorator
 
             def call_tool(self):
+                """Track call_tool decorator invocation.
+
+                Business context:
+                Verifies register() calls call_tool() on server.
+
+                Args:
+                    None: This method takes no arguments.
+
+                Returns:
+                    Callable: Identity decorator for registration.
+
+                Raises:
+                    None: This method does not raise any exceptions.
+
+                Example:
+                    >>> mock = MockServer()
+                    >>> @mock.call_tool()
+                    ... async def handler(name, args): pass
+                """
                 nonlocal call_tool_called
                 call_tool_called = True
 
                 def decorator(fn):
+                    """Identity decorator returning function unchanged.
+
+                    Stores the decorated function unchanged, enabling
+                    registration without modification.
+
+                    Business context:
+                    Intercepts MCP registration to enable isolated handler testing
+                    without requiring full server lifecycle.
+
+                    Args:
+                        fn: The handler function being registered via decorator.
+
+                    Returns:
+                        The original function unchanged, preserving call signature.
+
+                    Raises:
+                        None: This function does not raise any exceptions.
+
+                    Example:
+                        >>> @decorator
+                        ... async def handler(): pass
+                        >>> assert handler is not None
+                    """
                     return fn
 
                 return decorator
@@ -447,16 +798,75 @@ class TestCameraToolsCoverage:
 
     @pytest.mark.asyncio
     async def test_list_tools_returns_tools(self):
-        """Verifies list_tools handler returns TOOLS constant.
+        """Verifies list_tools handler returns TOOLS constant for discovery.
+
+        Tests that the registered list_tools handler provides complete tool list.
+
+        Arrangement:
+            1. Create MockServer that captures list_tools handler via decorator.
+            2. Register cameras module to trigger handler registration.
+            3. Captured handler stored in nonlocal variable.
+
+        Action:
+            Invokes the captured list_tools handler directly via await.
+
+        Assertion Strategy:
+            Validates tool discovery by confirming:
+            - Returned list equals cameras.TOOLS exactly.
+            - All defined tools exposed for client enumeration.
 
         Testing Principle:
-        Ensures the list_tools handler returns the module TOOLS.
+            Validates tool discovery, ensuring clients receive complete
+            tool list for camera operations via MCP protocol.
         """
         list_tools_handler = None
 
         class MockServer:
             def list_tools(self):
+                """Return decorator that captures list_tools handler.
+
+                Business context:
+                Captures handler for direct invocation testing.
+
+                Args:
+                    None: This method takes no arguments.
+
+                Returns:
+                    Callable: Decorator that stores handler in nonlocal variable.
+
+                Raises:
+                    None: This method does not raise any exceptions.
+
+                Example:
+                    >>> mock = MockServer()
+                    >>> @mock.list_tools()
+                    ... async def handler(): pass
+                """
+
                 def decorator(fn):
+                    """Capture handler function in nonlocal variable for test access.
+
+                    Stores the decorated function in nonlocal variable,
+                    enabling direct handler invocation in test assertions.
+
+                    Business context:
+                    Intercepts MCP registration to enable isolated handler testing
+                    without requiring full server lifecycle.
+
+                    Args:
+                        fn: The handler function being registered via decorator.
+
+                    Returns:
+                        The original function unchanged, preserving call signature.
+
+                    Raises:
+                        None: This function does not raise any exceptions.
+
+                    Example:
+                        >>> @decorator
+                        ... async def handler(): pass
+                        >>> assert captured_handler is handler
+                    """
                     nonlocal list_tools_handler
                     list_tools_handler = fn
                     return fn
@@ -464,7 +874,50 @@ class TestCameraToolsCoverage:
                 return decorator
 
             def call_tool(self):
+                """Return decorator for call_tool registration.
+
+                Business context:
+                Mock call_tool() - not needed for this test.
+
+                Args:
+                    None: This method takes no arguments.
+
+                Returns:
+                    Callable: Identity decorator for registration.
+
+                Raises:
+                    None: This method does not raise any exceptions.
+
+                Example:
+                    >>> mock = MockServer()
+                    >>> @mock.call_tool()
+                    ... async def handler(name, args): pass
+                """
+
                 def decorator(fn):
+                    """Identity decorator returning function unchanged.
+
+                    Stores the decorated function unchanged, enabling
+                    registration without modification.
+
+                    Business context:
+                    Intercepts MCP registration to enable isolated handler testing
+                    without requiring full server lifecycle.
+
+                    Args:
+                        fn: The handler function being registered via decorator.
+
+                    Returns:
+                        The original function unchanged, preserving call signature.
+
+                    Raises:
+                        None: This function does not raise any exceptions.
+
+                    Example:
+                        >>> @decorator
+                        ... async def handler(): pass
+                        >>> assert handler is not None
+                    """
                     return fn
 
                 return decorator

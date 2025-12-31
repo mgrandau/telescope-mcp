@@ -147,8 +147,23 @@ class Session:
         Format: '{type}_{target}_{YYYYMMDD_HHMMSS}' or '{type}_{YYYYMMDD_HHMMSS}'.
         Target is slugified (lowercase, spaces to underscores, max 20 chars).
 
+        Business context: Session IDs appear in filenames, logs, and UI.
+        Human-readable format aids debugging and file organization. Timestamp
+        ensures uniqueness even for same-target observations.
+
+        Args:
+            None. Uses self.session_type, self.target, self.start_time.
+
         Returns:
             Unique session ID like 'observation_m31_20251214_210000'.
+
+        Raises:
+            None. Always succeeds.
+
+        Example:
+            >>> session = Session(SessionType.OBSERVATION, Path("/data"), target="M31")
+            >>> session.session_id  # Uses _generate_session_id internally
+            'observation_m31_20251231_120000'
         """
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
 
@@ -360,10 +375,27 @@ class Session:
         """Build the ASDF tree structure from session data.
 
         Assembles meta, cameras, telemetry, calibration, and observability
-        into the hierarchical structure for ASDF serialization.
+        into the hierarchical structure for ASDF serialization. Sets end_time
+        and calculates final duration.
+
+        Business context: ASDF is the standard format for astronomical data.
+        The tree structure organizes all session data (frames, telemetry,
+        logs) for reproducibility and analysis with standard astronomy tools.
+
+        Args:
+            None. Uses session's internal state.
 
         Returns:
-            Complete ASDF tree ready for asdf.AsdfFile().
+            Complete ASDF tree dict with keys: meta, cameras, telemetry,
+            calibration, observability.
+
+        Raises:
+            None. Always succeeds (empty lists for missing data).
+
+        Example:
+            >>> tree = session._build_asdf_tree()
+            >>> tree['meta']['session_type']
+            'observation'
         """
         self._end_time = datetime.now(UTC)
         duration_seconds = (self._end_time - self.start_time).total_seconds()
@@ -399,8 +431,24 @@ class Session:
         Organizes files by date: data_dir/YYYY/MM/DD/session_id.asdf.
         Creates directories if needed.
 
+        Business context: Date-based directory structure enables easy browsing
+        and cleanup of old data. Matches common astronomy data organization
+        patterns and simplifies backup/archive workflows.
+
+        Args:
+            None. Uses self.data_dir, self.start_time, self.session_id.
+
         Returns:
-            Full path for the ASDF file.
+            Full path for the ASDF file, e.g.,
+            '/data/2025/12/31/observation_m31_20251231_210000.asdf'.
+
+        Raises:
+            OSError: If directory creation fails (permissions, disk full).
+
+        Example:
+            >>> session = Session(SessionType.OBSERVATION, Path("/data"), target="M31")
+            >>> session._get_output_path()
+            PosixPath('/data/2025/12/31/observation_m31_20251231_120000.asdf')
         """
         # Organize by date: data_dir/YYYY/MM/DD/session_id.asdf
         date_path = self.start_time.strftime("%Y/%m/%d")
@@ -453,8 +501,19 @@ class Session:
         Returns True after close() has been called. Closed sessions
         reject all add_* methods with RuntimeError.
 
+        Business context: Session immutability after close ensures ASDF
+        files are complete and consistent. Tools check is_closed before
+        attempting writes to provide clear error messages rather than
+        silent failures.
+
+        Args:
+            None. Property accessor.
+
         Returns:
             True if closed, False if still active.
+
+        Raises:
+            None. Read-only property always succeeds.
 
         Example:
             >>> session = Session(SessionType.OBSERVATION, Path("/data"), target="M31")
@@ -473,8 +532,18 @@ class Session:
         For active sessions, returns time since start. For closed sessions,
         returns the final duration (start to close time).
 
+        Business context: Duration tracking is essential for observation
+        planning and post-session analysis. Displayed in dashboard UI,
+        recorded in ASDF metadata, and used for session rotation decisions.
+
+        Args:
+            None. Property accessor.
+
         Returns:
             Duration in seconds as float (e.g., 3661.5 = ~1 hour).
+
+        Raises:
+            None. Always succeeds.
 
         Example:
             >>> session = Session(SessionType.OBSERVATION, Path("/data"), target="M31")

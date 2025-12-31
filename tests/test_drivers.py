@@ -24,16 +24,30 @@ from telescope_mcp.drivers.sensors import DigitalTwinSensorDriver
 def _parse_jpeg_dimensions(data: bytes) -> tuple[int, int]:
     """Parse width and height from JPEG data.
 
-    Scans for SOF0 (0xFFC0) marker and extracts dimensions.
+    Scans JPEG byte stream for SOF0 (0xFFC0), SOF1 (0xFFC1), or
+    SOF2 (0xFFC2) markers and extracts image dimensions from
+    the frame header.
+
+    Business context:
+    Used by capture tests to verify digital twin cameras produce
+    correctly-sized JPEG output matching camera specifications
+    (e.g., 1280x960 for finder, 1920x1080 for main imager).
 
     Args:
-        data: JPEG byte data.
+        data: JPEG byte data containing valid JPEG image.
+            Must include SOF marker with dimension fields.
 
     Returns:
-        Tuple of (width, height).
+        Tuple of (width, height) in pixels as integers.
 
     Raises:
-        ValueError: If SOF marker not found.
+        ValueError: If no SOF marker found in JPEG data,
+            indicating corrupt or incomplete JPEG stream.
+
+    Example:
+        >>> jpeg_data = camera.capture(100000)
+        >>> width, height = _parse_jpeg_dimensions(jpeg_data)
+        >>> assert width == 1280 and height == 960
     """
     i = 0
     while i < len(data) - 9:
@@ -405,6 +419,10 @@ class TestDigitalTwinCameraInstance:
         - MaxWidth=1280 matches finder spec.
         - MaxHeight=960 matches finder spec.
         - PixelSize=3.75 matches sensor spec.
+
+        Testing Principle:
+        Validates hardware specification, ensuring digital twin
+        returns accurate ASI120MC-S parameters for FOV calculations.
         """
         info = finder_camera.get_info()
         assert info["MaxWidth"] == 1280
@@ -426,6 +444,10 @@ class TestDigitalTwinCameraInstance:
         - MaxWidth=1920 matches main imager spec.
         - MaxHeight=1080 matches main imager spec.
         - PixelSize=5.8 matches sensor spec.
+
+        Testing Principle:
+        Validates hardware specification, ensuring digital twin
+        returns accurate ASI482MC parameters for plate scale calculations.
         """
         info = main_camera.get_info()
         assert info["MaxWidth"] == 1920
@@ -447,6 +469,10 @@ class TestDigitalTwinCameraInstance:
         Validates defensive copying by confirming:
         - info1 and info2 are not the same object.
         - Prevents external modification of internal state.
+
+        Testing Principle:
+        Validates encapsulation, ensuring callers cannot mutate
+        internal camera state through returned info dictionary.
         """
         info1 = finder_camera.get_info()
         info2 = finder_camera.get_info()
@@ -470,6 +496,10 @@ class TestDigitalTwinCameraInstance:
         - Each control has MinValue, MaxValue fields.
         - Each control has DefaultValue, IsAutoSupported.
         - IsWritable flag indicates adjustability.
+
+        Testing Principle:
+        Validates control interface completeness, ensuring all
+        ASI SDK controls are exposed for camera configuration.
         """
         controls = finder_camera.get_controls()
         assert "Gain" in controls
@@ -500,6 +530,10 @@ class TestDigitalTwinCameraInstance:
         Assertion Strategy:
         Validates state persistence by confirming:
         - get_control returns value=200.
+
+        Testing Principle:
+        Validates state management, ensuring control values
+        persist between set and get operations.
         """
         finder_camera.set_control("Gain", 200)
         result = finder_camera.get_control("Gain")
@@ -518,6 +552,10 @@ class TestDigitalTwinCameraInstance:
         Assertion Strategy:
         Validates error handling by confirming:
         - ValueError raised with control name in message.
+
+        Testing Principle:
+        Validates input validation, ensuring invalid control
+        names are rejected with descriptive error messages.
         """
         with pytest.raises(ValueError, match="Unknown control"):
             finder_camera.get_control("UNKNOWN_CONTROL")

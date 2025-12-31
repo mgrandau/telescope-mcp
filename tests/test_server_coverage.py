@@ -62,8 +62,18 @@ class TestCreateServerCoverage:
     def test_create_server_hardware_mode_case_insensitive(self):
         """Verifies hardware mode detection is case-insensitive.
 
+        Arrangement:
+        1. Mode="HARDWARE" (uppercase) triggers hardware path.
+        2. Mock use_hardware and factory dependencies.
+
+        Action:
+        Calls create_server(mode="HARDWARE") with uppercase mode string.
+
+        Assertion Strategy:
+        - use_hardware() called despite uppercase input.
+
         Testing Principle:
-        Covers .lower() call in mode comparison.
+        Validates case-insensitive matching, ensuring .lower() branch coverage.
         """
         with patch("telescope_mcp.drivers.config.use_hardware") as mock_use_hw:
             with patch("telescope_mcp.drivers.config.get_factory") as mock_factory:
@@ -394,8 +404,18 @@ class TestMainCoverage:
     def test_main_invalid_latitude(self):
         """Verifies main() raises ValueError for invalid latitude.
 
+        Arrangement:
+        1. args.latitude = 91.0 (invalid: exceeds 90 max).
+        2. Mock parse_args and configure_logging.
+
+        Action:
+        Calls main() with out-of-range latitude value.
+
+        Assertion Strategy:
+        - ValueError raised with "Latitude must be between" message.
+
         Testing Principle:
-        Covers P2-2 latitude validation branch.
+        Validates input validation, ensuring invalid coordinates rejected early.
         """
         mock_args = argparse.Namespace(
             dashboard_host=None,
@@ -416,8 +436,18 @@ class TestMainCoverage:
     def test_main_invalid_longitude(self):
         """Verifies main() raises ValueError for invalid longitude.
 
+        Arrangement:
+        1. args.longitude = 181.0 (invalid: exceeds 180 max).
+        2. Mock parse_args and configure_logging.
+
+        Action:
+        Calls main() with out-of-range longitude value.
+
+        Assertion Strategy:
+        - ValueError raised with "Longitude must be between" message.
+
         Testing Principle:
-        Covers P2-2 longitude validation branch.
+        Validates input validation, ensuring invalid coordinates rejected early.
         """
         mock_args = argparse.Namespace(
             dashboard_host=None,
@@ -481,8 +511,18 @@ class TestParseArgsCoverage:
     def test_parse_args_mode_hardware(self):
         """Verifies --mode hardware option parses correctly.
 
+        Arrangement:
+        1. sys.argv set to ["telescope-mcp", "--mode", "hardware"].
+        2. Original argv preserved for restoration.
+
+        Action:
+        Calls parse_args() with hardware mode argument.
+
+        Assertion Strategy:
+        - args.mode equals "hardware".
+
         Testing Principle:
-        Covers mode argument parsing.
+        Validates CLI parsing, ensuring mode argument accepted correctly.
         """
         original_argv = sys.argv
         try:
@@ -495,8 +535,18 @@ class TestParseArgsCoverage:
     def test_parse_args_mode_digital_twin(self):
         """Verifies --mode digital_twin option parses correctly.
 
+        Arrangement:
+        1. sys.argv set to ["telescope-mcp", "--mode", "digital_twin"].
+        2. Original argv preserved for restoration.
+
+        Action:
+        Calls parse_args() with digital_twin mode argument.
+
+        Assertion Strategy:
+        - args.mode equals "digital_twin".
+
         Testing Principle:
-        Covers mode argument default and explicit.
+        Validates CLI parsing, ensuring default mode value works correctly.
         """
         original_argv = sys.argv
         try:
@@ -509,8 +559,20 @@ class TestParseArgsCoverage:
     def test_parse_args_location_options(self):
         """Verifies location options (latitude, longitude, height) parse.
 
+        Arrangement:
+        1. sys.argv set with --latitude, --longitude, --height options.
+        2. Original argv preserved for restoration.
+
+        Action:
+        Calls parse_args() with all location arguments.
+
+        Assertion Strategy:
+        - args.latitude equals 40.7128.
+        - args.longitude equals -74.0060.
+        - args.height equals 100.5.
+
         Testing Principle:
-        Covers location argument parsing.
+        Validates CLI parsing, ensuring float location arguments parsed correctly.
         """
         original_argv = sys.argv
         try:
@@ -533,8 +595,18 @@ class TestParseArgsCoverage:
     def test_parse_args_height_default(self):
         """Verifies --height defaults to 0.0.
 
+        Arrangement:
+        1. sys.argv set to minimal ["telescope-mcp"] without height.
+        2. Original argv preserved for restoration.
+
+        Action:
+        Calls parse_args() without --height argument.
+
+        Assertion Strategy:
+        - args.height equals 0.0 (default).
+
         Testing Principle:
-        Covers height default value.
+        Validates default values, ensuring sea-level default for altitude.
         """
         original_argv = sys.argv
         try:
@@ -551,8 +623,19 @@ class TestModuleLevelCoverage:
     def test_module_constants_exist(self):
         """Verifies module-level variables are initialized.
 
+        Arrangement:
+        1. Import server_module at test collection time.
+        2. Module initialization runs on import.
+
+        Action:
+        Checks hasattr for _dashboard and logger module attributes.
+
+        Assertion Strategy:
+        - _dashboard attribute exists on module.
+        - logger attribute exists on module.
+
         Testing Principle:
-        Covers module initialization.
+        Validates module initialization, ensuring globals available at runtime.
         """
         assert hasattr(server_module, "_dashboard")
         assert hasattr(server_module, "logger")
@@ -560,8 +643,18 @@ class TestModuleLevelCoverage:
     def test_stop_dashboard_when_not_running(self):
         """Verifies stop_dashboard is safe when no server running.
 
+        Arrangement:
+        1. Set _dashboard.server = None (no active server).
+        2. No mocks needed for this edge case.
+
+        Action:
+        Calls stop_dashboard() when server is None.
+
+        Assertion Strategy:
+        - No exception raised (implicit).
+
         Testing Principle:
-        Covers stop_dashboard no-op path.
+        Validates idempotent cleanup, ensuring safe no-op when nothing to stop.
         """
         server_module._dashboard.server = None
         stop_dashboard()  # Should not raise
@@ -569,8 +662,19 @@ class TestModuleLevelCoverage:
     def test_stop_dashboard_when_running(self):
         """Verifies stop_dashboard sets should_exit flag.
 
+        Arrangement:
+        1. Create mock_server with should_exit attribute.
+        2. Set _dashboard.server = mock_server (active server).
+
+        Action:
+        Calls stop_dashboard() when server is running.
+
+        Assertion Strategy:
+        - mock_server.should_exit is True.
+        - _dashboard.server is None after cleanup.
+
         Testing Principle:
-        Covers stop_dashboard active server path.
+        Validates graceful shutdown, ensuring server signaled to exit cleanly.
         """
         mock_server = MagicMock()
         server_module._dashboard.server = mock_server

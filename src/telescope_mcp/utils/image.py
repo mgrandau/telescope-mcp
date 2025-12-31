@@ -59,6 +59,10 @@ class ImageEncoder(Protocol):
     def encode_jpeg(self, img: NDArray[Any], quality: int = 85) -> bytes:
         """Encode image array as JPEG bytes.
 
+        Business context: Core encoding operation for MJPEG camera streams.
+        Each captured frame is encoded to JPEG and yielded to the streaming
+        response. Quality/size tradeoff affects bandwidth and latency.
+
         Args:
             img: NumPy array containing image data (uint8 or uint16).
                 Can be grayscale (H, W) or color (H, W, 3) in BGR format.
@@ -70,6 +74,13 @@ class ImageEncoder(Protocol):
 
         Raises:
             ValueError: If quality not in 1-100 range or encoding fails.
+
+        Example:
+            >>> encoder: ImageEncoder = CV2ImageEncoder()
+            >>> img = np.random.randint(0, 255, (480, 640), dtype=np.uint8)
+            >>> jpeg = encoder.encode_jpeg(img, quality=85)
+            >>> jpeg[:2]  # JPEG magic bytes
+            b'\\xff\\xd8'
         """
         ...  # pragma: no cover
 
@@ -87,6 +98,10 @@ class ImageEncoder(Protocol):
         Uses FONT_HERSHEY_SIMPLEX font. For grayscale images, color
         should be an int 0-255. For BGR images, use (B, G, R) tuple.
 
+        Business context: Renders error messages and status text on camera
+        stream frames. When capture fails, black placeholder frames with
+        error text keep operators informed rather than showing frozen streams.
+
         Args:
             img: Image array to draw on (modified in place).
             text: Text string to render.
@@ -97,6 +112,14 @@ class ImageEncoder(Protocol):
 
         Returns:
             None. Image is modified in place.
+
+        Raises:
+            cv2.error: If image dtype/shape incompatible with text rendering.
+
+        Example:
+            >>> encoder: ImageEncoder = get_encoder()
+            >>> error_frame = np.zeros((480, 640), dtype=np.uint8)
+            >>> encoder.put_text(error_frame, "No camera", (100, 240), 1.0, 255, 2)
         """
         ...  # pragma: no cover
 
@@ -126,15 +149,37 @@ class CV2ImageEncoder(ImageEncoder):
         Imports cv2 on first instantiation. This allows test files
         to avoid importing cv2 entirely by providing mock encoders.
 
+        Business context: The cv2 import is deferred to avoid Python 3.13
+        compatibility issues where cv2.typing crashes on import. Tests
+        can provide mock encoders without ever loading cv2.
+
+        Args:
+            None.
+
+        Returns:
+            None. Initializes self._cv2 with imported module.
+
         Raises:
-            ImportError: If cv2 is not installed.
+            ImportError: If cv2/opencv-python-headless not installed.
+
+        Example:
+            >>> encoder = CV2ImageEncoder()  # cv2 imported here
+            >>> encoder._cv2.__name__
+            'cv2'
         """
         import cv2
 
         self._cv2 = cv2
 
     def encode_jpeg(self, img: NDArray[Any], quality: int = 85) -> bytes:
-        """Encode image as JPEG using cv2.imencode.
+        """Encode image array as JPEG bytes using OpenCV.
+
+        Uses cv2.imencode with IMWRITE_JPEG_QUALITY parameter for
+        configurable compression. Validates quality range and encoding success.
+
+        Business context: Primary encoding path for web dashboard MJPEG streams.
+        Called once per frame at 10-30 fps. Quality 85 balances file size (~50KB
+        for 640x480) with visual quality for astronomy preview streams.
 
         Args:
             img: NumPy image array (grayscale or BGR, uint8/uint16).
@@ -145,6 +190,13 @@ class CV2ImageEncoder(ImageEncoder):
 
         Raises:
             ValueError: If quality not in 1-100 range or encoding fails.
+
+        Example:
+            >>> encoder = CV2ImageEncoder()
+            >>> img = np.zeros((480, 640), dtype=np.uint8)
+            >>> jpeg = encoder.encode_jpeg(img, quality=90)
+            >>> len(jpeg) > 0 and jpeg[:2] == b'\\xff\\xd8'
+            True
         """
         if not 1 <= quality <= 100:
             raise ValueError(f"quality must be 1-100, got {quality}")
@@ -166,15 +218,35 @@ class CV2ImageEncoder(ImageEncoder):
         color: int | tuple[int, int, int],
         thickness: int,
     ) -> None:
-        """Draw text using cv2.putText with FONT_HERSHEY_SIMPLEX.
+        """Draw text on image using cv2.putText with FONT_HERSHEY_SIMPLEX.
+
+        Renders text directly onto the image array for error overlays,
+        status indicators, or frame annotations in camera streams.
+
+        Business context: Used by web dashboard streaming to display error
+        messages when camera capture fails ("Camera not found", "Frame error").
+        Renders on black placeholder frames so operators see feedback rather
+        than frozen/blank streams.
 
         Args:
             img: Image to draw on (modified in place).
             text: Text to render.
             position: (x, y) baseline position.
-            scale: Font scale.
-            color: Text color.
-            thickness: Line thickness.
+            scale: Font scale (1.0 = base size, 0.5 = half).
+            color: Text color (int 0-255 for grayscale, BGR tuple for color).
+            thickness: Line thickness in pixels.
+
+        Returns:
+            None. Image is modified in place.
+
+        Raises:
+            cv2.error: If image format incompatible with text rendering.
+
+        Example:
+            >>> encoder = CV2ImageEncoder()
+            >>> img = np.zeros((480, 640, 3), dtype=np.uint8)
+            >>> encoder.put_text(img, "Error!", (50, 240), 1.0, (0, 0, 255), 2)
+            >>> # img now has red "Error!" text at position (50, 240)
         """
         self._cv2.putText(
             img,

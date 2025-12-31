@@ -25,10 +25,62 @@ class MockImageEncoder:
 
     Provides minimal implementation of ImageEncoder protocol
     that returns valid JPEG-like bytes without actual encoding.
+
+    Business context:
+        Tests should run in CI environments without graphics libraries.
+        This mock satisfies the ImageEncoder Protocol without requiring
+        opencv-python-headless installation, enabling fast, portable tests.
+
+    Arrangement:
+        1. Instantiate MockImageEncoder() with no arguments.
+        2. Use as drop-in replacement for CV2ImageEncoder.
+        3. encode_jpeg returns fixed bytes, put_text is no-op.
+
+    Args:
+        None. Stateless mock with no configuration needed.
+
+    Returns:
+        Instance implementing ImageEncoder Protocol for injection.
+
+    Raises:
+        None. Mock operations are always successful.
+
+    Attributes:
+        None. Stateless mock implementation with no instance state.
+
+    Example:
+        >>> encoder = MockImageEncoder()
+        >>> data = encoder.encode_jpeg(np.zeros((100, 100), dtype=np.uint8))
+        >>> assert data[:2] == b'\\xff\\xd8'
+
+    Testing Principle:
+        Validates protocol substitutability, enabling cv2-free testing
+        while maintaining ImageEncoder interface compatibility.
     """
 
     def encode_jpeg(self, img: np.ndarray, quality: int = 85) -> bytes:
-        """Return mock JPEG bytes with valid magic header."""
+        """Return mock JPEG bytes with valid magic header.
+
+        Provides minimal JPEG-like response for testing without actual
+        cv2 encoding. Returns fixed bytes starting with 0xFFD8.
+
+        Business context:
+        Enables web app testing without cv2 dependency. MJPEG streaming
+        endpoints receive valid JPEG-like bytes for format validation.
+
+        Args:
+            img: Image array (ignored in mock).
+            quality: JPEG quality (ignored in mock).
+
+        Returns:
+            Fixed bytes b'\\xff\\xd8mock_jpeg_data' for all inputs.
+
+        Example:
+            >>> encoder = MockImageEncoder()
+            >>> result = encoder.encode_jpeg(np.zeros((100, 100)), 85)
+            >>> result[:2] == b'\\xff\\xd8'
+            True
+        """
         return b"\xff\xd8mock_jpeg_data"
 
     def put_text(
@@ -40,13 +92,59 @@ class MockImageEncoder:
         color: int | tuple[int, int, int],
         thickness: int,
     ) -> None:
-        """No-op for testing."""
+        """No-op for testing - skips actual text rendering.
+
+        Satisfies ImageEncoder Protocol without cv2 dependency.
+        Does not modify the image array.
+
+        Business context:
+        Error overlay rendering not needed for web API testing.
+        Mock satisfies Protocol for dependency injection.
+
+        Args:
+            img: Image array (ignored in mock).
+            text: Text to render (ignored in mock).
+            position: Position tuple (ignored in mock).
+            scale: Font scale (ignored in mock).
+            color: Text color (ignored in mock).
+            thickness: Line thickness (ignored in mock).
+
+        Returns:
+            None. No-op implementation.
+
+        Example:
+            >>> encoder = MockImageEncoder()
+            >>> encoder.put_text(img, "Error", (10, 20), 1.0, 255, 2)
+            # No effect - mock implementation
+        """
         pass
 
 
 @pytest.fixture
 def mock_encoder() -> ImageEncoder:
-    """Provide mock image encoder for tests."""
+    """Provide mock image encoder for tests without cv2 dependency.
+
+    Creates MockImageEncoder instance that satisfies ImageEncoder Protocol
+    without requiring opencv-python-headless installation.
+
+    Business context:
+    Tests should run in CI environments without graphics libraries.
+    Mock encoder enables full API testing without cv2 import issues.
+
+    Args:
+        None (pytest fixture).
+
+    Returns:
+        MockImageEncoder instance implementing ImageEncoder Protocol.
+
+    Raises:
+        None.
+
+    Example:
+        >>> def test_stream(mock_encoder):
+        ...     app = create_app(encoder=mock_encoder)
+        ...     # Test streaming without cv2
+    """
     return MockImageEncoder()
 
 
@@ -221,6 +319,10 @@ class TestDashboardEndpoint:
         Validates basic functionality by confirming:
         - HTTP 200 indicates successful page render.
         - Content-Type header contains text/html (correct MIME type).
+
+        Testing Principle:
+        Validates template rendering, ensuring dashboard page
+        is accessible and returns valid HTML content.
         """
         response = client.get("/")
         assert response.status_code == 200
@@ -243,6 +345,10 @@ class TestDashboardEndpoint:
         Validates template integrity by confirming:
         - HTTP 200 indicates successful render.
         - HTML structure is complete (placeholder for structure checks).
+
+        Testing Principle:
+        Validates template structure, ensuring Jinja2 renders
+        complete HTML without syntax errors.
         """
         response = client.get("/")
         # Check for some expected HTML structure
@@ -259,26 +365,44 @@ class TestStreamGenerator:
 
     @pytest.fixture
     def stream_mocks(self):
-        """Create mocks for stream generator testing.
+        """Pytest fixture creating mocks for stream generator testing.
 
-        Provides isolated test environment with mocked ASI SDK.
-
-        Args:
-            self: Test class instance.
-
-        Yields:
-            Tuple[MagicMock, MagicMock]: (mock_asi module, mock_camera instance)
-            configured for 640x480 grayscale capture with test frame.
-
-        Returns:
-            Generator yielding mock tuple for test duration.
-
-        Raises:
-            None: Fixture setup does not raise exceptions.
+        Provides isolated test environment with mocked ASI SDK for
+        testing _generate_camera_stream async generator without hardware.
 
         Business Context:
             Stream generator tests need consistent mock environment
-            without real hardware dependencies.
+            without real hardware dependencies. This fixture patches
+            ASI SDK, camera cache, and streaming state dicts for
+            deterministic async generator testing.
+
+        Arrangement:
+            1. Patch telescope_mcp.web.app.asi with mock ASI SDK.
+            2. Patch _cameras dict to empty state.
+            3. Patch _camera_streaming dict to empty state.
+            4. Patch _camera_settings dict to empty state.
+            5. Configure mock_camera with 640x480 capture returning test frame.
+            6. Test frame has white square at (100:200, 100:200) for verification.
+
+        Args:
+            self: Test class instance (implicit for pytest method fixtures).
+
+        Yields:
+            Tuple[MagicMock, MagicMock]: (mock_asi module, mock_camera instance)
+            configured for 640x480 grayscale capture with 255-value white
+            square at position (100:200, 100:200) for visual verification.
+
+        Raises:
+            None. Fixture setup is deterministic with no external dependencies.
+
+        Example:
+            >>> async def test_stream(self, stream_mocks):
+            ...     mock_asi, mock_camera = stream_mocks
+            ...     assert mock_camera.capture_video_frame() is not None
+
+        Testing Principle:
+            Validates mock isolation, ensuring stream tests have consistent
+            state without hardware dependencies or inter-test contamination.
         """
         with (
             patch("telescope_mcp.web.app.asi") as mock_asi,
@@ -1040,6 +1164,10 @@ class TestMotorAPIEndpoints:
         Validates emergency stop by confirming:
         - HTTP 200 indicates command processed.
         - Response status="not_implemented" (pending hardware).
+
+        Testing Principle:
+        Validates safety endpoint, ensuring motor stop command
+        is accepted even when hardware integration is pending.
         """
         response = client.post("/api/motor/stop")
         assert response.status_code == 200
@@ -1070,6 +1198,10 @@ class TestPositionAPIEndpoint:
         - Response contains "altitude" field.
         - Response contains "azimuth" field.
         - Both values are numeric (int or float).
+
+        Testing Principle:
+        Validates position readout, ensuring telescope coordinates
+        are accessible for alignment and tracking operations.
         """
         response = client.get("/api/position")
         assert response.status_code == 200
@@ -1097,6 +1229,10 @@ class TestPositionAPIEndpoint:
         Validates coordinate sanity by confirming:
         - Altitude within -90 to +90 degree bounds.
         - Azimuth within 0 to 360 degree bounds.
+
+        Testing Principle:
+        Validates coordinate constraints, ensuring position values
+        are physically reasonable for telescope operations.
         """
         response = client.get("/api/position")
         data = response.json()
@@ -1210,20 +1346,20 @@ class TestCameraStateManagement:
         operations - cameras should only be opened when streaming.
 
         Arrangement:
-            1. Client and mock_asi fixtures provide test environment.
-            2. No cameras have been opened yet.
+        1. Client and mock_asi fixtures provide test environment.
+        2. No cameras have been opened yet.
 
         Action:
-            Issue GET /api/cameras request.
+        Issues GET /api/cameras request.
 
         Assertion Strategy:
-            Validates lazy initialization by confirming:
-            - HTTP 200 response.
-            - Response contains count >= 0.
+        Validates lazy initialization by confirming:
+        - HTTP 200 response.
+        - Response contains count >= 0.
 
         Testing Principle:
-            Validates lazy initialization, reducing startup time
-            and USB bandwidth by deferring camera opens.
+        Validates lazy initialization, reducing startup time
+        and USB bandwidth by deferring camera opens.
         """
         # List cameras should work without opening them
         response = client.get("/api/cameras")
@@ -1278,20 +1414,20 @@ class TestCameraStateManagement:
         stored for subsequent use.
 
         Arrangement:
-            1. Client and mock_asi fixtures provide test environment.
-            2. Camera 0 available.
+        1. Client and mock_asi fixtures provide test environment.
+        2. Camera 0 available.
 
         Action:
-            POST to /api/camera/0/control with ASI_GAIN=150.
+        POSTs to /api/camera/0/control with ASI_GAIN=150.
 
         Assertion Strategy:
-            Validates persistence by confirming:
-            - HTTP 200 response.
-            - Response indicates success.
+        Validates persistence by confirming:
+        - HTTP 200 response.
+        - Response indicates success.
 
         Testing Principle:
-            Validates settings persistence, enabling users to
-            adjust exposure/gain that persists across API calls.
+        Validates settings persistence, enabling users to
+        adjust exposure/gain that persists across API calls.
         """
         # Set a control value
         response = client.post(
@@ -1310,6 +1446,10 @@ class TestStaticFilesAndTemplates:
 
     def test_static_mount_configured(self):
         """Verifies FastAPI app has routes configured.
+
+        Arrangement:
+        1. create_app() initializes FastAPI application.
+        2. Routes should be registered during initialization.
 
         Action:
         Creates app and checks route configuration.
@@ -1336,13 +1476,19 @@ class TestStaticFilesAndTemplates:
 
         Arrangement:
         1. Patch STATIC_DIR.exists() to return False.
+        2. App should skip static file mounting gracefully.
 
         Action:
-        Create app with missing static directory.
+        Creates app with missing static directory.
 
         Assertion Strategy:
+        Validates graceful degradation by confirming:
         - App creates successfully.
-        - No static route mounted.
+        - Dashboard endpoint still accessible.
+
+        Testing Principle:
+        Validates fault tolerance, ensuring app starts even when
+        static directory is missing in development environments.
         """
         with patch("telescope_mcp.web.app.STATIC_DIR") as mock_static_dir:
             mock_static_dir.exists.return_value = False
@@ -1357,6 +1503,10 @@ class TestStaticFilesAndTemplates:
 
     def test_templates_directory_configured(self):
         """Verifies TEMPLATES_DIR is configured as Path object.
+
+        Arrangement:
+        1. TEMPLATES_DIR is module-level constant.
+        2. Should be Path object for cross-platform support.
 
         Action:
         Imports TEMPLATES_DIR constant and checks type.
@@ -1393,6 +1543,10 @@ class TestErrorHandling:
         Assertion Strategy:
         Validates error handling by confirming:
         - HTTP 404 not found (standard REST error).
+
+        Testing Principle:
+        Validates REST semantics, ensuring undefined routes
+        return proper 404 status for client error handling.
         """
         response = client.get("/api/nonexistent")
         assert response.status_code == 404
@@ -1412,6 +1566,10 @@ class TestErrorHandling:
         Assertion Strategy:
         Validates method checking by confirming:
         - HTTP 405 method not allowed.
+
+        Testing Principle:
+        Validates HTTP method enforcement, ensuring endpoints
+        reject incorrect methods with proper 405 status.
         """
         # Position is GET only
         response = client.post("/api/position")
@@ -1432,6 +1590,10 @@ class TestErrorHandling:
         Assertion Strategy:
         Validates parameter checking by confirming:
         - HTTP 422 unprocessable entity (validation failure).
+
+        Testing Principle:
+        Validates FastAPI validation, ensuring required parameters
+        are enforced with proper 422 status for client feedback.
         """
         # Missing both control and value
         response = client.post("/api/camera/0/control")
@@ -1491,22 +1653,21 @@ class TestConcurrentAccess:
         in rapid succession, ensuring no conflicts or state corruption.
 
         Arrangement:
-            1. Client and mock_asi fixtures provide test environment.
-            2. Camera 0 available.
-            3. Sequence of 5 gain values prepared.
+        1. Client and mock_asi fixtures provide test environment.
+        2. Camera 0 available.
+        3. Sequence of 5 gain values prepared: [50, 100, 150, 100, 50].
 
         Action:
-            POST 5 consecutive control requests with gain values
-            [50, 100, 150, 100, 50].
+        POSTs 5 consecutive control requests with varying gain values.
 
         Assertion Strategy:
-            Validates thread-safety by confirming:
-            - All 5 responses return HTTP 200.
-            - No exceptions or state corruption.
+        Validates thread-safety by confirming:
+        - All 5 responses return HTTP 200.
+        - No exceptions or state corruption.
 
         Testing Principle:
-            Validates concurrency safety for rapid UI slider
-            adjustments without deadlocks or corruption.
+        Validates concurrency safety for rapid UI slider adjustments
+        without deadlocks or corruption.
         """
         # Issue multiple control changes rapidly
         for gain_value in [50, 100, 150, 100, 50]:
@@ -1680,14 +1841,21 @@ class TestCloseAllCameras:
 
         Arrangement:
         1. Camera 0 is open and streaming.
-        2. _camera_streaming[0] = True.
+        2. _camera_streaming[0] = True indicates active stream.
+        3. _cameras[0] holds mock camera instance.
 
         Action:
-        Call _close_all_cameras() (via lifespan shutdown).
+        Calls _close_all_cameras() (via lifespan shutdown).
 
         Assertion Strategy:
+        Validates cleanup by confirming:
         - stop_video_capture() is called on streaming camera.
         - close() is called on camera.
+        - Camera dicts are cleared.
+
+        Testing Principle:
+        Validates resource cleanup, ensuring streams are stopped
+        before camera handles are released.
         """
         from telescope_mcp.web.app import (
             _camera_streaming,
@@ -1720,16 +1888,21 @@ class TestCloseAllCameras:
 
         Arrangement:
         1. Two cameras open (0 and 1).
-        2. Camera 0 raises exception on close().
+        2. Camera 0 raises RuntimeError on close().
         3. Camera 1 closes normally.
 
         Action:
-        Call _close_all_cameras().
+        Calls _close_all_cameras().
 
         Assertion Strategy:
+        Validates error handling by confirming:
         - Both cameras have close() called.
         - Exception doesn't prevent cleanup of other cameras.
         - Dicts are cleared despite error.
+
+        Testing Principle:
+        Validates resilient cleanup, ensuring one camera's failure
+        doesn't prevent cleanup of remaining cameras.
         """
         from telescope_mcp.web.app import (
             _camera_streaming,
@@ -1775,11 +1948,16 @@ class TestMainFunction:
         2. Patch create_app to verify it's called.
 
         Action:
-        Call main().
+        Calls main() entry point function.
 
         Assertion Strategy:
+        Validates entry point by confirming:
         - create_app() is called.
         - uvicorn.run() is called with correct host/port.
+
+        Testing Principle:
+        Validates entry point configuration, ensuring main()
+        correctly initializes and starts the web server.
         """
         from telescope_mcp.web.app import main
 
