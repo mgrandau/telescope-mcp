@@ -23,6 +23,19 @@ document.addEventListener('DOMContentLoaded', () => {
     speedSlider.addEventListener('input', () => {
         speedValue.textContent = speedSlider.value;
     });
+
+    // Color temperature sliders - update display value
+    const finderTemp = document.getElementById('finder-temp');
+    const finderTempValue = document.getElementById('finder-temp-value');
+    finderTemp.addEventListener('input', () => {
+        finderTempValue.textContent = finderTemp.value + 'K';
+    });
+
+    const mainTemp = document.getElementById('main-temp');
+    const mainTempValue = document.getElementById('main-temp-value');
+    mainTemp.addEventListener('input', () => {
+        mainTempValue.textContent = mainTemp.value + 'K';
+    });
 });
 
 function updateStatus(state, message) {
@@ -200,21 +213,52 @@ async function gotoPosition() {
     }
 }
 
+// Convert color temperature (K) to WB_R and WB_B values
+// 3000K = warm (more red), 10000K = cool (more blue), 6500K = neutral
+function tempToWhiteBalance(tempK) {
+    // Map 3000-10000K to WB values (ASI range typically 1-99)
+    // At 6500K: neutral (WB_R=50, WB_B=50)
+    // At 3000K: warm (WB_R=90, WB_B=20)
+    // At 10000K: cool (WB_R=20, WB_B=90)
+    const neutral = 6500;
+    const range = 3500; // Half the temp range
+    const wbRange = 35;  // How much WB changes from neutral
+    
+    const offset = (tempK - neutral) / range * wbRange;
+    const wbR = Math.round(50 - offset);  // Warmer = more red
+    const wbB = Math.round(50 + offset);  // Cooler = more blue
+    
+    return {
+        wbR: Math.max(1, Math.min(99, wbR)),
+        wbB: Math.max(1, Math.min(99, wbB))
+    };
+}
+
 // Camera controls
 async function updateFinderSettings() {
     const exposure = document.getElementById('finder-exposure').value;
     const gain = document.getElementById('finder-gain').value;
+    const temp = document.getElementById('finder-temp').value;
+    const wb = tempToWhiteBalance(parseInt(temp));
+    
     // Finder exposure is in seconds, convert to microseconds
     await setCameraControl(0, 'ASI_EXPOSURE', exposure * 1000000);
     await setCameraControl(0, 'ASI_GAIN', gain);
+    await setCameraControl(0, 'ASI_WB_R', wb.wbR);
+    await setCameraControl(0, 'ASI_WB_B', wb.wbB);
 }
 
 async function updateMainSettings() {
     const exposure = document.getElementById('main-exposure').value;
     const gain = document.getElementById('main-gain').value;
+    const temp = document.getElementById('main-temp').value;
+    const wb = tempToWhiteBalance(parseInt(temp));
+    
     // Main exposure is in milliseconds, convert to microseconds
     await setCameraControl(1, 'ASI_EXPOSURE', exposure * 1000);
     await setCameraControl(1, 'ASI_GAIN', gain);
+    await setCameraControl(1, 'ASI_WB_R', wb.wbR);
+    await setCameraControl(1, 'ASI_WB_B', wb.wbB);
 }
 
 async function setCameraControl(cameraId, control, value) {
@@ -225,5 +269,39 @@ async function setCameraControl(cameraId, control, value) {
     } catch (err) {
         console.error('Camera control failed:', err);
         updateStatus('error', 'Camera error');
+    }
+}
+
+// RAW capture to ASDF archive
+// cameraId: 0=finder, 1=main
+// statusId: 'finder' or 'main' (defaults based on cameraId)
+async function captureRaw(cameraId, statusId = null) {
+    // Determine which status element and frame type to use
+    const camName = statusId || (cameraId === 0 ? 'finder' : 'main');
+    const statusEl = document.getElementById(`${camName}-capture-status`);
+    
+    // Finder always captures as 'light', main uses dropdown
+    const frameType = cameraId === 0 ? 'light' : document.getElementById('frame-type').value;
+    
+    statusEl.textContent = `Capturing ${frameType}...`;
+    statusEl.className = 'capture-status capturing';
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/camera/${cameraId}/capture?frame_type=${frameType}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            statusEl.textContent = `✓ ${data.camera}/${data.frame_type} #${data.frame_index} → ${data.filename}`;
+            statusEl.className = 'capture-status success';
+        } else {
+            statusEl.textContent = `✗ Error: ${data.error}`;
+            statusEl.className = 'capture-status error';
+        }
+    } catch (err) {
+        console.error('Capture failed:', err);
+        statusEl.textContent = `✗ Capture failed: ${err.message}`;
+        statusEl.className = 'capture-status error';
     }
 }
