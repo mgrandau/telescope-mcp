@@ -700,6 +700,162 @@ class TestDigitalTwinSensorInstance:
         assert "offset_y" in result
         assert "offset_z" in result
 
+    def test_stop_output_is_noop(self, instance: DigitalTwinSensorInstance) -> None:
+        """Verifies stop_output() executes without error (no-op).
+
+        Tests API compatibility with ArduinoSensorInstance.
+
+        Business context:
+        Arduino sensor streams data continuously and stop_output()
+        pauses that stream. Digital twin doesn't stream, so this is
+        a no-op for API compatibility.
+
+        Arrangement:
+        1. Use instance fixture.
+
+        Action:
+        Call stop_output() on instance.
+
+        Assertion Strategy:
+        Validates no-op behavior by confirming:
+        - Method executes without error.
+        - Instance remains open.
+        - read() still works after stop.
+
+        Testing Principle:
+        Validates API parity with Arduino driver.
+        """
+        instance.stop_output()
+
+        # Should still be able to read (no actual stream to stop)
+        assert instance.is_open is True
+        reading = instance.read()
+        assert reading is not None
+
+    def test_start_output_is_noop(self, instance: DigitalTwinSensorInstance) -> None:
+        """Verifies start_output() executes without error (no-op).
+
+        Tests API compatibility with ArduinoSensorInstance.
+
+        Business context:
+        Arduino sensor streams data and start_output() resumes
+        after stop. Digital twin is on-demand, so this is a no-op.
+
+        Arrangement:
+        1. Use instance fixture.
+        2. Call stop_output() first.
+
+        Action:
+        Call start_output() on instance.
+
+        Assertion Strategy:
+        Validates no-op behavior by confirming:
+        - Method executes without error.
+        - Instance remains open.
+
+        Testing Principle:
+        Validates API parity with Arduino driver.
+        """
+        instance.stop_output()
+        instance.start_output()
+
+        assert instance.is_open is True
+        reading = instance.read()
+        assert reading is not None
+
+    def test_set_tilt_calibration_applies_transform(
+        self, instance: DigitalTwinSensorInstance
+    ) -> None:
+        """Verifies _set_tilt_calibration() applies linear transform.
+
+        Tests that slope and intercept modify altitude readings.
+
+        Business context:
+        Tilt calibration corrects for sensor mounting errors using
+        linear transform: corrected = slope * raw + intercept.
+        This enables fine-tuning of altitude accuracy.
+
+        Arrangement:
+        1. Use instance fixture.
+        2. Set position to known altitude.
+        3. Configure zero noise for predictable values.
+
+        Action:
+        Apply tilt calibration with known slope/intercept.
+
+        Assertion Strategy:
+        Validates transform applied by confirming:
+        - Altitude reading changes after calibration.
+        - Transform follows corrected = slope * raw + intercept.
+
+        Testing Principle:
+        Validates calibration math for altitude correction.
+        """
+        # Use zero-noise config for predictable readings
+        config = DigitalTwinSensorConfig(
+            initial_altitude=45.0,
+            noise_std_alt=0.0,
+            noise_std_az=0.0,
+        )
+        twin = DigitalTwinSensorInstance(config)
+
+        # Read initial altitude (should be ~45.0)
+        initial = twin.read()
+        initial_alt = initial.altitude
+
+        # Apply tilt calibration: slope=1.0, intercept=5.0 (add 5 degrees)
+        twin._set_tilt_calibration(slope=1.0, intercept=5.0)
+
+        # Read calibrated altitude (should be ~50.0)
+        calibrated = twin.read()
+        calibrated_alt = calibrated.altitude
+
+        # Verify transform applied (with small tolerance for floating point)
+        assert abs(calibrated_alt - (initial_alt + 5.0)) < 0.1
+
+        twin.close()
+
+    def test_set_tilt_calibration_with_slope(
+        self, instance: DigitalTwinSensorInstance
+    ) -> None:
+        """Verifies _set_tilt_calibration() applies slope scaling.
+
+        Tests that slope parameter scales altitude readings.
+
+        Business context:
+        Slope corrects for systematic scale errors in the
+        accelerometer-to-altitude calculation.
+
+        Arrangement:
+        1. Create instance with zero noise.
+        2. Set known position.
+
+        Action:
+        Apply calibration with slope != 1.0.
+
+        Assertion Strategy:
+        Validates scaling by confirming altitude is multiplied.
+
+        Testing Principle:
+        Validates slope component of linear calibration.
+        """
+        # Use zero-noise config
+        config = DigitalTwinSensorConfig(
+            initial_altitude=40.0,
+            noise_std_alt=0.0,
+            noise_std_az=0.0,
+        )
+        twin = DigitalTwinSensorInstance(config)
+
+        # Apply slope=0.5 (halve the altitude reading)
+        twin._set_tilt_calibration(slope=0.5, intercept=0.0)
+
+        reading = twin.read()
+        # 40.0 * 0.5 = 20.0
+        assert abs(reading.altitude - 20.0) < 0.1
+
+        twin.close()
+
 
 # =============================================================================
 # Driver Tests

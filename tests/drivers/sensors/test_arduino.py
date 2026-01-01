@@ -2307,6 +2307,42 @@ class TestSensorInfo:
 
         assert status["calibrated"] is True
 
+    def test_get_sample_rate(
+        self,
+        arduino_instance: ArduinoSensorInstance,
+    ) -> None:
+        """Verifies get_sample_rate() returns fixed 10 Hz rate.
+
+        Tests sample rate retrieval for Arduino BLE33 firmware.
+
+        Business context:
+        Arduino BLE33 Sense firmware streams sensor data at a fixed
+        10 Hz rate. This value is used by the device layer to calculate
+        timing for multi-sample averaged reads and determine poll intervals.
+        The rate is firmware-determined, not configurable at runtime.
+
+        Arrangement:
+        1. Use arduino_instance (any state is fine, rate is constant).
+
+        Action:
+        Call get_sample_rate() to retrieve the fixed sample rate.
+
+        Assertion Strategy:
+        Validates sample rate by confirming:
+        - Return value is exactly 10.0 Hz.
+        - Value matches the module constant _ARDUINO_SAMPLE_RATE_HZ.
+
+        Testing Principle:
+        Validates protocol compliance, ensuring Arduino instance
+        provides sample rate for device layer timing calculations.
+        """
+        from telescope_mcp.drivers.sensors.arduino import _ARDUINO_SAMPLE_RATE_HZ
+
+        rate = arduino_instance.get_sample_rate()
+
+        assert rate == 10.0
+        assert rate == _ARDUINO_SAMPLE_RATE_HZ
+
 
 # =============================================================================
 # Driver Tests (Port Enumeration)

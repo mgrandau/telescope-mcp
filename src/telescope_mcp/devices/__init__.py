@@ -51,11 +51,11 @@ from telescope_mcp.devices.camera_registry import (
 )
 from telescope_mcp.devices.sensor import (
     DEFAULT_SAMPLE_RATE_HZ,
+    STATUS_SETTLE_DELAY_SEC,
     DeviceSensorInfo,
     Sensor,
     SensorConfig,
     SensorDeviceStatus,
-    SensorStatistics,
 )
 
 __all__ = [
@@ -88,9 +88,9 @@ __all__ = [
     "shutdown_registry",
     # Sensor (6 exports)
     "DEFAULT_SAMPLE_RATE_HZ",
+    "STATUS_SETTLE_DELAY_SEC",
     "DeviceSensorInfo",
     "Sensor",
     "SensorConfig",
     "SensorDeviceStatus",
-    "SensorStatistics",
 ]  # Total: 30 exports

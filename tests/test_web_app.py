@@ -1131,7 +1131,8 @@ class TestMotorAPIEndpoints:
         Assertion Strategy:
         Validates motor command by confirming:
         - HTTP 200 indicates command accepted.
-        - Response status="not_implemented" (pending hardware integration).
+        - Response status="ok" confirms command processed.
+        - Response includes axis and parameters.
 
         Testing Principle:
         Validates motor control API contract for both axes.
@@ -1144,14 +1145,15 @@ class TestMotorAPIEndpoints:
         assert response.status_code == 200
 
         data = response.json()
-        assert data["status"] == "not_implemented"
-        assert "message" in data
+        assert data["status"] == "ok"
+        assert data["axis"] == axis
+        assert data["steps"] == steps
+        assert data["speed"] == expected_speed
 
     def test_stop_motors(self, client):
         """Verifies POST /api/motor/stop halts all motor movement.
 
         Tests emergency stop functionality for safety.
-        Note: Currently returns not_implemented as hardware pending.
 
         Arrangement:
         1. Motors may be in motion or idle.
@@ -1163,17 +1165,166 @@ class TestMotorAPIEndpoints:
         Assertion Strategy:
         Validates emergency stop by confirming:
         - HTTP 200 indicates command processed.
-        - Response status="not_implemented" (pending hardware).
+        - Response status="stopped" confirms motors halted.
+        - Response includes list of stopped axes.
 
         Testing Principle:
         Validates safety endpoint, ensuring motor stop command
-        is accepted even when hardware integration is pending.
+        is accepted and processed correctly.
         """
         response = client.post("/api/motor/stop")
         assert response.status_code == 200
 
         data = response.json()
-        assert data["status"] == "not_implemented"
+        assert data["status"] == "stopped"
+        assert "axes" in data
+        assert "altitude" in data["axes"]
+        assert "azimuth" in data["axes"]
+
+    @pytest.mark.parametrize(
+        "axis,direction,degrees",
+        [
+            ("altitude", "up", 0.1),
+            ("altitude", "down", 0.5),
+            ("azimuth", "cw", 0.1),
+            ("azimuth", "ccw", 1.0),
+            ("azimuth", "left", 0.2),
+            ("azimuth", "right", 0.3),
+        ],
+        ids=[
+            "altitude_up",
+            "altitude_down",
+            "azimuth_cw",
+            "azimuth_ccw",
+            "azimuth_left",
+            "azimuth_right",
+        ],
+    )
+    def test_motor_nudge(self, client, axis, direction, degrees):
+        """Verifies nudge endpoints move motor by fixed degrees.
+
+        Business context:
+        Nudge is for tap gestures - single click moves fixed amount.
+        Used for fine pointing adjustments in the dashboard UI.
+
+        Args:
+            client: FastAPI TestClient fixture.
+            axis: Motor axis ("altitude" or "azimuth").
+            direction: Movement direction.
+            degrees: Degrees to move.
+
+        Assertion Strategy:
+        - HTTP 200 indicates command accepted.
+        - Response status="ok" confirms command processed.
+        - Response includes axis, direction, degrees, and calculated steps.
+        """
+        url = f"/api/motor/{axis}/nudge?direction={direction}&degrees={degrees}"
+        response = client.post(url)
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["axis"] == axis
+        assert data["direction"] == direction
+        assert data["degrees"] == degrees
+        assert "steps" in data
+        assert isinstance(data["steps"], int)
+
+    @pytest.mark.parametrize(
+        "axis,direction,speed",
+        [
+            ("altitude", "up", 50),
+            ("altitude", "down", 75),
+            ("azimuth", "cw", 50),
+            ("azimuth", "ccw", 25),
+            ("azimuth", "left", 100),
+            ("azimuth", "right", 10),
+        ],
+        ids=[
+            "altitude_up",
+            "altitude_down",
+            "azimuth_cw",
+            "azimuth_ccw",
+            "azimuth_left",
+            "azimuth_right",
+        ],
+    )
+    def test_motor_start(self, client, axis, direction, speed):
+        """Verifies start endpoints begin continuous motor motion.
+
+        Business context:
+        Start is for hold gestures - press and hold begins continuous
+        motion until stop is called. Used for rapid slewing in dashboard.
+
+        Args:
+            client: FastAPI TestClient fixture.
+            axis: Motor axis ("altitude" or "azimuth").
+            direction: Movement direction.
+            speed: Speed percentage (1-100).
+
+        Assertion Strategy:
+        - HTTP 200 indicates command accepted.
+        - Response status="moving" confirms motion started.
+        - Response includes axis, direction, and speed.
+        """
+        url = f"/api/motor/{axis}/start?direction={direction}&speed={speed}"
+        response = client.post(url)
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["status"] == "moving"
+        assert data["axis"] == axis
+        assert data["direction"] == direction
+        assert data["speed"] == speed
+
+        # Clean up - stop the motor
+        client.post("/api/motor/stop")
+
+    def test_stop_single_axis(self, client):
+        """Verifies stop with axis parameter stops only that motor.
+
+        Business context:
+        Single-axis stop is for button release - when user releases
+        the up/down button, only that axis should stop.
+
+        Assertion Strategy:
+        - HTTP 200 indicates command accepted.
+        - Response status="stopped" confirms motor halted.
+        - Response axes list contains only the specified axis.
+        """
+        # Start altitude motion
+        client.post("/api/motor/altitude/start?direction=up&speed=50")
+
+        # Stop only altitude
+        response = client.post("/api/motor/stop?axis=altitude")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["status"] == "stopped"
+        assert data["axes"] == ["altitude"]
+
+    def test_nudge_direction_validation(self, client):
+        """Verifies nudge rejects invalid direction values.
+
+        Business context:
+        Invalid directions should return 422 validation error.
+        """
+        response = client.post("/api/motor/altitude/nudge?direction=invalid")
+        assert response.status_code == 422
+
+    def test_start_speed_validation(self, client):
+        """Verifies start rejects out-of-range speed values.
+
+        Business context:
+        Speed must be 1-100. Out of range should return 422.
+        """
+        # Speed too low
+        response = client.post("/api/motor/altitude/start?direction=up&speed=0")
+        assert response.status_code == 422
+
+        # Speed too high
+        response = client.post("/api/motor/altitude/start?direction=up&speed=101")
+        assert response.status_code == 422
 
 
 class TestPositionAPIEndpoint:
@@ -1243,9 +1394,264 @@ class TestPositionAPIEndpoint:
         # Azimuth typically 0-360 degrees
         assert 0 <= data["azimuth"] <= 360
 
+        # Sensor should be operational (covers 1024->1035 branch)
+        assert data["sensor_status"] == "ok"
+
+    def test_position_with_no_sensor(self, mock_asi, mock_sdk_path):
+        """Verifies GET /api/position works when no sensor is available.
+
+        Tests that when _sensor is None (no sensor hardware), the endpoint
+        returns default position with no_sensor status.
+
+        Business context:
+        Telescope may operate without IMU sensor hardware. Position
+        endpoint should return safe defaults and indicate no sensor.
+
+        Arrangement:
+        1. Create app and set _sensor to None.
+
+        Action:
+        Issues GET /api/position with no sensor.
+
+        Assertion Strategy:
+        Validates no-sensor behavior by confirming:
+        - HTTP 200 response.
+        - sensor_status is "no_sensor".
+        - Position defaults to 0,0.
+
+        Testing Principle:
+        Validates graceful handling when sensor unavailable.
+        """
+        import telescope_mcp.web.app as app_module
+
+        app = create_app(encoder=MockImageEncoder())
+
+        with TestClient(app) as test_client:
+            # Set sensor to None AFTER lifespan has run
+            original_sensor = app_module._sensor
+            app_module._sensor = None
+
+            try:
+                response = test_client.get("/api/position")
+                assert response.status_code == 200
+
+                data = response.json()
+                assert data["sensor_status"] == "no_sensor"
+                assert data["altitude"] == 0.0
+                assert data["azimuth"] == 0.0
+            finally:
+                # Restore original sensor state
+                app_module._sensor = original_sensor
+
+    def test_position_with_sensor_read_error(self, mock_asi, mock_sdk_path):
+        """Verifies GET /api/position handles sensor read errors gracefully.
+
+        Tests that when IMU sensor is initialized but read() raises an
+        exception, the endpoint returns default position with error status.
+
+        Business context:
+        Sensor hardware can fail mid-session (disconnection, I2C error).
+        Position endpoint should return safe defaults rather than crashing,
+        allowing continued telescope operation in manual mode.
+
+        Arrangement:
+        1. Create app with mock sensor that raises on read().
+        2. Mock _sensor global to simulate initialized but failing sensor.
+
+        Action:
+        Issues GET /api/position with failing sensor.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - HTTP 200 response (endpoint doesn't crash).
+        - sensor_status is "error".
+        - Position defaults to 0,0.
+
+        Testing Principle:
+        Validates fault tolerance for sensor read failures.
+        """
+        from unittest.mock import AsyncMock
+
+        import telescope_mcp.web.app as app_module
+
+        app = create_app(encoder=MockImageEncoder())
+
+        with TestClient(app) as test_client:
+            # Create mock sensor that raises on read
+            mock_sensor = AsyncMock()
+            mock_sensor.read = AsyncMock(
+                side_effect=RuntimeError("Sensor disconnected")
+            )
+
+            # Inject mock sensor AFTER lifespan has run
+            original_sensor = app_module._sensor
+            app_module._sensor = mock_sensor
+
+            try:
+                response = test_client.get("/api/position")
+                assert response.status_code == 200
+
+                data = response.json()
+                assert data["sensor_status"] == "error"
+                assert data["altitude"] == 0.0
+                assert data["azimuth"] == 0.0
+            finally:
+                # Restore original sensor state
+                app_module._sensor = original_sensor
+
 
 class TestLifecycleManagement:
     """Tests for application startup and shutdown lifecycle."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_sensor_handles_disconnect_error(
+        self, mock_asi, mock_sdk_path
+    ):
+        """Verifies _cleanup_sensor handles disconnect errors gracefully.
+
+        Tests that when sensor.disconnect() raises an exception during
+        shutdown, the error is logged but cleanup continues without crash.
+
+        Business context:
+        Sensor hardware can be in bad state during shutdown (already
+        disconnected, USB unplugged). Cleanup must complete regardless
+        to allow app restart without resource leaks.
+
+        Arrangement:
+        1. Create mock sensor that raises on disconnect().
+        2. Set global _sensor to mock.
+
+        Action:
+        Call _cleanup_sensor() directly.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - Function completes without raising.
+        - _sensor is set to None after cleanup.
+
+        Testing Principle:
+        Validates graceful degradation during shutdown cleanup.
+        """
+        from unittest.mock import AsyncMock
+
+        import telescope_mcp.web.app as app_module
+        from telescope_mcp.web.app import _cleanup_sensor
+
+        # Create mock sensor that raises on disconnect
+        mock_sensor = AsyncMock()
+        mock_sensor.disconnect = AsyncMock(
+            side_effect=RuntimeError("Serial port already closed")
+        )
+
+        # Inject mock sensor
+        original_sensor = app_module._sensor
+        app_module._sensor = mock_sensor
+
+        try:
+            # Run cleanup - should not raise despite disconnect error
+            await _cleanup_sensor()
+
+            # Sensor should be cleared even after error
+            assert app_module._sensor is None
+        finally:
+            # Restore original state
+            app_module._sensor = original_sensor
+
+    @pytest.mark.asyncio
+    async def test_init_sensor_handles_connection_error(self, mock_asi, mock_sdk_path):
+        """Verifies _init_sensor handles sensor connection errors gracefully.
+
+        Tests that when sensor driver creation or connection fails during
+        startup, the error is logged but startup continues with _sensor=None.
+
+        Business context:
+        Sensor hardware may not be present or may fail to initialize.
+        Application should continue startup to allow camera and motor
+        operations even without IMU sensor data.
+
+        Arrangement:
+        1. Mock get_factory to return factory that raises on create_sensor_driver.
+
+        Action:
+        Call _init_sensor() directly.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - Function completes without raising.
+        - _sensor is set to None after failure.
+
+        Testing Principle:
+        Validates graceful degradation during sensor initialization failure.
+        """
+        from unittest.mock import MagicMock
+
+        import telescope_mcp.web.app as app_module
+        from telescope_mcp.web.app import _init_sensor
+
+        # Save original state
+        original_sensor = app_module._sensor
+
+        # Mock get_factory to return a factory that raises on create_sensor_driver
+        original_get_factory = app_module.get_factory
+
+        mock_factory = MagicMock()
+        mock_factory.create_sensor_driver.side_effect = RuntimeError(
+            "No sensor hardware found"
+        )
+        app_module.get_factory = MagicMock(return_value=mock_factory)
+
+        try:
+            # Run init - should not raise despite sensor error
+            await _init_sensor()
+
+            # Sensor should be None after failed init
+            assert app_module._sensor is None
+        finally:
+            # Restore original state
+            app_module._sensor = original_sensor
+            app_module.get_factory = original_get_factory
+
+    @pytest.mark.asyncio
+    async def test_cleanup_sensor_when_none(self, mock_asi, mock_sdk_path):
+        """Verifies _cleanup_sensor handles None sensor gracefully.
+
+        Tests that when _sensor is None (never initialized or already cleaned),
+        cleanup completes without error.
+
+        Business context:
+        Cleanup may be called when sensor was never initialized (e.g., no
+        hardware present) or already cleaned up. Must be idempotent.
+
+        Arrangement:
+        1. Set _sensor to None.
+
+        Action:
+        Call _cleanup_sensor() directly.
+
+        Assertion Strategy:
+        Validates no-op behavior by confirming:
+        - Function completes without raising.
+        - _sensor remains None.
+
+        Testing Principle:
+        Validates idempotent cleanup behavior.
+        """
+        import telescope_mcp.web.app as app_module
+        from telescope_mcp.web.app import _cleanup_sensor
+
+        # Save and set to None
+        original_sensor = app_module._sensor
+        app_module._sensor = None
+
+        try:
+            # Run cleanup - should complete without error
+            await _cleanup_sensor()
+
+            # Sensor should still be None
+            assert app_module._sensor is None
+        finally:
+            # Restore original state
+            app_module._sensor = original_sensor
 
     def test_app_lifespan(self, mock_asi, mock_sdk_path):
         """Verifies FastAPI lifespan handles startup/shutdown correctly.
@@ -1790,7 +2196,7 @@ class TestEndToEndWorkflow:
         # Step 4: Stop all motors
         response = client.post("/api/motor/stop")
         assert response.status_code == 200
-        assert response.json()["status"] == "not_implemented"
+        assert response.json()["status"] == "stopped"
 
 
 class TestCameraOpenFailure:

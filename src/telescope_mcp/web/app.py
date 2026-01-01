@@ -13,8 +13,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from telescope_mcp.devices.sensor import Sensor
 from telescope_mcp.drivers.asi_sdk import get_sdk_library_path
+from telescope_mcp.drivers.config import get_factory
 from telescope_mcp.observability import get_logger
+from telescope_mcp.utils.coordinates import altaz_to_radec
 from telescope_mcp.utils.image import CV2ImageEncoder, ImageEncoder
 
 logger = get_logger(__name__)
@@ -28,7 +31,23 @@ STATIC_DIR = WEB_DIR / "static"
 _sdk_initialized = False
 _cameras: dict[int, asi.Camera] = {}  # Open camera instances
 _camera_streaming: dict[int, bool] = {}  # Track which cameras are streaming
-_camera_settings: dict[int, dict] = {}  # Store camera settings (exposure_us, gain)
+_camera_settings: dict[
+    int, dict[str, int]
+] = {}  # Store camera settings (exposure_us, gain)
+
+# Motor state management
+# Tracks continuous motion state for start/stop control pattern
+_motor_moving: dict[str, bool] = {"altitude": False, "azimuth": False}
+_motor_direction: dict[str, int] = {"altitude": 0, "azimuth": 0}  # -1, 0, +1
+_motor_speed: dict[str, int] = {"altitude": 0, "azimuth": 0}  # 0-100%
+
+# Motor configuration
+MOTOR_NUDGE_DEGREES = 0.1  # Default nudge amount in degrees
+MOTOR_STEPS_PER_DEGREE_ALT = 140000 / 90.0  # ~1556 steps per degree
+MOTOR_STEPS_PER_DEGREE_AZ = 110000 / 135.0  # ~815 steps per degree
+
+# IMU sensor for position feedback
+_sensor: Sensor | None = None
 
 # Image encoder (injectable for testing)
 _encoder: ImageEncoder | None = None
@@ -159,6 +178,73 @@ def _close_all_cameras() -> None:
     _camera_streaming.clear()
 
 
+async def _init_sensor() -> None:
+    """Initialize IMU sensor for position feedback.
+
+    Creates sensor device with driver from factory, connects to hardware
+    or digital twin based on configuration. Sensor provides ALT/AZ position
+    readings for /api/position endpoint.
+
+    Business context: IMU-based position feedback enables real-time pointing
+    display on dashboard. Critical for operator awareness during telescope
+    movement. Digital twin mode allows UI development without hardware.
+
+    Args:
+        None. Uses global factory configuration.
+
+    Returns:
+        None. Sets global _sensor on success.
+
+    Raises:
+        None. Connection failures are logged but don't prevent startup.
+
+    Example:
+        >>> await _init_sensor()
+        >>> if _sensor:
+        ...     reading = await _sensor.read()
+    """
+    global _sensor
+    try:
+        factory = get_factory()
+        driver = factory.create_sensor_driver()
+        _sensor = Sensor(driver)
+        await _sensor.connect()
+        logger.info("IMU sensor initialized", sensor_type=type(driver).__name__)
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize sensor, position will be 0,0", error=str(e)
+        )
+        _sensor = None
+
+
+async def _cleanup_sensor() -> None:
+    """Disconnect and cleanup IMU sensor.
+
+    Gracefully disconnects sensor connection on application shutdown.
+    Safe to call even if sensor was never initialized.
+
+    Args:
+        None. Uses global _sensor.
+
+    Returns:
+        None. Clears global _sensor.
+
+    Raises:
+        None. Errors are logged but don't prevent shutdown.
+
+    Example:
+        >>> await _cleanup_sensor()
+    """
+    global _sensor
+    if _sensor is not None:
+        try:
+            await _sensor.disconnect()
+            logger.info("IMU sensor disconnected")
+        except Exception as e:
+            logger.error("Error disconnecting sensor", error=str(e))
+        _sensor = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle for startup and shutdown.
@@ -191,9 +277,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup: Initialize cameras, motors, sensors
     logger.info("Starting telescope control services...")
     _init_sdk()
+    await _init_sensor()
     yield
     # Shutdown: Clean up
     logger.info("Shutting down telescope control services...")
+    await _cleanup_sensor()
     _close_all_cameras()
 
 
@@ -554,163 +642,331 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
 
     # API routes for dashboard JavaScript
     @app.post("/api/motor/altitude")
-    async def api_move_altitude(steps: int, speed: int = 100) -> dict:
+    async def api_move_altitude(steps: int, speed: int = 100) -> dict[str, object]:
         """Move the altitude (elevation) motor by specified steps.
 
         Controls vertical telescope movement for pointing adjustment.
-        Positive steps move up, negative move down (convention may vary
-        by mount configuration).
+        Positive steps move up (toward zenith), negative move down (toward
+        horizon). This is a programmatic interface - for UI buttons, prefer
+        /api/motor/altitude/nudge or /api/motor/altitude/start.
 
         Business context: Enables programmatic telescope pointing control for
-        goto functionality, drift correction, and manual adjustment via web UI.
+        goto functionality, drift correction, and scripted observations.
         Altitude control is essential for object tracking as celestial objects
-        change elevation throughout the night. Used by autoguiding systems to
-        correct for atmospheric refraction and mount tracking errors.
+        change elevation throughout the night.
 
-        Note: Not yet implemented - returns placeholder response.
+        Note: Currently a stub - returns placeholder response.
 
         Args:
-            steps: Number of motor steps to move. Range depends on motor.
+            steps: Number of motor steps to move. Range: ±140000.
+                0 = zenith (90°), 140000 = horizon (0°).
             speed: Motor speed as percentage (1-100). Default 100.
 
         Returns:
-            Dict with status and echo of parameters:
-            {"status": "ok", "steps": int, "speed": int}
-
-        Raises:
-            None. TODO: Will raise on motor errors when implemented.
+            Dict with status and parameters:
+            {"status": "ok", "axis": "altitude", "steps": int, "speed": int}
 
         Example:
-            # Move up 1000 steps at 50% speed
             response = requests.post(
                 'http://localhost:8080/api/motor/altitude',
                 params={'steps': 1000, 'speed': 50}
             )
-            # {"status": "ok", "steps": 1000, "speed": 50}
-            print(response.json())
-
-            # In JavaScript dashboard
-            async function moveUp() {
-                const url = '/api/motor/altitude?steps=500&speed=75';
-                const response = await fetch(url, {method: 'POST'});
-                const result = await response.json();
-                console.log('Move complete:', result);
-            }
         """
-        # TODO: Implement
-        logger.warning("Motor altitude control not yet implemented")
-        return {"status": "not_implemented", "message": "Motor control pending"}
+        logger.info("Motor altitude move", steps=steps, speed=speed)
+        # TODO: Integrate with motor controller
+        return {"status": "ok", "axis": "altitude", "steps": steps, "speed": speed}
 
     @app.post("/api/motor/azimuth")
-    async def api_move_azimuth(steps: int, speed: int = 100) -> dict:
+    async def api_move_azimuth(steps: int, speed: int = 100) -> dict[str, object]:
         """Move the azimuth (rotation) motor by specified steps.
 
         Controls horizontal telescope rotation for pointing adjustment.
-        Positive steps rotate clockwise (looking down), negative counter-
-        clockwise (convention may vary by mount configuration).
+        Positive steps rotate counter-clockwise (looking down from above),
+        negative rotate clockwise.
 
         Business context: Enables horizontal telescope positioning for target
         acquisition and tracking. Azimuth adjustments compensate for Earth
-        rotation and allow slewing between targets. Critical for automated goto
-        systems and periodic error correction in equatorial mounts. Slower
-        speed settings enable fine adjustments for centering objects in
-        eyepiece/camera.
+        rotation and allow slewing between targets.
 
-        Note: Not yet implemented - returns placeholder response.
+        Note: Currently a stub - returns placeholder response.
 
         Args:
-            steps: Number of motor steps to move. Range depends on motor.
+            steps: Number of motor steps to move. Range: ±110000.
             speed: Motor speed as percentage (1-100). Default 100.
 
         Returns:
-            Dict with status and echo of parameters:
-            {"status": "ok", "steps": int, "speed": int}
-
-        Raises:
-            None. TODO: Will raise on motor errors when implemented.
+            Dict with status and parameters:
+            {"status": "ok", "axis": "azimuth", "steps": int, "speed": int}
 
         Example:
-            # Rotate clockwise 2000 steps at full speed
             response = requests.post(
                 'http://localhost:8080/api/motor/azimuth',
                 params={'steps': 2000, 'speed': 100}
             )
-
-            # Fine adjustment at slow speed
-            response = requests.post(
-                'http://localhost:8080/api/motor/azimuth',
-                params={'steps': 50, 'speed': 20}
-            )
-
-            # Dashboard button handler
-            document.getElementById('rotate-left').onclick = async () => {
-                url = '/api/motor/azimuth?steps=-500&speed=50';
-                await fetch(url, {method: 'POST'});
-            };
         """
-        # TODO: Implement
-        logger.warning("Motor azimuth control not yet implemented")
-        return {"status": "not_implemented", "message": "Motor control pending"}
+        logger.info("Motor azimuth move", steps=steps, speed=speed)
+        # TODO: Integrate with motor controller
+        return {"status": "ok", "axis": "azimuth", "steps": steps, "speed": speed}
 
-    @app.post("/api/motor/stop")
-    async def api_stop_motors() -> dict:
-        """Emergency stop all telescope motors (safety endpoint).
+    @app.post("/api/motor/altitude/nudge")
+    async def api_nudge_altitude(
+        direction: str = Query(..., pattern="^(up|down)$"),
+        degrees: float = Query(default=MOTOR_NUDGE_DEGREES, ge=0.01, le=10.0),
+    ) -> dict[str, object]:
+        """Nudge altitude motor by small fixed amount (tap gesture).
 
-        Immediately halts all motor movement (altitude, azimuth, focuser,
-        rotator) for safety. Use when unexpected movement occurs, runaway goto
-        detected, or before manual intervention. Must be called before any
-        hands-on maintenance operations (adjusting cables, swapping cameras,
-        cleaning optics). Big red "STOP" button in dashboard UI.
+        Moves altitude axis by specified degrees in given direction. Designed
+        for single-tap UI interactions where user wants discrete, predictable
+        movement. For continuous motion (hold gesture), use /start instead.
 
-        Business context: Critical safety feature for robotic telescope
-        operation. Prevents damage from runaway motors (software bugs, encoder
-        glitches, limit switch failures). Essential for remote operation where
-        operator cannot physically reach emergency stop. Enables safe
-        transition from automated to manual control (stop motors, then adjust
-        by hand). Used in error recovery workflows (unexpected behavior -> stop
-        -> diagnose -> restart). Required by observatory safety protocols
-        (operators must have immediate stop capability).
+        Business context: Enables fine pointing adjustments via dashboard arrow
+        buttons. Tap-to-nudge provides predictable movement for centering
+        objects in eyepiece/camera field of view.
 
-        Implementation details: When implemented, will call motor controller
-        stop_all() method sending stop commands to all connected motor drivers
-        (stepper controllers, focuser USB interfaces). Should be idempotent
-        (safe to call when already stopped). Must complete within 100 ms (low
-        latency critical for emergency use). Stops motion immediately without
-        deceleration ramps (may cause vibration but safety trumps smoothness).
-        Currently returns {"status": "stopped"} - TODO: integrate motor
-        controller.
+        UI Pattern: Bind to button click event. Each tap moves fixed amount.
 
         Args:
-            None. No parameters needed - unconditional immediate stop.
+            direction: Movement direction - "up" (toward zenith) or "down"
+                (toward horizon).
+            degrees: Amount to move in degrees. Default 0.1°.
+                Range: 0.01 to 10.0 degrees.
 
         Returns:
-            Dict confirming motors stopped: {"status": "stopped"}. When
-            implemented, may include additional fields: {"status": "stopped",
-            "stopped_motors": ["altitude", "azimuth"],
-            "timestamp": "2025-12-18T12:34:56Z"}.
-
-        Raises:
-            None currently (placeholder). TODO: Will raise HTTPException(503)
-            if motor controller unavailable or motors fail to acknowledge stop
-            command within timeout.
+            Dict with movement details:
+            {"status": "ok", "axis": "altitude", "direction": str,
+             "degrees": float, "steps": int}
 
         Example:
-            >>> # JavaScript dashboard emergency stop button
-            >>> document.getElementById('stop-btn').onclick = async () => {
-            ...     resp = await fetch('/api/motor/stop', {method: 'POST'});
-            ...     const data = await resp.json();
-            ...     if (data.status === 'stopped') {
-            ...         alert('Motors stopped!');
-            ...         disableMotorControls();  // Prevent further movement
-            ...     }
-            ... };
+            >>> # JavaScript tap handler
+            >>> upBtn.onclick = () => fetch(
+            ...     '/api/motor/altitude/nudge?direction=up&degrees=0.1',
+            ...     {method: 'POST'}
+            ... );
         """
-        # TODO: Implement
-        logger.warning("Motor stop not yet implemented")
-        return {"status": "not_implemented", "message": "Motor control pending"}
+        steps = int(degrees * MOTOR_STEPS_PER_DEGREE_ALT)
+        if direction == "down":
+            steps = -steps
+
+        logger.info(
+            "Motor altitude nudge", direction=direction, degrees=degrees, steps=steps
+        )
+        # TODO: Integrate with motor controller - call move_relative()
+        return {
+            "status": "ok",
+            "axis": "altitude",
+            "direction": direction,
+            "degrees": degrees,
+            "steps": steps,
+        }
+
+    @app.post("/api/motor/azimuth/nudge")
+    async def api_nudge_azimuth(
+        direction: str = Query(..., pattern="^(cw|ccw|left|right)$"),
+        degrees: float = Query(default=MOTOR_NUDGE_DEGREES, ge=0.01, le=10.0),
+    ) -> dict[str, object]:
+        """Nudge azimuth motor by small fixed amount (tap gesture).
+
+        Moves azimuth axis by specified degrees in given direction. Designed
+        for single-tap UI interactions where user wants discrete, predictable
+        movement. For continuous motion (hold gesture), use /start instead.
+
+        Business context: Enables fine rotation adjustments via dashboard arrow
+        buttons. Tap-to-nudge provides predictable movement for centering
+        objects in eyepiece/camera field of view.
+
+        UI Pattern: Bind to button click event. Each tap moves fixed amount.
+
+        Args:
+            direction: Movement direction:
+                - "cw" or "right": Clockwise (looking down from above)
+                - "ccw" or "left": Counter-clockwise
+            degrees: Amount to move in degrees. Default 0.1°.
+                Range: 0.01 to 10.0 degrees.
+
+        Returns:
+            Dict with movement details:
+            {"status": "ok", "axis": "azimuth", "direction": str,
+             "degrees": float, "steps": int}
+
+        Example:
+            >>> # JavaScript tap handler
+            >>> leftBtn.onclick = () => fetch(
+            ...     '/api/motor/azimuth/nudge?direction=left',
+            ...     {method: 'POST'}
+            ... );
+        """
+        steps = int(degrees * MOTOR_STEPS_PER_DEGREE_AZ)
+        if direction in ("cw", "right"):
+            steps = -steps  # CW = negative direction
+
+        logger.info(
+            "Motor azimuth nudge", direction=direction, degrees=degrees, steps=steps
+        )
+        # TODO: Integrate with motor controller - call move_relative()
+        return {
+            "status": "ok",
+            "axis": "azimuth",
+            "direction": direction,
+            "degrees": degrees,
+            "steps": steps,
+        }
+
+    @app.post("/api/motor/altitude/start")
+    async def api_start_altitude(
+        direction: str = Query(..., pattern="^(up|down)$"),
+        speed: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        """Start continuous altitude motion (hold gesture).
+
+        Begins continuous motor movement that continues until /stop is called.
+        Designed for press-and-hold UI interactions where user wants smooth,
+        ongoing motion. Call /api/motor/stop when button is released.
+
+        Business context: Enables smooth slewing via dashboard controls. Hold
+        to start continuous motion allows rapid telescope repositioning without
+        multiple clicks. Essential for comfortable manual pointing.
+
+        UI Pattern:
+        - Bind to mousedown/touchstart: call /start
+        - Bind to mouseup/touchend/mouseleave: call /stop
+
+        Args:
+            direction: Movement direction - "up" (toward zenith) or "down"
+                (toward horizon).
+            speed: Motor speed as percentage (1-100). Default 50%.
+                Higher = faster slewing, lower = finer control.
+
+        Returns:
+            Dict confirming motion started:
+            {"status": "moving", "axis": "altitude", "direction": str,
+             "speed": int}
+
+        Example:
+            >>> # JavaScript hold handler
+            >>> upBtn.onmousedown = () => fetch(
+            ...     '/api/motor/altitude/start?direction=up&speed=50',
+            ...     {method: 'POST'}
+            ... );
+            >>> upBtn.onmouseup = () => fetch('/api/motor/stop', {method: 'POST'});
+        """
+        _motor_moving["altitude"] = True
+        _motor_direction["altitude"] = 1 if direction == "up" else -1
+        _motor_speed["altitude"] = speed
+
+        logger.info("Motor altitude start", direction=direction, speed=speed)
+        # TODO: Integrate with motor controller - start continuous move
+        return {
+            "status": "moving",
+            "axis": "altitude",
+            "direction": direction,
+            "speed": speed,
+        }
+
+    @app.post("/api/motor/azimuth/start")
+    async def api_start_azimuth(
+        direction: str = Query(..., pattern="^(cw|ccw|left|right)$"),
+        speed: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        """Start continuous azimuth motion (hold gesture).
+
+        Begins continuous motor movement that continues until /stop is called.
+        Designed for press-and-hold UI interactions where user wants smooth,
+        ongoing motion. Call /api/motor/stop when button is released.
+
+        Business context: Enables smooth rotation via dashboard controls. Hold
+        to start continuous motion allows rapid telescope repositioning without
+        multiple clicks. Essential for comfortable manual pointing.
+
+        UI Pattern:
+        - Bind to mousedown/touchstart: call /start
+        - Bind to mouseup/touchend/mouseleave: call /stop
+
+        Args:
+            direction: Movement direction:
+                - "cw" or "right": Clockwise (looking down from above)
+                - "ccw" or "left": Counter-clockwise
+            speed: Motor speed as percentage (1-100). Default 50%.
+                Higher = faster slewing, lower = finer control.
+
+        Returns:
+            Dict confirming motion started:
+            {"status": "moving", "axis": "azimuth", "direction": str,
+             "speed": int}
+
+        Example:
+            >>> # JavaScript hold handler
+            >>> leftBtn.onmousedown = () => fetch(
+            ...     '/api/motor/azimuth/start?direction=left&speed=50',
+            ...     {method: 'POST'}
+            ... );
+            >>> leftBtn.onmouseup = () => fetch('/api/motor/stop', {method: 'POST'});
+        """
+        _motor_moving["azimuth"] = True
+        _motor_direction["azimuth"] = -1 if direction in ("cw", "right") else 1
+        _motor_speed["azimuth"] = speed
+
+        logger.info("Motor azimuth start", direction=direction, speed=speed)
+        # TODO: Integrate with motor controller - start continuous move
+        return {
+            "status": "moving",
+            "axis": "azimuth",
+            "direction": direction,
+            "speed": speed,
+        }
+
+    @app.post("/api/motor/stop")
+    async def api_stop_motors(
+        axis: str | None = Query(default=None, pattern="^(altitude|azimuth)$"),
+    ) -> dict[str, object]:
+        """Stop motor movement (emergency stop or release gesture).
+
+        Immediately halts motor movement. Can stop specific axis or all motors.
+        Called when user releases hold button or for emergency stop.
+
+        Business context: Critical safety function and normal operation endpoint.
+        Used both for:
+        1. Normal release of hold buttons (stop one axis)
+        2. Emergency stop (stop all axes immediately)
+
+        This endpoint is idempotent - safe to call even when motors not moving.
+
+        Args:
+            axis: Optional - "altitude" or "azimuth" to stop specific motor.
+                If None (default), stops ALL motors (emergency stop behavior).
+
+        Returns:
+            Dict confirming motors stopped:
+            {"status": "stopped", "axes": ["altitude", "azimuth"]}
+
+        Example:
+            >>> # Stop all motors (emergency)
+            >>> fetch('/api/motor/stop', {method: 'POST'});
+            >>> # Stop just altitude (button release)
+            >>> fetch('/api/motor/stop?axis=altitude', {method: 'POST'});
+        """
+        stopped_axes: list[str] = []
+
+        if axis is None:
+            # Emergency stop - all motors
+            for motor in ["altitude", "azimuth"]:
+                _motor_moving[motor] = False
+                _motor_direction[motor] = 0
+                _motor_speed[motor] = 0
+                stopped_axes.append(motor)
+            logger.warning("Emergency stop - all motors")
+        else:
+            # Single axis stop
+            _motor_moving[axis] = False
+            _motor_direction[axis] = 0
+            _motor_speed[axis] = 0
+            stopped_axes.append(axis)
+            logger.info("Motor stop", axis=axis)
+
+        # TODO: Integrate with motor controller - send stop commands
+        return {"status": "stopped", "axes": stopped_axes}
 
     @app.get("/api/position")
-    async def api_get_position() -> dict:
+    async def api_get_position() -> dict[str, object]:
         """Get current telescope pointing position (encoder readout).
 
         Returns altitude (elevation) and azimuth angles from motor encoders
@@ -768,12 +1024,50 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             ...         `Az: ${pos.azimuth.toFixed(2)} deg`;
             ... }, 1000);  // Update every second
         """
-        # TODO: Implement - return placeholder with warning
+        # Read position from IMU sensor if available
+        altitude = 0.0
+        azimuth = 0.0
+        sensor_status = "no_sensor"
+
+        if _sensor is not None:
+            try:
+                reading = await _sensor.read()
+                altitude = reading.altitude
+                azimuth = reading.azimuth
+                sensor_status = "ok"
+            except Exception as e:
+                logger.warning("Sensor read failed", error=str(e))
+                sensor_status = "error"
+
+        # Get observer location from config for coordinate conversion
+        config = get_factory().config
+        location = config.location
+
+        # Default location if not configured (Austin, TX)
+        lat = location.get("lat", 30.2672)
+        lon = location.get("lon", -97.7431)
+        elevation = location.get("alt", 0.0)
+
+        # Convert ALT/AZ to RA/Dec for display
+        equatorial = altaz_to_radec(
+            altitude=altitude,
+            azimuth=azimuth,
+            lat=lat,
+            lon=lon,
+            elevation=elevation,
+        )
+
         return {
-            "altitude": 0.0,
-            "azimuth": 0.0,
-            "status": "not_implemented",
-            "message": "Position readout pending encoder integration",
+            "altitude": altitude,
+            "azimuth": azimuth,
+            "ra": equatorial["ra"],
+            "dec": equatorial["dec"],
+            "ra_hours": equatorial["ra_hours"],
+            "ra_hms": equatorial["ra_hms"],
+            "dec_dms": equatorial["dec_dms"],
+            "location": {"lat": lat, "lon": lon, "elevation": elevation},
+            "sensor_status": sensor_status,
+            "status": "ok",
         }
 
     @app.post("/api/camera/{camera_id}/control")

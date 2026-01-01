@@ -38,24 +38,30 @@
         <section class="control-panel">
             <h2>Motor Control</h2>
             <div class="position-display">
-                <span>Altitude: <strong id="altitude">--</strong>°</span>
-                <span>Azimuth: <strong id="azimuth">--</strong>°</span>
+                <div class="position-row">
+                    <span>Altitude: <strong id="altitude">--</strong>°</span>
+                    <span>Azimuth: <strong id="azimuth">--</strong>°</span>
+                </div>
+                <div class="position-row equatorial">
+                    <span>RA: <strong id="ra">--</strong></span>
+                    <span>Dec: <strong id="dec">--</strong></span>
+                </div>
             </div>
 
             <div class="motor-controls">
                 <div class="direction-pad">
-                    <button class="btn-up" onclick="moveAlt(100)">▲</button>
+                    <button class="btn-up" data-axis="altitude" data-direction="1">▲</button>
                     <div class="horizontal">
-                        <button class="btn-left" onclick="moveAz(-100)">◀</button>
+                        <button class="btn-left" data-axis="azimuth" data-direction="-1">◀</button>
                         <button class="btn-stop" onclick="stopMotors()">⏹</button>
-                        <button class="btn-right" onclick="moveAz(100)">▶</button>
+                        <button class="btn-right" data-axis="azimuth" data-direction="1">▶</button>
                     </div>
-                    <button class="btn-down" onclick="moveAlt(-100)">▼</button>
+                    <button class="btn-down" data-axis="altitude" data-direction="-1">▼</button>
                 </div>
 
                 <div class="speed-control">
-                    <label>Speed: <input type="range" id="speed" min="10" max="500" value="100"></label>
-                    <span id="speed-value">100</span> steps/s
+                    <label>Speed: <input type="range" id="speed" min="10" max="100" value="50"></label>
+                    <span id="speed-value">50</span>%
                 </div>
             </div>
 

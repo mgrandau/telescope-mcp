@@ -48,7 +48,8 @@ def __getattr__(name: str) -> type:
         # Cache in module globals to avoid re-import on subsequent access
         globals()["ImageEncoder"] = ImageEncoder
         globals()["CV2ImageEncoder"] = CV2ImageEncoder
-        return globals()[name]
+        result: type = globals()[name]
+        return result
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

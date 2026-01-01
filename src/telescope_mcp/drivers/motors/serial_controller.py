@@ -639,7 +639,7 @@ class SerialMotorController:
             response = self._serial.read_until(b"?\tdisplay this help screen\r\n")
             return response.decode(errors="ignore")
 
-    def get_info(self) -> dict:
+    def get_info(self) -> dict[str, object]:
         """Get motor controller information and current state.
 
         Returns comprehensive information about the controller including
@@ -817,7 +817,7 @@ class SerialMotorDriver:
         driver._port_enumerator = port_enumerator
         return driver
 
-    def get_available_controllers(self) -> list[dict]:
+    def get_available_controllers(self) -> list[dict[str, object]]:
         """Discover motor controllers available on serial ports.
 
         Scans system serial ports for devices matching motor controller

@@ -590,6 +590,118 @@ class DigitalTwinSensorInstance:
             is_open=self._is_open,
         )
 
+    def get_sample_rate(self) -> float:
+        """Get sensor sample rate in Hz.
+
+        Returns the configured sample rate for this digital twin sensor.
+        Used by device layer to calculate timing for averaged reads.
+
+        Business context: Different sensors have different native rates.
+        DigitalTwin sample rate is configurable via DigitalTwinSensorConfig.
+        Default is 10 Hz to match Arduino BLE33 hardware.
+
+        Returns:
+            float: Sample rate in Hz (e.g., 10.0 for 10 samples per second).
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> config = DigitalTwinSensorConfig(sample_rate_hz=20.0)
+            >>> instance = DigitalTwinSensorInstance(config)
+            >>> instance.get_sample_rate()
+            20.0
+        """
+        return self._config.sample_rate_hz
+
+    def stop_output(self) -> None:
+        """Stop continuous sensor data output (no-op for digital twin).
+
+        For API compatibility with ArduinoSensorInstance. The digital twin
+        doesn't have a continuous output stream, so this is a no-op.
+
+        Business context: Arduino sensor streams data continuously over
+        serial. stop_output() pauses this stream during calibration or
+        configuration. Digital twin doesn't stream, so nothing to stop.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> twin.stop_output()  # No effect, but API-compatible
+            >>> twin.start_output()
+        """
+        logger.debug("Digital twin stop_output called (no-op)")
+
+    def start_output(self) -> None:
+        """Resume continuous sensor data output (no-op for digital twin).
+
+        For API compatibility with ArduinoSensorInstance. The digital twin
+        provides data on-demand via read(), not via continuous stream.
+
+        Business context: Arduino sensor streams data at ~10Hz. After
+        stop_output() pauses the stream, start_output() resumes it.
+        Digital twin reads are on-demand, so this is a no-op.
+
+        Args:
+            No arguments.
+
+        Returns:
+            None.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> twin.stop_output()
+            >>> # ... do calibration ...
+            >>> twin.start_output()  # No effect, but API-compatible
+        """
+        logger.debug("Digital twin start_output called (no-op)")
+
+    def _set_tilt_calibration(self, slope: float, intercept: float) -> None:
+        """Set linear calibration parameters for tilt (altitude) calculation.
+
+        Applies linear correction: corrected = slope * raw + intercept.
+        This compensates for sensor mounting angle and systematic errors.
+
+        Business context: Physical sensor mounting rarely achieves perfect
+        alignment. This linear calibration corrects for consistent offset
+        (intercept) and scaling errors (slope) in the tilt measurement.
+        Parameters typically determined through multi-point calibration.
+
+        Args:
+            slope: Scale factor (m in y = mx + b). Typically 0.9-1.1.
+                Values <1 compress range, >1 expand range.
+                1.0 = no scaling correction.
+            intercept: Offset in degrees (b in y = mx + b).
+                Positive = add degrees, negative = subtract.
+                0.0 = no offset correction.
+
+        Returns:
+            None. Parameters stored in _cal_alt_scale and _cal_alt_offset.
+
+        Raises:
+            No exceptions raised. Invalid values may produce bad readings.
+
+        Example:
+            >>> twin._set_tilt_calibration(1.02, -2.5)
+            >>> # Raw 45° becomes: 1.02 * 45 - 2.5 = 43.4°
+        """
+        self._cal_alt_scale = slope
+        self._cal_alt_offset = intercept
+        logger.debug(
+            "Tilt calibration set",
+            slope=slope,
+            intercept=intercept,
+        )
+
     def close(self) -> None:
         """Close the simulated sensor connection.
 

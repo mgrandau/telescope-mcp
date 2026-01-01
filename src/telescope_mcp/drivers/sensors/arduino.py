@@ -81,6 +81,7 @@ logger = get_logger(__name__)
 # Protocol constants for Arduino serial data format
 _FULL_FORMAT_FIELDS = 8  # aX, aY, aZ, mX, mY, mZ, temp, humidity
 _LEGACY_FORMAT_FIELDS = 6  # aX, aZ, aY, mX, mZ, mY (note different order)
+_ARDUINO_SAMPLE_RATE_HZ = 10.0  # Fixed sample rate for Arduino BLE33 firmware
 
 
 class ArduinoSensorInfo(TypedDict):
@@ -901,6 +902,30 @@ class ArduinoSensorInstance:
             is_open=self._is_open,
             error=None if self._is_open else "Connection closed",
         )
+
+    def get_sample_rate(self) -> float:
+        """Get sensor sample rate in Hz.
+
+        Returns the fixed sample rate of the Arduino BLE33 firmware.
+        Used by device layer to calculate timing for averaged reads.
+
+        Business context: Arduino BLE33 Sense firmware streams sensor data
+        at a fixed 10 Hz rate. This rate is determined by the firmware,
+        not configurable at runtime. Device layer needs this to properly
+        space multi-sample reads.
+
+        Returns:
+            float: Always 10.0 Hz for Arduino BLE33 firmware.
+
+        Raises:
+            No exceptions raised.
+
+        Example:
+            >>> instance = driver.open("/dev/ttyACM0")
+            >>> instance.get_sample_rate()
+            10.0
+        """
+        return _ARDUINO_SAMPLE_RATE_HZ
 
     def calibrate_magnetometer(self) -> str:
         """Run Arduino magnetometer hard-iron calibration routine.

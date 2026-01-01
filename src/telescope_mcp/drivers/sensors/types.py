@@ -189,6 +189,21 @@ class SensorReading:
     timestamp: datetime
     raw_values: str = ""
 
+    def __str__(self) -> str:
+        """Return human-readable string representation.
+
+        Returns:
+            Formatted string with altitude, azimuth, temp, and humidity.
+
+        Example:
+            >>> print(reading)
+            ALT 45.00° AZ 180.00° | T=20.5°C H=45.0%
+        """
+        return (
+            f"ALT {self.altitude:.2f}° AZ {self.azimuth:.2f}° | "
+            f"T={self.temperature:.1f}°C H={self.humidity:.1f}%"
+        )
+
 
 @runtime_checkable
 class SensorInstance(Protocol):  # pragma: no cover
@@ -341,6 +356,28 @@ class SensorInstance(Protocol):  # pragma: no cover
             >>> sensor.reset()
             >>> # Now recalibrate from scratch
             >>> sensor.calibrate(40.0, 0.0)
+        """
+        ...
+
+    def get_sample_rate(self) -> float:
+        """Get sensor sample rate in Hz.
+
+        Returns the native sample rate of the sensor hardware.
+        Used by device layer to calculate timing for averaged reads.
+
+        Business context: Different sensors have different native rates.
+        Arduino BLE33 runs at 10Hz fixed. DigitalTwin is configurable.
+        Device layer needs this to properly space multi-sample reads.
+
+        Returns:
+            Sample rate in Hz (e.g., 10.0 for 10 samples per second).
+
+        Raises:
+            RuntimeError: If sensor connection is closed.
+
+        Example:
+            >>> rate = sensor.get_sample_rate()
+            >>> print(f"Sensor runs at {rate} Hz")
         """
         ...
 

@@ -133,7 +133,7 @@ class TestDevicesExports:
         camera_exports = ["Camera", "CameraConfig", "CaptureResult", "CameraInfo"]
         controller_exports = ["CameraController", "SyncCaptureConfig"]
         registry_exports = ["CameraRegistry", "init_registry", "get_registry"]
-        sensor_exports = ["Sensor", "SensorConfig", "SensorStatistics"]
+        sensor_exports = ["Sensor", "SensorConfig", "SensorDeviceStatus"]
 
         all_key = (
             camera_exports + controller_exports + registry_exports + sensor_exports

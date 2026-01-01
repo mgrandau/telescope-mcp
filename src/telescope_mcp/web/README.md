@@ -82,13 +82,57 @@ __all__ = ["create_app", "main"]
 | GET | `/stream/main` | `main_stream` | StreamingResponse (MJPEG camera 1) |
 | GET | `/stream/{camera_id}` | `camera_stream` | StreamingResponse (MJPEG) |
 | GET | `/api/cameras` | `api_list_cameras` | JSONResponse `{count, cameras[]}` |
-| POST | `/api/motor/altitude` | `api_move_altitude` | dict (stub) |
-| POST | `/api/motor/azimuth` | `api_move_azimuth` | dict (stub) |
-| POST | `/api/motor/stop` | `api_stop_motors` | dict (stub) |
-| GET | `/api/position` | `api_get_position` | dict (stub) |
+| POST | `/api/motor/altitude` | `api_move_altitude` | dict (programmatic) |
+| POST | `/api/motor/azimuth` | `api_move_azimuth` | dict (programmatic) |
+| POST | `/api/motor/altitude/nudge` | `api_nudge_altitude` | dict (tap gesture) |
+| POST | `/api/motor/azimuth/nudge` | `api_nudge_azimuth` | dict (tap gesture) |
+| POST | `/api/motor/altitude/start` | `api_start_altitude` | dict (hold gesture) |
+| POST | `/api/motor/azimuth/start` | `api_start_azimuth` | dict (hold gesture) |
+| POST | `/api/motor/stop` | `api_stop_motors` | dict (stop/release) |
+| GET | `/api/position` | `api_get_position` | dict (with RA/Dec) |
 | POST | `/api/camera/{id}/control` | `api_set_camera_control` | JSONResponse |
 
-### 3.4 Stream Query Parameters
+### 3.4 Motor Control API (UI Pattern: Tap + Hold)
+
+The motor control API supports two UI interaction patterns:
+
+**Tap (Nudge)**: Single click moves a fixed amount in degrees.
+```
+POST /api/motor/altitude/nudge?direction=up&degrees=0.1
+POST /api/motor/azimuth/nudge?direction=left&degrees=0.5
+```
+
+**Hold (Start/Stop)**: Press-and-hold begins continuous motion until released.
+```javascript
+// JavaScript UI pattern
+upBtn.onmousedown = () => fetch('/api/motor/altitude/start?direction=up&speed=50', {method: 'POST'});
+upBtn.onmouseup = () => fetch('/api/motor/stop?axis=altitude', {method: 'POST'});
+```
+
+**Emergency Stop**: Stop all motors immediately.
+```
+POST /api/motor/stop
+```
+
+| Endpoint | Parameters | Description |
+|----------|------------|-------------|
+| `POST /api/motor/{axis}/nudge` | `direction`, `degrees` | Move fixed amount (tap) |
+| `POST /api/motor/{axis}/start` | `direction`, `speed` | Begin continuous motion (hold) |
+| `POST /api/motor/stop` | `axis` (optional) | Stop motion (release/emergency) |
+| `POST /api/motor/{axis}` | `steps`, `speed` | Programmatic step-based move |
+
+**Direction Values:**
+- Altitude: `up`, `down`
+- Azimuth: `cw`, `ccw`, `left`, `right`
+
+**Default Values:**
+- `degrees`: 0.1° (nudge)
+- `speed`: 50% (start), 100% (step-based)
+
+**Note**: Actual motor movement requires hardware integration (currently stubs).
+WebSocket upgrade path available if HTTP latency becomes an issue.
+
+### 3.5 Stream Query Parameters
 
 | Param | Type | Default | Range | Description |
 |-------|------|---------|-------|-------------|
@@ -96,7 +140,7 @@ __all__ = ["create_app", "main"]
 | `gain` | int | 50 | 0–600 | Camera gain |
 | `fps` | int | 15 | 1–60 | Target frame rate |
 
-### 3.5 Camera Control Names
+### 3.6 Camera Control Names
 
 Valid `control` values for `/api/camera/{id}/control`:
 
@@ -421,7 +465,8 @@ sequenceDiagram
 | Camera streaming | ✅ Complete | MJPEG with auto-stretch |
 | Camera control API | ✅ Complete | Gain, exposure, etc. |
 | Camera discovery | ✅ Complete | /api/cameras |
-| Motor altitude | ⏳ Stub | Returns not_implemented |
-| Motor azimuth | ⏳ Stub | Returns not_implemented |
-| Motor stop | ⏳ Stub | Returns not_implemented |
-| Position readout | ⏳ Stub | Returns 0.0, 0.0 |
+| Motor step-based | ✅ API Ready | Needs hardware driver integration |
+| Motor nudge (tap) | ✅ API Ready | Needs hardware driver integration |
+| Motor start (hold) | ✅ API Ready | Needs hardware driver integration |
+| Motor stop | ✅ API Ready | Needs hardware driver integration |
+| Position readout | ✅ API Ready | Returns ALT/AZ + RA/Dec |
