@@ -5,6 +5,7 @@ This module provides the public API for telescope device management:
 - CameraController: Multi-camera synchronization for alignment
 - CameraRegistry: Discovery and singleton management
 - Sensor: Environmental (temperature, humidity) and positional (alt/az) data
+- CoordinateProvider: Automatic coordinate injection into frame metadata
 
 Example:
     >>> from telescope_mcp.devices import Camera, CameraRegistry, Sensor
@@ -26,9 +27,12 @@ from telescope_mcp.devices.camera import (
     CameraError,
     CameraHooks,
     CameraInfo,
+    CaptureCoordinates,
     CaptureOptions,
     CaptureResult,
     Clock,
+    CoordinateProvider,
+    NullCoordinateProvider,
     NullRecoveryStrategy,
     NullRenderer,
     OverlayConfig,
@@ -49,6 +53,10 @@ from telescope_mcp.devices.camera_registry import (
     init_registry,
     shutdown_registry,
 )
+from telescope_mcp.devices.coordinate_provider import (
+    LocationConfig,
+    SensorCoordinateProvider,
+)
 from telescope_mcp.devices.sensor import (
     DEFAULT_SAMPLE_RATE_HZ,
     STATUS_SETTLE_DELAY_SEC,
@@ -59,16 +67,19 @@ from telescope_mcp.devices.sensor import (
 )
 
 __all__ = [
-    # Camera (16 exports)
+    # Camera (19 exports)
     "Camera",
     "CameraConfig",
     "CameraDisconnectedError",
     "CameraError",
     "CameraHooks",
     "CameraInfo",
+    "CaptureCoordinates",
     "CaptureOptions",
     "CaptureResult",
     "Clock",
+    "CoordinateProvider",
+    "NullCoordinateProvider",
     "NullRecoveryStrategy",
     "NullRenderer",
     "OverlayConfig",
@@ -86,6 +97,9 @@ __all__ = [
     "get_registry",
     "init_registry",
     "shutdown_registry",
+    # Coordinate Provider (2 exports)
+    "LocationConfig",
+    "SensorCoordinateProvider",
     # Sensor (6 exports)
     "DEFAULT_SAMPLE_RATE_HZ",
     "STATUS_SETTLE_DELAY_SEC",
@@ -93,4 +107,4 @@ __all__ = [
     "Sensor",
     "SensorConfig",
     "SensorDeviceStatus",
-]  # Total: 30 exports
+]  # Total: 35 exports

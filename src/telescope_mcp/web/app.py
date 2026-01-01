@@ -34,6 +34,10 @@ _camera_streaming: dict[int, bool] = {}  # Track which cameras are streaming
 _camera_settings: dict[
     int, dict[str, int]
 ] = {}  # Store camera settings (exposure_us, gain)
+# Latest RAW16 frame buffers - both cameras stream RAW16, capture grabs from here
+# No mode switch needed for capture on either camera
+_latest_frames: dict[int, np.ndarray] = {}  # camera_id -> RAW16 frame
+_latest_frame_info: dict[int, dict[str, object]] = {}  # camera_id -> metadata
 
 # Motor state management
 # Tracks continuous motion state for start/stop control pattern
@@ -1243,67 +1247,42 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         from pathlib import Path
         
         import asdf
-        
-        camera = _get_camera(camera_id)
-        if camera is None:
-            return JSONResponse(
-                {"status": "error", "error": f"Camera {camera_id} not found"},
-                status_code=404
-            )
 
         # Camera name for organizing in ASDF
         camera_key = "finder" if camera_id == 0 else "main"
 
+        # ===== ALL CAMERAS: Grab RAW16 from video stream =====
+        # Both cameras stream in RAW16 mode, no mode switch needed for capture
+        
+        # Check if stream is running and we have a frame
+        if not _camera_streaming.get(camera_id, False):
+            return JSONResponse(
+                {"status": "error", "error": f"{camera_key.title()} stream not running - start stream first"},
+                status_code=400
+            )
+        
+        if camera_id not in _latest_frames or _latest_frames[camera_id] is None:
+            return JSONResponse(
+                {"status": "error", "error": f"No frame available from {camera_key} stream yet"},
+                status_code=400
+            )
+        
         try:
-            # Get camera info and current settings
-            info = camera.get_camera_property()
-            width = info["MaxWidth"]
-            height = info["MaxHeight"]
-            settings = _camera_settings.get(camera_id, {})
-            exp = settings.get("exposure_us", _get_default_exposure(camera_id))
-            gain = settings.get("gain", DEFAULT_GAIN)
-
-            # Stop video capture if running (we need exclusive access)
-            was_streaming = _camera_streaming.get(camera_id, False)
-            if was_streaming:
-                _camera_streaming[camera_id] = False
-                try:
-                    camera.stop_video_capture()
-                except Exception:
-                    pass
-
-            # Configure for RAW16 capture (maximum quality)
-            camera.set_control_value(asi.ASI_GAIN, gain)
-            camera.set_control_value(asi.ASI_EXPOSURE, exp)
-            camera.set_roi(width=width, height=height, bins=1, image_type=asi.ASI_IMG_RAW16)
-
-            # Capture single frame
-            logger.info(f"Capturing RAW16 {frame_type} from {camera_key}: exp={exp}us, gain={gain}")
+            # Grab the RAW16 frame directly from stream (no mode switch, no conversion!)
+            img = _latest_frames[camera_id].copy()
+            frame_info = _latest_frame_info.get(camera_id, {})
             
-            # Use start_exposure/get_exposure_status/get_data_after_exposure for still capture
-            camera.start_exposure()
+            width = frame_info.get("width", img.shape[1])
+            height = frame_info.get("height", img.shape[0])
+            is_color = frame_info.get("is_color", False)
+            exp = frame_info.get("exposure_us", _get_default_exposure(camera_id))
+            gain = frame_info.get("gain", DEFAULT_GAIN)
             
-            # Wait for exposure to complete
-            timeout_s = (exp / 1_000_000) + 5  # exposure time + 5s margin
-            start_time = datetime.datetime.now()
-            while True:
-                status = camera.get_exposure_status()
-                if status == asi.ASI_EXP_SUCCESS:
-                    break
-                elif status == asi.ASI_EXP_FAILED:
-                    raise RuntimeError("Exposure failed")
-                
-                elapsed = (datetime.datetime.now() - start_time).total_seconds()
-                if elapsed > timeout_s:
-                    raise RuntimeError(f"Exposure timeout after {elapsed:.1f}s")
-                
-                await asyncio.sleep(0.1)
-
-            # Get the data
-            data = camera.get_data_after_exposure()
+            logger.info(f"Capturing RAW16 {frame_type} from {camera_key} stream: exp={exp}us, gain={gain}")
             
-            # Reshape to 2D image
-            img = np.frombuffer(data, dtype=np.uint16).reshape((height, width))
+            # Get camera info for metadata
+            camera = _get_camera(camera_id)
+            info = camera.get_camera_property() if camera else {}
             
             # Create output directory
             capture_dir = Path("data/captures")
@@ -1316,7 +1295,7 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             
             # Frame metadata
             capture_time = datetime.datetime.now(datetime.UTC)
-            frame_meta = {
+            frame_meta: dict[str, object] = {
                 "timestamp": capture_time.isoformat(),
                 "exposure_us": exp,
                 "gain": gain,
@@ -1324,82 +1303,22 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
                 "height": height,
                 "camera_id": camera_id,
                 "camera_name": info.get("Name", f"Camera {camera_id}"),
-                "camera_temp": info.get("Temperature", 0) / 10.0,  # ASI reports in 0.1C
-                "is_color": info.get("IsColorCam", False),
-                "bayer_pattern": "RGGB" if info.get("IsColorCam", False) else None,
+                "camera_temp": info.get("Temperature", 0) / 10.0 if info else 0.0,
+                "is_color": is_color,
+                "bayer_pattern": "RGGB" if is_color else None,  # RAW16 preserves bayer pattern
+                "capture_mode": "raw16_stream",  # RAW16 from stream, same quality as still capture
             }
             
-            # Frame key: e.g., "finder_light", "main_dark"
-            frame_key = f"{camera_key}_{frame_type}"
+            # Add coordinates
+            await _add_coordinates_to_metadata(frame_meta, capture_time)
             
-            # Load existing ASDF or create new one
-            if filepath.exists():
-                with asdf.open(str(filepath), mode="rw") as af:
-                    # Ensure camera section exists
-                    if "cameras" not in af.tree:
-                        af.tree["cameras"] = {}
-                    if camera_key not in af.tree["cameras"]:
-                        af.tree["cameras"][camera_key] = {
-                            "info": {
-                                "name": info.get("Name", f"Camera {camera_id}"),
-                                "sensor_width": width,
-                                "sensor_height": height,
-                                "is_color": info.get("IsColorCam", False),
-                                "bayer_pattern": "RGGB" if info.get("IsColorCam", False) else None,
-                            },
-                            "light": [],
-                            "dark": [],
-                            "flat": [],
-                            "bias": [],
-                        }
-                    
-                    # Add frame
-                    af.tree["cameras"][camera_key][frame_type].append({
-                        "data": img.copy(),
-                        "meta": frame_meta,
-                    })
-                    frame_index = len(af.tree["cameras"][camera_key][frame_type]) - 1
-                    af.update()
-            else:
-                # Create new session ASDF archive
-                tree = {
-                    "metadata": {
-                        "created": capture_time.isoformat(),
-                        "session_date": date_str,
-                        "format_version": "1.0",
-                    },
-                    "cameras": {
-                        camera_key: {
-                            "info": {
-                                "name": info.get("Name", f"Camera {camera_id}"),
-                                "sensor_width": width,
-                                "sensor_height": height,
-                                "is_color": info.get("IsColorCam", False),
-                                "bayer_pattern": "RGGB" if info.get("IsColorCam", False) else None,
-                            },
-                            "light": [],
-                            "dark": [],
-                            "flat": [],
-                            "bias": [],
-                        }
-                    },
-                }
-                # Add the first frame
-                tree["cameras"][camera_key][frame_type].append({
-                    "data": img.copy(),
-                    "meta": frame_meta,
-                })
-                frame_index = 0
-                
-                af = asdf.AsdfFile(tree)
-                af.write_to(str(filepath))
+            # Save to ASDF
+            frame_index = await _save_frame_to_asdf(
+                filepath, camera_key, frame_type, img, frame_meta, info
+            )
             
             logger.info(f"Saved {camera_key}/{frame_type} #{frame_index} to: {filepath}")
-
-            # Restart video stream if it was running
-            if was_streaming:
-                _camera_streaming[camera_id] = True
-
+            
             return JSONResponse({
                 "status": "success",
                 "filename": str(filename),
@@ -1411,19 +1330,200 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
                 "gain": gain,
                 "width": width,
                 "height": height,
+                "capture_mode": "raw16_stream",
             })
-
+            
         except Exception as e:
-            logger.error(f"Capture failed: {e}")
-            # Try to restart stream if it was running
-            if was_streaming:
-                _camera_streaming[camera_id] = True
+            logger.error(f"{camera_key.title()} capture failed: {e}")
             return JSONResponse(
                 {"status": "error", "error": str(e)},
                 status_code=500
             )
 
     return app
+
+
+async def _add_coordinates_to_metadata(
+    frame_meta: dict[str, object],
+    capture_time: "datetime.datetime",
+) -> None:
+    """Add telescope coordinates and environmental data to frame metadata.
+    
+    Reads sensor for ALT/AZ position, converts to RA/Dec, and adds to metadata.
+    Logs warnings if sensor unavailable but does not raise exceptions.
+    
+    Args:
+        frame_meta: Frame metadata dict to update (modified in place).
+        capture_time: Timestamp for coordinate calculation.
+    """
+    import datetime
+    
+    logger.info(
+        "Checking sensor for coordinates",
+        sensor_exists=_sensor is not None,
+        sensor_connected=_sensor.connected if _sensor else False,
+    )
+    if _sensor is None:
+        logger.warning(
+            "No sensor available for frame coordinates - sensor not initialized"
+        )
+    elif not _sensor.connected:
+        logger.warning(
+            "Sensor not connected for frame coordinates",
+            sensor_type=type(_sensor).__name__,
+        )
+    else:
+        try:
+            reading = await _sensor.read()
+            logger.debug(
+                "Sensor reading obtained",
+                altitude=reading.altitude,
+                azimuth=reading.azimuth,
+                temperature=reading.temperature,
+            )
+            
+            # Get observer location from config
+            config = get_factory().config
+            location = config.location
+            lat = location.get("lat", 30.2672)
+            lon = location.get("lon", -97.7431)
+            elevation = location.get("alt", 0.0)
+            
+            # Convert ALT/AZ to RA/Dec
+            equatorial = altaz_to_radec(
+                altitude=reading.altitude,
+                azimuth=reading.azimuth,
+                lat=lat,
+                lon=lon,
+                elevation=elevation,
+                obstime=capture_time,
+            )
+            
+            # Add coordinates to frame metadata
+            frame_meta["coordinates"] = {
+                "altitude": reading.altitude,
+                "azimuth": reading.azimuth,
+                "ra": equatorial["ra"],
+                "dec": equatorial["dec"],
+                "ra_hours": equatorial["ra_hours"],
+                "ra_hms": equatorial["ra_hms"],
+                "dec_dms": equatorial["dec_dms"],
+                "temperature": reading.temperature,
+                "humidity": reading.humidity,
+                "coordinate_source": "sensor",
+                "coordinate_timestamp": capture_time.isoformat(),
+            }
+            logger.info(
+                "Added coordinates to frame metadata",
+                ra=equatorial["ra_hms"],
+                dec=equatorial["dec_dms"],
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to read sensor for frame coordinates",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+
+
+async def _save_frame_to_asdf(
+    filepath: "Path",
+    camera_key: str,
+    frame_type: str,
+    img: np.ndarray,
+    frame_meta: dict[str, object],
+    info: dict[str, object],
+) -> int:
+    """Save frame to ASDF session archive.
+    
+    Creates or updates session ASDF file with the captured frame.
+    Handles both new file creation and appending to existing files.
+    
+    Args:
+        filepath: Path to ASDF file.
+        camera_key: Camera identifier ("finder" or "main").
+        frame_type: Frame type ("light", "dark", "flat", "bias").
+        img: Image data as numpy array.
+        frame_meta: Frame metadata dict.
+        info: Camera info dict from get_camera_property().
+    
+    Returns:
+        Frame index within the frame_type list.
+    """
+    import datetime
+    from pathlib import Path
+    
+    import asdf
+    
+    width = frame_meta.get("width", img.shape[1] if len(img.shape) > 1 else 0)
+    height = frame_meta.get("height", img.shape[0])
+    is_color = frame_meta.get("is_color", False)
+    
+    if filepath.exists():
+        with asdf.open(str(filepath), mode="rw") as af:
+            # Ensure camera section exists
+            if "cameras" not in af.tree:
+                af.tree["cameras"] = {}
+            if camera_key not in af.tree["cameras"]:
+                af.tree["cameras"][camera_key] = {
+                    "info": {
+                        "name": info.get("Name", f"Camera {camera_key}"),
+                        "sensor_width": width,
+                        "sensor_height": height,
+                        "is_color": is_color,
+                        "bayer_pattern": frame_meta.get("bayer_pattern"),
+                    },
+                    "light": [],
+                    "dark": [],
+                    "flat": [],
+                    "bias": [],
+                }
+            
+            # Add frame
+            af.tree["cameras"][camera_key][frame_type].append({
+                "data": img.copy(),
+                "meta": frame_meta,
+            })
+            frame_index = len(af.tree["cameras"][camera_key][frame_type]) - 1
+            af.update()
+    else:
+        # Create new session ASDF archive
+        capture_time = datetime.datetime.now(datetime.UTC)
+        date_str = datetime.datetime.now().strftime("%Y%m%d")
+        
+        tree = {
+            "metadata": {
+                "created": capture_time.isoformat(),
+                "session_date": date_str,
+                "format_version": "1.0",
+            },
+            "cameras": {
+                camera_key: {
+                    "info": {
+                        "name": info.get("Name", f"Camera {camera_key}"),
+                        "sensor_width": width,
+                        "sensor_height": height,
+                        "is_color": is_color,
+                        "bayer_pattern": frame_meta.get("bayer_pattern"),
+                    },
+                    "light": [],
+                    "dark": [],
+                    "flat": [],
+                    "bias": [],
+                }
+            },
+        }
+        # Add the first frame
+        tree["cameras"][camera_key][frame_type].append({
+            "data": img.copy(),
+            "meta": frame_meta,
+        })
+        frame_index = 0
+        
+        af = asdf.AsdfFile(tree)
+        af.write_to(str(filepath))
+    
+    return frame_index
 
 
 async def _generate_camera_stream(
@@ -1546,16 +1646,23 @@ async def _generate_camera_stream(
         camera.set_control_value(asi.ASI_EXPOSURE, exp)
         camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, 80)  # USB bandwidth
         
-        # Use RGB24 for color cameras (debayered), RAW8 for mono
+        # Finder camera (0): Use RAW16 for maximum quality, no mode switch for capture
+        # Main camera (1): Use RGB24 for color preview (debayered by SDK)
         is_color = info.get("IsColorCam", False)
-        if is_color:
-            camera.set_roi(width=width, height=height, bins=1, image_type=asi.ASI_IMG_RGB24)
-            channels = 3
-            buffer_size = width * height * 3
-        else:
-            camera.set_roi(width=width, height=height, bins=1, image_type=asi.ASI_IMG_RAW8)
+        if camera_id == 0:
+            # Finder: RAW16 mode - grayscale preview, but capture-ready
+            camera.set_roi(width=width, height=height, bins=1, image_type=asi.ASI_IMG_RAW16)
+            dtype = np.uint16
             channels = 1
-            buffer_size = width * height
+            buffer_size = width * height * 2  # 16-bit = 2 bytes per pixel
+            logger.info(f"Finder camera using RAW16 mode for capture-ready streaming")
+        else:
+            # Main camera: RAW16 for maximum quality, grayscale preview
+            camera.set_roi(width=width, height=height, bins=1, image_type=asi.ASI_IMG_RAW16)
+            dtype = np.uint16
+            channels = 1
+            buffer_size = width * height * 2  # 16-bit = 2 bytes per pixel
+            logger.info(f"Main camera using RAW16 mode for capture-ready streaming")
         
         # Pre-allocate frame buffer (required for full-frame capture)
         frame_buffer = bytearray(buffer_size)
@@ -1582,7 +1689,7 @@ async def _generate_camera_stream(
         ):  # pragma: no cover - infinite loop
             try:
                 # Capture video frame into buffer (timeout in ms)
-                # Use 2x exposure + 2 seconds margin for RGB24 debayering overhead
+                # Use 2x exposure + 2 seconds margin for processing overhead
                 timeout_ms = max(int(exp / 1000) * 2 + 2000, 3000)
                 
                 # Run blocking capture in executor to not block event loop
@@ -1595,16 +1702,25 @@ async def _generate_camera_stream(
                 
                 frame_count += 1
 
-                # Reshape to image (RGB24 for color, grayscale for mono)
-                if channels == 3:
-                    img = np.frombuffer(frame_buffer, dtype=np.uint8).reshape(
-                        (height, width, 3)
-                    )
-                    # RGB24 from ASI SDK is actually BGR for OpenCV
-                else:
-                    img = np.frombuffer(frame_buffer, dtype=np.uint8).reshape((height, width))
+                # All cameras use RAW16 - reshape and convert for display
+                img_raw = np.frombuffer(frame_buffer, dtype=np.uint16).reshape((height, width))
+                
+                # Store RAW16 frame for capture (before any processing)
+                # Both cameras can grab from stream without mode switch
+                _latest_frames[camera_id] = img_raw.copy()
+                _latest_frame_info[camera_id] = {
+                    "width": width,
+                    "height": height,
+                    "dtype": "uint16",
+                    "is_color": is_color,
+                    "exposure_us": exp,
+                    "gain": g,
+                }
+                
+                # Convert to 8-bit for display (scale 16-bit to 8-bit)
+                img = (img_raw >> 8).astype(np.uint8)
 
-                # Apply auto-stretch for visibility (per-channel for color)
+                # Apply auto-stretch for visibility
                 if img.max() > img.min():
                     # Use float arithmetic then convert back to uint8
                     img = (((img.astype(np.float32) - img.min()) * 255.0) / (img.max() - img.min())).astype(

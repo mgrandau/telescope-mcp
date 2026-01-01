@@ -425,9 +425,18 @@ class ArduinoSensorInstance:
                     self._last_update = datetime.now(UTC)
                 return True
 
-        except (ValueError, UnicodeDecodeError):
-            pass  # Skip malformed lines
+        except (ValueError, UnicodeDecodeError) as e:
+            logger.debug("Parse error", error=str(e), line_preview=line[:50])
+            return False
 
+        # Log when we get data but wrong field count
+        if len(values) not in (_FULL_FORMAT_FIELDS, _LEGACY_FORMAT_FIELDS):
+            logger.debug(
+                "Unexpected field count",
+                field_count=len(values),
+                expected=f"{_FULL_FORMAT_FIELDS} or {_LEGACY_FORMAT_FIELDS}",
+                line_preview=line[:50],
+            )
         return False
 
     def _read_loop(self) -> None:
@@ -458,13 +467,27 @@ class ArduinoSensorInstance:
             >>> # Started internally by _start_reader()
             >>> # Thread runs: instance._read_loop()
         """
+        logger.info("Sensor reader thread started", port=self._port)
+        lines_read = 0
         while not self._stop_reading and self._is_open:
             try:
-                line = self._serial.read_until(b"\r\n").decode().strip()
-                self._parse_line(line)
+                raw_bytes = self._serial.read_until(b"\r\n")
+                line = raw_bytes.decode().strip()
+                lines_read += 1
+                if lines_read <= 5 or lines_read % 100 == 0:
+                    logger.info(
+                        "Serial data received",
+                        line_num=lines_read,
+                        raw_len=len(raw_bytes),
+                        line_preview=line[:80] if line else "<empty>",
+                    )
+                parsed = self._parse_line(line)
+                if parsed and lines_read <= 5:
+                    logger.info("Successfully parsed sensor data", line_num=lines_read)
             except Exception as e:
                 if self._is_open:
-                    logger.warning("Sensor read error", error=str(e))
+                    logger.warning("Sensor read error", error=str(e), line_num=lines_read)
+        logger.info("Sensor reader thread stopped", lines_read=lines_read)
 
     def get_info(self) -> SensorInfo:
         """Get Arduino sensor hardware information and capabilities.
@@ -1240,7 +1263,9 @@ class ArduinoSensorDriver:
         for i, port in enumerate(ports):
             # Check for Arduino-like devices
             desc = port.description.lower()
-            if any(x in desc for x in ["arduino", "acm", "usb serial", "ch340"]):
+            device = port.device.lower()
+            # Match by description OR by device name (ACM ports)
+            if any(x in desc for x in ["arduino", "nano", "ble", "usb serial", "ch340"]) or "acm" in device:
                 sensors.append(
                     AvailableSensor(
                         id=i,

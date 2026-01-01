@@ -23,19 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
     speedSlider.addEventListener('input', () => {
         speedValue.textContent = speedSlider.value;
     });
-
-    // Color temperature sliders - update display value
-    const finderTemp = document.getElementById('finder-temp');
-    const finderTempValue = document.getElementById('finder-temp-value');
-    finderTemp.addEventListener('input', () => {
-        finderTempValue.textContent = finderTemp.value + 'K';
-    });
-
-    const mainTemp = document.getElementById('main-temp');
-    const mainTempValue = document.getElementById('main-temp-value');
-    mainTemp.addEventListener('input', () => {
-        mainTempValue.textContent = mainTemp.value + 'K';
-    });
 });
 
 function updateStatus(state, message) {
@@ -213,52 +200,23 @@ async function gotoPosition() {
     }
 }
 
-// Convert color temperature (K) to WB_R and WB_B values
-// 3000K = warm (more red), 10000K = cool (more blue), 6500K = neutral
-function tempToWhiteBalance(tempK) {
-    // Map 3000-10000K to WB values (ASI range typically 1-99)
-    // At 6500K: neutral (WB_R=50, WB_B=50)
-    // At 3000K: warm (WB_R=90, WB_B=20)
-    // At 10000K: cool (WB_R=20, WB_B=90)
-    const neutral = 6500;
-    const range = 3500; // Half the temp range
-    const wbRange = 35;  // How much WB changes from neutral
-    
-    const offset = (tempK - neutral) / range * wbRange;
-    const wbR = Math.round(50 - offset);  // Warmer = more red
-    const wbB = Math.round(50 + offset);  // Cooler = more blue
-    
-    return {
-        wbR: Math.max(1, Math.min(99, wbR)),
-        wbB: Math.max(1, Math.min(99, wbB))
-    };
-}
-
-// Camera controls
+// Camera controls - exposure and gain only (RAW16 mode, no color)
 async function updateFinderSettings() {
     const exposure = document.getElementById('finder-exposure').value;
     const gain = document.getElementById('finder-gain').value;
-    const temp = document.getElementById('finder-temp').value;
-    const wb = tempToWhiteBalance(parseInt(temp));
     
     // Finder exposure is in seconds, convert to microseconds
     await setCameraControl(0, 'ASI_EXPOSURE', exposure * 1000000);
     await setCameraControl(0, 'ASI_GAIN', gain);
-    await setCameraControl(0, 'ASI_WB_R', wb.wbR);
-    await setCameraControl(0, 'ASI_WB_B', wb.wbB);
 }
 
 async function updateMainSettings() {
     const exposure = document.getElementById('main-exposure').value;
     const gain = document.getElementById('main-gain').value;
-    const temp = document.getElementById('main-temp').value;
-    const wb = tempToWhiteBalance(parseInt(temp));
     
     // Main exposure is in milliseconds, convert to microseconds
     await setCameraControl(1, 'ASI_EXPOSURE', exposure * 1000);
     await setCameraControl(1, 'ASI_GAIN', gain);
-    await setCameraControl(1, 'ASI_WB_R', wb.wbR);
-    await setCameraControl(1, 'ASI_WB_B', wb.wbB);
 }
 
 async function setCameraControl(cameraId, control, value) {

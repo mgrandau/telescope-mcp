@@ -55,6 +55,40 @@ class ControlInfo(TypedDict):
     value: int
 
 
+class CaptureCoordinates(TypedDict, total=False):
+    """Telescope pointing and environmental data captured at frame acquisition.
+
+    Contains horizontal (ALT/AZ), equatorial (RA/Dec) coordinates, and
+    environmental conditions for precise metadata. Automatically injected
+    into frame metadata when a CoordinateProvider is configured.
+
+    Attributes:
+        altitude: Altitude in degrees above horizon (0-90).
+        azimuth: Azimuth in degrees clockwise from north (0-360).
+        ra: Right Ascension in degrees (0-360).
+        dec: Declination in degrees (-90 to +90).
+        ra_hours: Right Ascension in hours (0-24).
+        ra_hms: RA formatted as "12h 34m 56.7s".
+        dec_dms: Dec formatted as "+23° 45' 12.3\"".
+        temperature: Ambient temperature in Celsius from sensor.
+        humidity: Relative humidity in %RH from sensor.
+        coordinate_source: Source of coordinates (e.g., "sensor", "encoder").
+        coordinate_timestamp: ISO timestamp when coordinates were captured.
+    """
+
+    altitude: float
+    azimuth: float
+    ra: float
+    dec: float
+    ra_hours: float
+    ra_hms: str
+    dec_dms: str
+    temperature: float
+    humidity: float
+    coordinate_source: str
+    coordinate_timestamp: str
+
+
 # Module logger
 logger = get_logger(__name__)
 
@@ -410,6 +444,92 @@ class NullRecoveryStrategy:
             >>> assert recovery.attempt_recovery(0) is False
         """
         return False
+
+
+@runtime_checkable
+class CoordinateProvider(Protocol):  # pragma: no cover
+    """Protocol for providing telescope coordinates at capture time.
+
+    Implement this to inject telescope pointing coordinates (ALT/AZ + RA/Dec)
+    into every frame captured. Coordinates are read at capture time and
+    automatically added to CaptureResult.metadata.
+
+    Business context: Essential for astrophotography where each frame needs
+    precise positional metadata for plate solving, stacking alignment, and
+    observation logging. Decouples coordinate acquisition (sensors, encoders)
+    from camera capture logic.
+
+    Example:
+        class SensorCoordinateProvider:
+            def __init__(self, sensor, lat, lon):
+                self.sensor = sensor
+                self.lat = lat
+                self.lon = lon
+
+            def get_coordinates(self) -> CaptureCoordinates | None:
+                reading = self.sensor.read_sync()
+                equatorial = altaz_to_radec(
+                    reading.altitude, reading.azimuth,
+                    lat=self.lat, lon=self.lon
+                )
+                return CaptureCoordinates(
+                    altitude=reading.altitude,
+                    azimuth=reading.azimuth,
+                    ra=equatorial["ra"],
+                    dec=equatorial["dec"],
+                    ...
+                )
+
+        camera = Camera(driver, config, coordinate_provider=provider)
+    """
+
+    def get_coordinates(self) -> CaptureCoordinates | None:
+        """Get current telescope pointing coordinates.
+
+        Called at capture time to read current telescope position and convert
+        to both horizontal (ALT/AZ) and equatorial (RA/Dec) coordinates.
+        Return None if coordinates unavailable (sensor error, not calibrated).
+
+        Business context: Enables automatic coordinate injection into every
+        captured frame. Coordinates are captured at the moment of exposure,
+        ensuring accurate positional metadata even during tracking.
+
+        Returns:
+            CaptureCoordinates dict with altitude, azimuth, ra, dec, and
+            formatted strings. None if coordinates unavailable.
+
+        Raises:
+            None. Should catch all exceptions and return None on failure.
+
+        Example:
+            >>> coords = provider.get_coordinates()
+            >>> if coords:
+            ...     print(f"RA: {coords['ra_hms']}, Dec: {coords['dec_dms']}")
+        """
+        ...
+
+
+class NullCoordinateProvider:
+    """No-op coordinate provider (returns None).
+
+    Default implementation when no coordinate provider is configured.
+    Follows null object pattern - Camera can always call get_coordinates()
+    without null checks.
+    """
+
+    def get_coordinates(self) -> CaptureCoordinates | None:
+        """Return None (no coordinates available).
+
+        No-op implementation of CoordinateProvider protocol. Used as default
+        when no sensor or encoder is configured for coordinates.
+
+        Returns:
+            Always None, indicating no coordinates available.
+
+        Raises:
+            None. This implementation never raises.
+        """
+        return None
 
 
 # --- Configuration Dataclasses ---
@@ -824,6 +944,7 @@ class Camera:
         hooks: CameraHooks | None = None,
         recovery: RecoveryStrategy | None = None,
         stats: CameraStats | None = None,
+        coordinate_provider: CoordinateProvider | None = None,
     ) -> None:
         """Create camera with injected dependencies.
 
@@ -845,6 +966,10 @@ class Camera:
                 NullRecoveryStrategy).
             stats: Camera statistics collector for metrics (default: creates
                 new CameraStats).
+            coordinate_provider: Provider for telescope pointing coordinates
+                (default: NullCoordinateProvider). When provided, coordinates
+                (ALT/AZ and RA/Dec) are automatically captured at frame
+                acquisition time and included in CaptureResult.metadata.
 
         Returns:
             None. Initializes internal state without connecting to hardware.
@@ -861,14 +986,16 @@ class Camera:
             # Basic usage
             camera = Camera(driver, config)
 
-            # With dependencies (including shared stats)
+            # With dependencies (including coordinate injection)
             stats = CameraStats()
+            coord_provider = SensorCoordinateProvider(sensor, lat=30.27, lon=-97.74)
             camera = Camera(
                 driver,
                 config,
                 renderer=CrosshairRenderer(),
                 hooks=CameraHooks(on_capture=log_capture),
                 stats=stats,
+                coordinate_provider=coord_provider,
             )
         """
         self._driver = driver
@@ -878,6 +1005,9 @@ class Camera:
         self._hooks = hooks or CameraHooks()
         self._recovery = recovery or NullRecoveryStrategy()
         self._stats: CameraStats | None = stats  # Explicitly optional
+        self._coordinate_provider: CoordinateProvider = (
+            coordinate_provider or NullCoordinateProvider()
+        )
 
         self._instance: CameraInstance | None = None
         self._info: CameraInfo | None = None
@@ -1308,14 +1438,18 @@ class Camera:
         duration_ms: float,
         extra_metadata: dict[str, Any] | None = None,
     ) -> CaptureResult:
-        """Build CaptureResult with standard metadata.
+        """Build CaptureResult with standard metadata and coordinates.
 
         Factory method constructing CaptureResult with consistent metadata
         structure. Centralizes result creation for uniform capture responses.
+        Automatically injects telescope coordinates when CoordinateProvider
+        is configured.
 
         Business context: Consistent metadata structure enables downstream
         processing (ASDF storage, analysis pipelines) to rely on standard
-        fields. Camera name, ID, and timing are always present.
+        fields. Camera name, ID, timing, and coordinates are always present
+        when available. Coordinate injection happens at capture time for
+        accurate positional metadata.
 
         Args:
             image_data: Captured image as JPEG bytes.
@@ -1329,7 +1463,8 @@ class Camera:
         Returns:
             CaptureResult with image data, timestamp, settings, dimensions,
             and metadata dict containing camera_id, camera_name,
-            capture_duration_ms, plus any extra_metadata.
+            capture_duration_ms, coordinates (if available), plus any
+            extra_metadata.
 
         Raises:
             None. Always succeeds given valid inputs.
@@ -1339,14 +1474,22 @@ class Camera:
             ...     jpeg_bytes, 100_000, 50, 150.5, {"recovered": True}
             ... )
             >>> assert result.metadata["recovered"] is True
+            >>> # With coordinate provider configured:
+            >>> assert "ra" in result.metadata.get("coordinates", {})
         """
         camera_id = self._config.camera_id
-        metadata = {
+        metadata: dict[str, Any] = {
             "camera_id": camera_id,
             "camera_name": self._config.name
             or (self._info.name if self._info else "Unknown"),
             "capture_duration_ms": round(duration_ms, 1),
         }
+
+        # Inject coordinates if provider configured
+        coordinates = self._coordinate_provider.get_coordinates()
+        if coordinates:
+            metadata["coordinates"] = dict(coordinates)
+
         if extra_metadata:
             metadata.update(extra_metadata)
 

@@ -40,6 +40,7 @@ from telescope_mcp.devices.camera import (
     CameraHooks,
     CameraInfo,
     Clock,
+    CoordinateProvider,
     OverlayRenderer,
     SystemClock,
 )
@@ -216,6 +217,7 @@ class CameraRegistry:
         renderer: OverlayRenderer | None = None,
         clock: Clock | None = None,
         hooks: CameraHooks | None = None,
+        coordinate_provider: CoordinateProvider | None = None,
     ) -> None:
         """Create registry with driver and optional dependencies.
 
@@ -232,6 +234,9 @@ class CameraRegistry:
             renderer: Overlay renderer passed to created cameras.
             clock: Clock for timing (default: SystemClock).
             hooks: Event hooks passed to created cameras.
+            coordinate_provider: Provider for telescope pointing coordinates
+                passed to created cameras. When provided, coordinates are
+                automatically injected into every CaptureResult.
 
         Returns:
             None. Registry initialized, ready for discover().
@@ -250,6 +255,7 @@ class CameraRegistry:
         self._renderer = renderer
         self._clock = clock or SystemClock()
         self._hooks = hooks
+        self._coordinate_provider = coordinate_provider
 
         self._cameras: dict[int, Camera] = {}
         self._discovery_cache: dict[int, CameraInfo] | None = None
@@ -389,6 +395,7 @@ class CameraRegistry:
                 clock=self._clock,
                 hooks=self._hooks,
                 recovery=self._recovery_strategy,
+                coordinate_provider=self._coordinate_provider,
             )
 
             self._cameras[camera_id] = camera
@@ -697,6 +704,7 @@ def init_registry(
     renderer: OverlayRenderer | None = None,
     clock: Clock | None = None,
     hooks: CameraHooks | None = None,
+    coordinate_provider: CoordinateProvider | None = None,
 ) -> CameraRegistry:
     """Initialize the default module-level camera registry singleton.
 
@@ -727,6 +735,9 @@ def init_registry(
             SystemClock (time.monotonic/sleep). Inject MockClock for testing.
         hooks: Optional event hooks (on_connect, on_capture, etc.) applied to
             all cameras. Useful for centralized logging/metrics.
+        coordinate_provider: Optional provider for telescope pointing coordinates.
+            When provided, coordinates (ALT/AZ and RA/Dec) are automatically
+            injected into every CaptureResult from all cameras.
 
     Returns:
         The initialized CameraRegistry instance. Same instance returned by
@@ -755,7 +766,9 @@ def init_registry(
         ...     return camera.capture()
     """
     global _default_registry
-    _default_registry = CameraRegistry(driver, renderer, clock, hooks)
+    _default_registry = CameraRegistry(
+        driver, renderer, clock, hooks, coordinate_provider
+    )
     return _default_registry
 
 

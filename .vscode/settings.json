@@ -18,6 +18,11 @@
             "pythonEnvPath": "${workspaceFolder}/.venv",
             "envManager": "ms-python.python:venv",
             "packageManager": "ms-python.python:pip"
+        },
+        {
+            "path": "data/fits_export",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
         }
     ],
     "cSpell.words": [

@@ -71,6 +71,7 @@ class TestDevicesExports:
             "camera",
             "camera_controller",
             "camera_registry",
+            "coordinate_provider",
             "sensor",
         }
         allowed.update(expected_submodules)
@@ -102,8 +103,8 @@ class TestDevicesExports:
             accurately reflect implementation.
         """
         assert (
-            len(devices.__all__) == 30
-        ), f"Expected 30 exports (per comment), got {len(devices.__all__)}"
+            len(devices.__all__) == 35
+        ), f"Expected 35 exports (per comment), got {len(devices.__all__)}"
 
     def test_export_categories(self) -> None:
         """Verifies expected symbols exist in each export category.
