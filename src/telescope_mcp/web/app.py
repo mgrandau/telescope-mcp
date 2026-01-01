@@ -52,10 +52,20 @@ _sensor: Sensor | None = None
 # Image encoder (injectable for testing)
 _encoder: ImageEncoder | None = None
 
-# Default settings
-DEFAULT_EXPOSURE_US = 100_000  # 100ms
+# Default settings (per-camera)
+# Finder camera (0): Long exposures for wide-field, up to ~180 seconds
+DEFAULT_FINDER_EXPOSURE_US = 1_000_000  # 1 second (quick startup, user can increase)
+# Main camera (1): Short exposures for high-res, ~300ms typical
+DEFAULT_MAIN_EXPOSURE_US = 300_000  # 300ms
 DEFAULT_GAIN = 50
 DEFAULT_FPS = 15
+
+
+def _get_default_exposure(camera_id: int) -> int:
+    """Get default exposure for a camera in microseconds."""
+    if camera_id == 0:
+        return DEFAULT_FINDER_EXPOSURE_US
+    return DEFAULT_MAIN_EXPOSURE_US
 
 
 def _init_sdk() -> None:
@@ -99,7 +109,7 @@ def _init_sdk() -> None:
             logger.warning(f"ASI SDK init failed (no cameras?): {e}")
 
 
-def _get_camera(camera_id: int) -> asi.Camera | None:
+def _get_camera(camera_id: int, force_reopen: bool = False) -> asi.Camera | None:
     """Get or lazily open a camera instance by ID.
 
     Manages the camera connection lifecycle, opening cameras on first
@@ -112,6 +122,7 @@ def _get_camera(camera_id: int) -> asi.Camera | None:
     Args:
         camera_id: Zero-based camera index (0=finder, 1=main imaging).
             Must be less than the number of connected cameras.
+        force_reopen: If True, close and reopen the camera to reset state.
 
     Returns:
         asi.Camera instance if available, None if camera not found or
@@ -125,6 +136,19 @@ def _get_camera(camera_id: int) -> asi.Camera | None:
         >>> if camera:
         ...     info = camera.get_camera_property()
     """
+    # Force reopen if requested (resets camera state)
+    if force_reopen and camera_id in _cameras:
+        try:
+            old_camera = _cameras.pop(camera_id)
+            try:
+                old_camera.stop_video_capture()
+            except Exception:
+                pass
+            old_camera.close()
+            logger.info(f"Closed camera {camera_id} for reopen")
+        except Exception as e:
+            logger.warning(f"Error closing camera {camera_id}: {e}")
+    
     if camera_id not in _cameras:
         try:
             _init_sdk()
@@ -136,7 +160,7 @@ def _get_camera(camera_id: int) -> asi.Camera | None:
             _cameras[camera_id] = camera
             _camera_streaming[camera_id] = False
             _camera_settings[camera_id] = {
-                "exposure_us": DEFAULT_EXPOSURE_US,
+                "exposure_us": _get_default_exposure(camera_id),
                 "gain": DEFAULT_GAIN,
             }
             logger.info(f"Opened camera {camera_id}")
@@ -1235,9 +1259,9 @@ async def _generate_camera_stream(
             enumeration order. If camera not found, yields single error frame
             then returns (HTTP 200 with error image).
         exposure_us: Exposure time in microseconds (controls brightness). None
-            uses stored settings from _camera_settings dict or
-            DEFAULT_EXPOSURE_US (100000 = 0.1 s). Typical range: finder
-            10000-100000 (10-100 ms), main 100000-10000000 (0.1-10 s).
+            uses stored settings from _camera_settings dict or per-camera
+            defaults (finder: 10s, main: 300ms). Finder supports up to ~180s,
+            main typically 10-5000ms.
         gain: Gain value (amplification). None uses stored settings or
             DEFAULT_GAIN (50). Range 0-600 (camera-dependent). Higher gain =
             brighter but more noise.
@@ -1273,7 +1297,8 @@ async def _generate_camera_stream(
         >>> # Browser: <img src="http://localhost:8000/stream/0">
         >>> # Displays live video until page closed or stream stopped
     """
-    camera = _get_camera(camera_id)
+    # Force reopen camera to ensure clean state for streaming
+    camera = _get_camera(camera_id, force_reopen=True)
     if camera is None:
         # Yield error frame
         error_img = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -1301,7 +1326,7 @@ async def _generate_camera_stream(
         exp = (
             exposure_us
             if exposure_us is not None
-            else settings.get("exposure_us", DEFAULT_EXPOSURE_US)
+            else settings.get("exposure_us", _get_default_exposure(camera_id))
         )
         g = gain if gain is not None else settings.get("gain", DEFAULT_GAIN)
 
@@ -1309,32 +1334,69 @@ async def _generate_camera_stream(
         camera.set_control_value(asi.ASI_GAIN, g)
         camera.set_control_value(asi.ASI_EXPOSURE, exp)
         camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, 80)  # USB bandwidth
-        camera.set_image_type(asi.ASI_IMG_RAW8)
+        
+        # Use RGB24 for color cameras (debayered), RAW8 for mono
+        is_color = info.get("IsColorCam", False)
+        if is_color:
+            camera.set_roi(width=width, height=height, bins=1, image_type=asi.ASI_IMG_RGB24)
+            channels = 3
+            buffer_size = width * height * 3
+        else:
+            camera.set_roi(width=width, height=height, bins=1, image_type=asi.ASI_IMG_RAW8)
+            channels = 1
+            buffer_size = width * height
+        
+        # Pre-allocate frame buffer (required for full-frame capture)
+        frame_buffer = bytearray(buffer_size)
 
+        # Stop any existing video capture before starting new one
+        try:
+            camera.stop_video_capture()
+        except Exception:
+            pass  # May not have been capturing
+        
         # Start video capture
         camera.start_video_capture()
         _camera_streaming[camera_id] = True
         logger.info(
             f"Started video capture on camera {camera_id} "
-            f"({width}x{height}, exp={exp}us, gain={g})"
+            f"({width}x{height}, exp={exp}us, gain={g}, color={is_color})"
         )
 
         frame_interval = 1.0 / fps
+        frame_count = 0
 
         while _camera_streaming.get(
             camera_id, False
         ):  # pragma: no cover - infinite loop
             try:
-                # Capture video frame (timeout in ms)
-                timeout_ms = max(int(exp / 1000) + 500, 1000)
-                data = camera.capture_video_frame(timeout=timeout_ms)
+                # Capture video frame into buffer (timeout in ms)
+                # Use 2x exposure + 2 seconds margin for RGB24 debayering overhead
+                timeout_ms = max(int(exp / 1000) * 2 + 2000, 3000)
+                
+                # Run blocking capture in executor to not block event loop
+                # This allows other streams to process while waiting for long exposures
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: camera.capture_video_frame(buffer_=frame_buffer, timeout=timeout_ms)
+                )
+                
+                frame_count += 1
 
-                # Reshape to image
-                img = np.frombuffer(data, dtype=np.uint8).reshape((height, width))
+                # Reshape to image (RGB24 for color, grayscale for mono)
+                if channels == 3:
+                    img = np.frombuffer(frame_buffer, dtype=np.uint8).reshape(
+                        (height, width, 3)
+                    )
+                    # RGB24 from ASI SDK is actually BGR for OpenCV
+                else:
+                    img = np.frombuffer(frame_buffer, dtype=np.uint8).reshape((height, width))
 
-                # Apply auto-stretch for visibility
+                # Apply auto-stretch for visibility (per-channel for color)
                 if img.max() > img.min():
-                    img = ((img - img.min()) * 255 / (img.max() - img.min())).astype(
+                    # Use float arithmetic then convert back to uint8
+                    img = (((img.astype(np.float32) - img.min()) * 255.0) / (img.max() - img.min())).astype(
                         np.uint8
                     )
 

@@ -18,7 +18,7 @@
                 <h2>Finder Camera</h2>
                 <img id="finder-stream" src="/stream/finder" alt="Finder Camera">
                 <div class="camera-controls">
-                    <label>Exposure (ms): <input type="number" id="finder-exposure" value="500"></label>
+                    <label>Exposure (s): <input type="number" id="finder-exposure" value="1" min="0.1" max="180" step="0.1"></label>
                     <label>Gain: <input type="number" id="finder-gain" value="50"></label>
                     <button onclick="updateFinderSettings()">Apply</button>
                 </div>
@@ -28,8 +28,8 @@
                 <h2>Main Camera</h2>
                 <img id="main-stream" src="/stream/main" alt="Main Camera">
                 <div class="camera-controls">
-                    <label>Exposure (ms): <input type="number" id="main-exposure" value="2000"></label>
-                    <label>Gain: <input type="number" id="main-gain" value="80"></label>
+                    <label>Exposure (ms): <input type="number" id="main-exposure" value="300" min="1" max="10000" step="10"></label>
+                    <label>Gain: <input type="number" id="main-gain" value="50"></label>
                     <button onclick="updateMainSettings()">Apply</button>
                 </div>
             </div>

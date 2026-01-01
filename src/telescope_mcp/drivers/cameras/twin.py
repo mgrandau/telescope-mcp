@@ -119,19 +119,25 @@ class TwinCameraInfo(TypedDict, total=False):
 class ControlInfo(TypedDict):
     """Camera control definition returned by get_controls().
 
+    Note: Values are C long integers matching the ASI SDK. Range varies by
+    camera model - always query get_controls() for the actual limits.
+    Example ranges for Gain:
+    - ASI120MC-S: 0-510
+    - ASI482MC: 0-570
+
     Keys:
         Name: Control name.
-        MinValue: Minimum allowed value.
-        MaxValue: Maximum allowed value.
-        DefaultValue: Factory default value.
+        MinValue: Minimum allowed value (C long, camera-specific).
+        MaxValue: Maximum allowed value (C long, camera-specific).
+        DefaultValue: Factory default value (C long, camera-specific).
         IsAutoSupported: True if auto mode available.
         IsWritable: True if control can be modified.
     """
 
     Name: str
-    MinValue: int
-    MaxValue: int
-    DefaultValue: int
+    MinValue: int  # C long from SDK
+    MaxValue: int  # C long from SDK
+    DefaultValue: int  # C long from SDK
     IsAutoSupported: bool
     IsWritable: bool
 
@@ -139,12 +145,15 @@ class ControlInfo(TypedDict):
 class ControlValue(TypedDict):
     """Current control state returned by get_control() and set_control().
 
+    Note: Value is a C long integer matching the ASI SDK. Range is
+    camera-specific - query get_controls() for valid min/max.
+
     Keys:
-        value: Current control value.
+        value: Current control value (C long, camera-specific range).
         auto: True if auto mode is enabled.
     """
 
-    value: int
+    value: int  # C long from SDK, camera-specific range
     auto: bool
 
 
@@ -171,13 +180,32 @@ _CROSSHAIR_RADIUS = 100
 # JPEG encoding quality (0-100)
 _DEFAULT_JPEG_QUALITY = 90
 
-# Control maximum values by partial name match
-_CONTROL_MAX_VALUES: dict[str, int] = {
-    "GAIN": 600,
-    "EXPOSURE": 60_000_000,  # 60 seconds in microseconds
-    "WB": 99,
-    "GAMMA": 100,
-    "TEMPERATURE": 1000,  # 100.0°C
+# Default control ranges matching typical ASI cameras
+# Note: Real cameras have model-specific ranges - these are reasonable defaults.
+# Use get_controls() to query actual ranges from camera hardware.
+_DEFAULT_CONTROL_RANGES: dict[str, tuple[int, int, int]] = {
+    # Control name: (min, max, default)
+    "Gain": (0, 510, 50),  # ASI120MC-S range; ASI482MC is 0-570
+    "Exposure": (1, 60_000_000, 100_000),  # 1µs to 60s, default 100ms
+    "WB_R": (1, 99, 52),
+    "WB_B": (1, 99, 95),
+    "Gamma": (1, 100, 50),
+    "Brightness": (1, 100, 50),
+    "Offset": (0, 255, 0),
+    "BandWidth": (40, 100, 80),
+    "Flip": (0, 3, 0),
+    "HighSpeedMode": (0, 1, 0),
+    "Temperature": (-500, 1000, 250),  # -50.0°C to 100.0°C, scaled by 10
+}
+
+# Camera-specific control overrides (gain varies significantly by model)
+_CAMERA_CONTROL_OVERRIDES: dict[str, dict[str, tuple[int, int, int]]] = {
+    "ASI120MC-S": {
+        "Gain": (0, 510, 50),  # ASI120MC-S actual range from SDK
+    },
+    "ASI482MC": {
+        "Gain": (0, 570, 50),  # ASI482MC actual range from SDK
+    },
 }
 
 # Default camera specifications (matching real ASI cameras)
@@ -638,9 +666,13 @@ class DigitalTwinCameraInstance:
 
         Returns control definitions matching the ASI SDK control format.
         Each control includes name, min/max values, default, and flags.
+        Ranges are camera-specific, matching real ASI hardware behavior.
+
         Business context: Enables testing control UI and validation logic
         without hardware. Ensures control range validation, slider bounds,
         and auto-mode toggles work correctly across different camera types.
+        The camera-specific ranges (e.g., Gain 0-510 for ASI120MC-S vs 0-570
+        for ASI482MC) match real SDK behavior.
 
         Args:
             None. Returns simulated control definitions.
@@ -648,7 +680,7 @@ class DigitalTwinCameraInstance:
         Returns:
             Dictionary mapping control names to their definitions.
             Each definition includes Name, MinValue, MaxValue, DefaultValue,
-            IsAutoSupported, and IsWritable.
+            IsAutoSupported, and IsWritable. Ranges are camera-model-specific.
 
         Raises:
             None. Always returns valid control definitions.
@@ -658,50 +690,57 @@ class DigitalTwinCameraInstance:
             >>> controls = twin.get_controls()
             >>> gain = controls['Gain']
             >>> print(f"Gain range: {gain['MinValue']}-{gain['MaxValue']}")
+            Gain range: 0-510  # ASI120MC-S
         """
-        return {
-            name: {
+        result = {}
+        for name in self._controls:
+            min_val, max_val, default_val = self._get_control_range(name)
+            result[name] = {
                 "Name": name,
-                "MinValue": 0,
-                "MaxValue": self._get_control_max(name),
-                "DefaultValue": 50,
+                "MinValue": min_val,
+                "MaxValue": max_val,
+                "DefaultValue": default_val,
                 "IsAutoSupported": name not in {"Temperature"},
                 "IsWritable": name not in {"Temperature"},
             }
-            for name in self._controls
-        }
+        return result
 
-    def _get_control_max(self, control: str) -> int:
-        """Get maximum value for a simulated control.
+    def _get_control_range(self, control: str) -> tuple[int, int, int]:
+        """Get (min, max, default) range for a control, with camera-specific overrides.
 
-        Returns appropriate maximum values based on control type to match
-        typical ASI camera specifications. Uses _CONTROL_MAX_VALUES dict
-        for data-driven lookup.
+        Returns control range matching real ASI camera behavior. Uses
+        camera-specific overrides when available (e.g., ASI120MC-S Gain 0-510),
+        otherwise falls back to default ranges.
 
-        Business context: Provides realistic control ranges for testing
-        validation logic. Ensures test code uses valid ranges that match
-        actual hardware capabilities.
+        Business context: Gain range varies significantly by camera model.
+        This ensures the digital twin accurately simulates each camera's
+        actual control limits, enabling proper testing of validation logic.
 
         Args:
             control: Control name (e.g., "Gain", "Exposure").
 
         Returns:
-            Maximum allowed value for the control (e.g., 600 for gain,
-            60000000 for exposure in microseconds).
-
-        Raises:
-            None. Returns 100 as default for unknown control types.
+            Tuple of (min_value, max_value, default_value) for the control.
+            Falls back to (0, 100, 50) for unknown controls.
 
         Example:
-            >>> twin = DigitalTwinCameraInstance(...)
-            >>> max_gain = twin._get_control_max("Gain")
-            >>> print(f"Max gain: {max_gain}")  # 600
+            >>> twin = DigitalTwinCameraInstance(0, {...}, config)  # ASI120MC-S
+            >>> min_g, max_g, def_g = twin._get_control_range("Gain")
+            >>> print(f"Gain: {min_g}-{max_g}, default {def_g}")
+            Gain: 0-510, default 50
         """
-        control_upper = control.upper()
-        for key, value in _CONTROL_MAX_VALUES.items():
-            if key in control_upper:
-                return value
-        return 100
+        # Check for camera-specific override
+        camera_name = self._info.get("Name", "")
+        for model_prefix, overrides in _CAMERA_CONTROL_OVERRIDES.items():
+            if model_prefix in camera_name and control in overrides:
+                return overrides[control]
+
+        # Fall back to default ranges
+        if control in _DEFAULT_CONTROL_RANGES:
+            return _DEFAULT_CONTROL_RANGES[control]
+
+        # Unknown control - return safe defaults
+        return (0, 100, 50)
 
     def set_control(self, control: str, value: int) -> dict[str, Any]:
         """Set a simulated camera control value for digital twin testing.

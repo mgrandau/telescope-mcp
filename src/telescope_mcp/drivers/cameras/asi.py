@@ -137,18 +137,22 @@ class CameraInfo(TypedDict, total=False):
 class ControlInfo(TypedDict):
     """Camera control definition returned by get_controls().
 
+    Note: Values are C long integers from the ASI SDK. On 64-bit Linux,
+    Python int handles these transparently. Range varies by camera model -
+    always query get_controls() for the actual min/max for each camera.
+
     Keys:
-        min_value: Minimum allowed value.
-        max_value: Maximum allowed value.
-        default_value: Factory default value.
+        min_value: Minimum allowed value (C long, camera-specific).
+        max_value: Maximum allowed value (C long, camera-specific).
+        default_value: Factory default value (C long, camera-specific).
         is_auto_supported: True if auto mode available.
         is_writable: True if control can be modified.
         description: Human-readable control description.
     """
 
-    min_value: int
-    max_value: int
-    default_value: int
+    min_value: int  # C long from SDK
+    max_value: int  # C long from SDK
+    default_value: int  # C long from SDK
     is_auto_supported: bool
     is_writable: bool
     description: str
@@ -157,14 +161,18 @@ class ControlInfo(TypedDict):
 class ControlValue(TypedDict):
     """Current control state returned by get_control() and set_control().
 
+    Note: Value is a C long integer from the ASI SDK. Range is camera-specific
+    (e.g., Gain may be 0-510 on ASI120MC-S but 0-600 on ASI482MC). Always
+    query get_controls() for valid ranges before setting values.
+
     Keys:
         control: Control name (e.g., "Gain", "Exposure").
-        value: Current control value.
+        value: Current control value (C long, camera-specific range).
         auto: True if auto mode is enabled.
     """
 
     control: str
-    value: int
+    value: int  # C long from SDK, camera-specific range
     auto: bool
 
 

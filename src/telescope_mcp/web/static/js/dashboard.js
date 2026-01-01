@@ -204,13 +204,15 @@ async function gotoPosition() {
 async function updateFinderSettings() {
     const exposure = document.getElementById('finder-exposure').value;
     const gain = document.getElementById('finder-gain').value;
-    await setCameraControl(0, 'ASI_EXPOSURE', exposure * 1000);
+    // Finder exposure is in seconds, convert to microseconds
+    await setCameraControl(0, 'ASI_EXPOSURE', exposure * 1000000);
     await setCameraControl(0, 'ASI_GAIN', gain);
 }
 
 async function updateMainSettings() {
     const exposure = document.getElementById('main-exposure').value;
     const gain = document.getElementById('main-gain').value;
+    // Main exposure is in milliseconds, convert to microseconds
     await setCameraControl(1, 'ASI_EXPOSURE', exposure * 1000);
     await setCameraControl(1, 'ASI_GAIN', gain);
 }
