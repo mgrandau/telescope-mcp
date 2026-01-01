@@ -1013,7 +1013,7 @@ class TestDigitalTwinCameraInstanceGetControlMax:
     def test_get_control_max_returns_specific_values(
         self, camera_info: CameraInfo
     ) -> None:
-        """Verify _get_control_max returns correct max for known controls.
+        """Verify _get_control_range returns correct ranges for known controls.
 
         Business context:
         Different controls have different valid ranges; max values
@@ -1023,25 +1023,25 @@ class TestDigitalTwinCameraInstanceGetControlMax:
         Create instance.
 
         Action:
-        Call _get_control_max for various controls.
+        Call _get_control_range for various controls.
 
         Assertion:
-        Returns expected max values per control type.
+        Returns expected (min, max, default) values per control type.
         """
         config = DigitalTwinConfig()
         instance = DigitalTwinCameraInstance(0, camera_info, config)
 
-        # Gain typically has higher max
-        gain_max = instance._get_control_max("Gain")
-        assert gain_max == 600
+        # Gain typically has max of 510 (ASI120MC-S default)
+        gain_min, gain_max, gain_default = instance._get_control_range("Gain")
+        assert gain_max == 510
 
         # Exposure max is 60 seconds (60,000,000 µs)
-        exp_max = instance._get_control_max("Exposure")
+        exp_min, exp_max, exp_default = instance._get_control_range("Exposure")
         assert exp_max == 60_000_000
 
-        # Unknown control returns default
-        unknown_max = instance._get_control_max("UNKNOWN_CONTROL")
-        assert unknown_max == 100
+        # Unknown control returns default range (0, 100, 50)
+        unk_min, unk_max, unk_default = instance._get_control_range("UNKNOWN_CONTROL")
+        assert unk_max == 100
 
 
 class TestDigitalTwinCameraInstanceSetControl:
