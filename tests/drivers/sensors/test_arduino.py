@@ -754,6 +754,45 @@ class TestLineParsing:
         result = arduino_instance._parse_line("0.5\t0.0\t0.87\t30.0\t0.0\t40.0\t22.5")
         assert result is False
 
+    def test_parse_wrong_field_count_logs_debug(
+        self, arduino_instance: ArduinoSensorInstance
+    ) -> None:
+        """Verifies wrong field count triggers debug logging.
+
+        Tests that invalid field counts log diagnostic information
+        to help troubleshoot serial communication issues.
+
+        Business context:
+        When field count is unexpected, debug logging provides
+        visibility into data corruption or protocol changes.
+        This aids troubleshooting without raising exceptions.
+
+        Arrangement:
+        1. Prepare data with 5 fields (invalid).
+        2. Patch logger to capture debug calls.
+
+        Action:
+        Call _parse_line() with invalid field count.
+
+        Assertion Strategy:
+        Validates diagnostic logging by confirming:
+        - logger.debug called with "Unexpected field count".
+        - Debug log includes field_count, expected, and line_preview.
+
+        Testing Principle:
+        Validates observability - debug logs aid troubleshooting.
+        """
+        with patch("telescope_mcp.drivers.sensors.arduino.logger") as mock_logger:
+            result = arduino_instance._parse_line("0.5\t0.0\t0.87\t30.0\t0.0")
+            assert result is False
+
+            # Verify debug logging was called
+            mock_logger.debug.assert_called()
+            call_args = mock_logger.debug.call_args
+            assert call_args[0][0] == "Unexpected field count"
+            assert call_args[1]["field_count"] == 5
+            assert "8 or 6" in call_args[1]["expected"]
+
     def test_parse_with_carriage_return(
         self, arduino_instance: ArduinoSensorInstance
     ) -> None:
@@ -4237,6 +4276,9 @@ class TestReadLoopErrorHandling:
             mock_serial, "/dev/test", start_reader=False
         )
         instance_ref.append(instance)
+
+        # Verify instance is open before running loop
+        assert instance._is_open is True
 
         # Patch logger to capture warning
         with patch("telescope_mcp.drivers.sensors.arduino.logger") as mock_logger:

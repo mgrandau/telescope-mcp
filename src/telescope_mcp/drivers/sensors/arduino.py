@@ -429,14 +429,13 @@ class ArduinoSensorInstance:
             logger.debug("Parse error", error=str(e), line_preview=line[:50])
             return False
 
-        # Log when we get data but wrong field count
-        if len(values) not in (_FULL_FORMAT_FIELDS, _LEGACY_FORMAT_FIELDS):
-            logger.debug(
-                "Unexpected field count",
-                field_count=len(values),
-                expected=f"{_FULL_FORMAT_FIELDS} or {_LEGACY_FORMAT_FIELDS}",
-                line_preview=line[:50],
-            )
+        # Reaching here means wrong field count (not 6 or 8)
+        logger.debug(
+            "Unexpected field count",
+            field_count=len(values),
+            expected=f"{_FULL_FORMAT_FIELDS} or {_LEGACY_FORMAT_FIELDS}",
+            line_preview=line[:50],
+        )
         return False
 
     def _read_loop(self) -> None:
