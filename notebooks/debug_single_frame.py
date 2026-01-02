@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Debug script: Capture single frame and save to disk for inspection."""
 
+from pathlib import Path
+
+import cv2
 import numpy as np
 import zwoasi as asi
-from pathlib import Path
-import cv2
 
 # Initialize SDK
 from telescope_mcp.drivers.asi_sdk import get_sdk_library_path
+
 sdk_path = get_sdk_library_path()
 asi.init(sdk_path)
 
@@ -26,9 +28,9 @@ print(f"Camera: {info['Name']}")
 print(f"Resolution: {info['MaxWidth']}x{info['MaxHeight']}")
 print(f"IsColorCam: {info['IsColorCam']}")
 
-width = info['MaxWidth']
-height = info['MaxHeight']
-is_color = info['IsColorCam']
+width = info["MaxWidth"]
+height = info["MaxHeight"]
+is_color = info["IsColorCam"]
 
 # Configure camera
 exposure_us = 100_000  # 100ms
@@ -49,8 +51,11 @@ try:
     camera.capture_video_frame(buffer_=buffer_raw8, timeout=2000)
     arr_raw8 = np.frombuffer(buffer_raw8, dtype=np.uint8)
     print(f"RAW8 data: {len(buffer_raw8)} bytes (expected {width*height})")
-    print(f"RAW8 stats: min={arr_raw8.min()}, max={arr_raw8.max()}, mean={arr_raw8.mean():.1f}")
-    
+    print(
+        f"RAW8 stats: min={arr_raw8.min()}, max={arr_raw8.max()}, "
+        f"mean={arr_raw8.mean():.1f}"
+    )
+
     img_raw8 = arr_raw8.reshape((height, width))
     cv2.imwrite(str(output_dir / "debug_raw8.png"), img_raw8)
     print(f"Saved: {output_dir}/debug_raw8.png")
@@ -65,8 +70,11 @@ try:
     camera.capture_video_frame(buffer_=buffer_rgb24, timeout=2000)
     arr_rgb24 = np.frombuffer(buffer_rgb24, dtype=np.uint8)
     print(f"RGB24 data: {len(buffer_rgb24)} bytes (expected {width*height*3})")
-    print(f"RGB24 stats: min={arr_rgb24.min()}, max={arr_rgb24.max()}, mean={arr_rgb24.mean():.1f}")
-    
+    print(
+        f"RGB24 stats: min={arr_rgb24.min()}, max={arr_rgb24.max()}, "
+        f"mean={arr_rgb24.mean():.1f}"
+    )
+
     img_rgb24 = arr_rgb24.reshape((height, width, 3))
     cv2.imwrite(str(output_dir / "debug_rgb24.png"), img_rgb24)
     print(f"Saved: {output_dir}/debug_rgb24.png")

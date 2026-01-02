@@ -192,8 +192,20 @@ class SensorReading:
     def __str__(self) -> str:
         """Return human-readable string representation.
 
+        Formats sensor reading for display, logging, and debugging.
+        Shows key orientation and environmental values in compact form.
+
+        Business context: Common in telescope control UI status displays
+        and log files. Provides at-a-glance orientation and conditions.
+
+        Args:
+            None
+
         Returns:
             Formatted string with altitude, azimuth, temp, and humidity.
+
+        Raises:
+            None
 
         Example:
             >>> print(reading)

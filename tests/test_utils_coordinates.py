@@ -293,6 +293,10 @@ class TestFormatRaHms:
         Arrangement: RA = 0.0 degrees.
         Action: Format to HMS.
         Assertion: Returns "00h 00m 00.0s".
+
+        Testing Principle:
+            Tests boundary condition at RA origin for astronomical coordinate
+            formatting.
         """
         result = format_ra_hms(0.0)
         assert result == "00h 00m 00.0s"
@@ -305,6 +309,9 @@ class TestFormatRaHms:
         Arrangement: RA = 90.0 degrees.
         Action: Format to HMS.
         Assertion: Returns "06h 00m 00.0s".
+
+        Testing Principle:
+            Tests exact degree-to-hour conversion at quarter-circle boundary.
         """
         result = format_ra_hms(90.0)
         assert result == "06h 00m 00.0s"
@@ -342,6 +349,9 @@ class TestFormatRaHms:
         Arrangement: RA = 450.0 degrees (= 90°).
         Action: Format to HMS.
         Assertion: Returns equivalent to 90° = 6h.
+
+        Testing Principle:
+            Tests modulo normalization for out-of-range input handling.
         """
         result = format_ra_hms(450.0)
         assert result.startswith("06h")
@@ -405,6 +415,9 @@ class TestFormatDecDms:
         Arrangement: Dec = 90.0 degrees.
         Action: Format to DMS.
         Assertion: Returns "+90° 00' 00.0\"".
+
+        Testing Principle:
+            Tests upper boundary condition for declination formatting at celestial pole.
         """
         result = format_dec_dms(90.0)
         assert result == "+90° 00' 00.0\""
@@ -417,6 +430,9 @@ class TestFormatDecDms:
         Arrangement: Dec = -90.0 degrees.
         Action: Format to DMS.
         Assertion: Returns "-90° 00' 00.0\"".
+
+        Testing Principle:
+            Tests lower boundary condition for declination formatting at celestial pole.
         """
         result = format_dec_dms(-90.0)
         assert result == "-90° 00' 00.0\""

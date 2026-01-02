@@ -102,7 +102,7 @@ bool initIMU() {
     // Just try to begin directly
     Serial.println("DEBUG: Calling IMU.begin()...");
     Serial.flush();
-    
+
     // IMU.begin() can hang if sensor is not responding
     if (!IMU.begin()) {
         Serial.println("ERROR: Failed to initialize LSM9DS1 IMU!");
@@ -370,7 +370,7 @@ void setup() {
 
     // Initialize serial communication
     Serial.begin(SERIAL_BAUD_RATE);
-    
+
     // Wait for serial connection with 3 second timeout
     // This prevents blocking forever if no serial monitor is connected
     unsigned long serialWaitStart = millis();
@@ -393,13 +393,13 @@ void setup() {
     // Initialize all sensors with full sequence
     Serial.println("DEBUG: About to init sensors...");
     Serial.flush();
-    
+
     initAllSensors();
 
     Serial.println();
     Serial.println("DEBUG: Init complete, starting loop");
     Serial.flush();
-    
+
     digitalWrite(LED_PIN, LOW);  // LED OFF when setup done
 }
 

@@ -523,11 +523,19 @@ class NullCoordinateProvider:
         No-op implementation of CoordinateProvider protocol. Used as default
         when no sensor or encoder is configured for coordinates.
 
+        Args:
+            None
+
         Returns:
             Always None, indicating no coordinates available.
 
         Raises:
             None. This implementation never raises.
+
+        Example:
+            >>> provider = NullCoordinateProvider()
+            >>> coords = provider.get_coordinates()
+            >>> assert coords is None
         """
         return None
 

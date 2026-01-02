@@ -1213,10 +1213,23 @@ class TestMotorAPIEndpoints:
             direction: Movement direction.
             degrees: Degrees to move.
 
+        Arrangement:
+        1. TestClient configured with motor controller endpoints.
+        2. Parameterized with various axis/direction/degree combinations.
+        3. No pre-motion required - nudge is immediate action.
+
+        Action:
+        POST /api/motor/{axis}/nudge with query params direction and degrees.
+        Endpoint converts degrees to motor steps and executes fixed motion.
+
         Assertion Strategy:
         - HTTP 200 indicates command accepted.
         - Response status="ok" confirms command processed.
         - Response includes axis, direction, degrees, and calculated steps.
+
+        Testing Principle:
+        Validates fixed-distance motion API for UI tap/click interactions,
+        ensuring precision pointing adjustments work reliably.
         """
         url = f"/api/motor/{axis}/nudge?direction={direction}&degrees={degrees}"
         response = client.post(url)
@@ -1262,10 +1275,24 @@ class TestMotorAPIEndpoints:
             direction: Movement direction.
             speed: Speed percentage (1-100).
 
+        Arrangement:
+        1. TestClient configured with motor controller endpoints.
+        2. Parameterized with various axis/direction/speed combinations.
+        3. Motor in stopped state initially.
+
+        Action:
+        POST /api/motor/{axis}/start with query params direction and speed.
+        Endpoint begins continuous motion at specified speed.
+        Follow with stop command to clean up (prevent runaway motion).
+
         Assertion Strategy:
         - HTTP 200 indicates command accepted.
         - Response status="moving" confirms motion started.
         - Response includes axis, direction, and speed.
+
+        Testing Principle:
+        Validates continuous motion API for UI press-and-hold interactions,
+        ensuring rapid slewing works reliably for large position changes.
         """
         url = f"/api/motor/{axis}/start?direction={direction}&speed={speed}"
         response = client.post(url)
@@ -1287,10 +1314,23 @@ class TestMotorAPIEndpoints:
         Single-axis stop is for button release - when user releases
         the up/down button, only that axis should stop.
 
+        Arrangement:
+        1. TestClient configured with motor controller endpoints.
+        2. Start altitude motor in continuous motion (up at 50% speed).
+        3. Azimuth motor remains stopped (validates selective stopping).
+
+        Action:
+        POST /api/motor/stop?axis=altitude to halt only altitude motion.
+        Verifies stop command respects axis parameter for selective control.
+
         Assertion Strategy:
         - HTTP 200 indicates command accepted.
         - Response status="stopped" confirms motor halted.
         - Response axes list contains only the specified axis.
+
+        Testing Principle:
+        Validates selective motor control for independent axis operations,
+        ensuring UI button release stops only the controlled axis.
         """
         # Start altitude motion
         client.post("/api/motor/altitude/start?direction=up&speed=50")
@@ -1306,8 +1346,27 @@ class TestMotorAPIEndpoints:
     def test_nudge_direction_validation(self, client):
         """Verifies nudge rejects invalid direction values.
 
+        Tests API parameter validation for direction enum enforcement.
+
         Business context:
         Invalid directions should return 422 validation error.
+        Prevents undefined motor behavior from malformed requests.
+
+        Arrangement:
+        1. TestClient configured with motor controller endpoints.
+        2. Endpoint enforces direction enum (up/down/cw/ccw/left/right).
+
+        Action:
+        POST /api/motor/altitude/nudge with invalid direction="invalid".
+        FastAPI validation should reject before reaching business logic.
+
+        Assertion Strategy:
+        - HTTP 422 (Unprocessable Entity) indicates validation failure.
+        - Motor never receives command (validation layer blocks it).
+
+        Testing Principle:
+        Validates request validation layer prevents invalid inputs,
+        ensuring API contract enforcement at endpoint boundary.
         """
         response = client.post("/api/motor/altitude/nudge?direction=invalid")
         assert response.status_code == 422
@@ -1315,8 +1374,29 @@ class TestMotorAPIEndpoints:
     def test_start_speed_validation(self, client):
         """Verifies start rejects out-of-range speed values.
 
+        Tests API parameter validation for speed range enforcement.
+
         Business context:
         Speed must be 1-100. Out of range should return 422.
+        Prevents motor damage from invalid speed commands.
+
+        Arrangement:
+        1. TestClient configured with motor controller endpoints.
+        2. Endpoint enforces speed range constraint (1-100).
+        3. Tests both under-range (0) and over-range (101) values.
+
+        Action:
+        POST /api/motor/altitude/start with invalid speed values.
+        First request uses speed=0 (below minimum).
+        Second request uses speed=101 (above maximum).
+
+        Assertion Strategy:
+        - HTTP 422 for both requests indicates validation failure.
+        - Motor never receives command (validation layer blocks it).
+
+        Testing Principle:
+        Validates range constraint enforcement prevents dangerous
+        motor speeds, ensuring safe operation within hardware limits.
         """
         # Speed too low
         response = client.post("/api/motor/altitude/start?direction=up&speed=0")

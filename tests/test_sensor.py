@@ -45,6 +45,18 @@ class TestDigitalTwinSensorDriver:
         Business context:
         Before connecting, applications need to discover what sensors exist.
         The digital twin always provides exactly one simulated sensor for testing.
+
+        Arrangement:
+            Create DigitalTwinSensorDriver instance.
+
+        Action:
+            Call get_available_sensors() to enumerate sensors.
+
+        Assertion Strategy:
+            Verify exactly one sensor returned with type="digital_twin" and name field.
+
+        Testing Principle:
+            Tests sensor discovery mechanism for system initialization.
         """
         driver = DigitalTwinSensorDriver()
         sensors = driver.get_available_sensors()
@@ -61,6 +73,18 @@ class TestDigitalTwinSensorDriver:
         Business context:
         Drivers manage sensor lifecycle. Opening a driver creates an active
         instance that can read sensor data.
+
+        Arrangement:
+            Create DigitalTwinSensorDriver instance.
+
+        Action:
+            Call driver.open() to create sensor instance.
+
+        Assertion Strategy:
+            Verify non-null instance returned with type="digital_twin" in info.
+
+        Testing Principle:
+            Tests factory pattern for sensor instance creation.
         """
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
@@ -79,6 +103,18 @@ class TestDigitalTwinSensorDriver:
         Business context:
         Sensors are physical resources. Opening twice would cause conflicts
         in serial port access or thread management.
+
+        Arrangement:
+            Create and open DigitalTwinSensorDriver instance.
+
+        Action:
+            Attempt to open the same driver again.
+
+        Assertion Strategy:
+            Verify RuntimeError raised with message containing "already open".
+
+        Testing Principle:
+            Tests resource exclusivity to prevent hardware conflicts.
         """
         driver = DigitalTwinSensorDriver()
         driver.open()
@@ -96,6 +132,18 @@ class TestDigitalTwinSensorDriver:
         Business context:
         Cleanup code often calls close() unconditionally in finally blocks.
         Drivers must handle close() gracefully when no instance was ever opened.
+
+        Arrangement:
+            Create DigitalTwinSensorDriver without opening.
+
+        Action:
+            Call close() on unopened driver.
+
+        Assertion Strategy:
+            Verify no exception raised and driver remains usable afterward.
+
+        Testing Principle:
+            Tests idempotent cleanup for robust error handling.
         """
         driver = DigitalTwinSensorDriver()
 
@@ -115,6 +163,18 @@ class TestDigitalTwinSensorDriver:
         Business context:
         Tests need predictable sensor values. Custom config sets initial
         position and environmental values, enabling reproducible tests.
+
+        Arrangement:
+            Create DigitalTwinSensorConfig with custom values.
+
+        Action:
+            Open driver with custom config and read values.
+
+        Assertion Strategy:
+            Verify readings match configured initial values.
+
+        Testing Principle:
+            Tests configuration injection for deterministic testing.
         """
         config = DigitalTwinSensorConfig(
             initial_altitude=30.0,
@@ -155,6 +215,18 @@ class TestDigitalTwinSensorInstance:
         Business context:
         Telescope pointing requires accelerometer (tilt), magnetometer
         (heading), and environmental data. All fields must be present.
+
+        Arrangement:
+            Open DigitalTwinSensorDriver instance.
+
+        Action:
+            Call instance.read() to get sensor data.
+
+        Assertion Strategy:
+            Verify SensorReading contains all expected fields with correct types.
+
+        Testing Principle:
+            Tests data contract completeness for sensor interface.
         """
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
@@ -188,6 +260,18 @@ class TestDigitalTwinSensorInstance:
         Business context:
         Integration tests need to simulate telescope movement. This
         method sets the "true" position that the digital twin reports.
+
+        Arrangement:
+            Open DigitalTwinSensorDriver instance.
+
+        Action:
+            Call set_position(altitude=60.0, azimuth=270.0) and read back.
+
+        Assertion Strategy:
+            Verify reading values are close to set position (within noise tolerance).
+
+        Testing Principle:
+            Tests position injection for integration test scenarios.
         """
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
@@ -209,6 +293,18 @@ class TestDigitalTwinSensorInstance:
         Business context:
         Sensor mounting introduces systematic errors. Calibration against
         a known reference computes offsets so readings match actual position.
+
+        Arrangement:
+            Create driver with known position and zero noise.
+
+        Action:
+            Calibrate with different true position and read back.
+
+        Assertion Strategy:
+            Verify readings match true position within tolerance.
+
+        Testing Principle:
+            Tests offset calibration for measurement accuracy.
         """
         config = DigitalTwinSensorConfig(
             initial_altitude=40.0,
@@ -238,6 +334,18 @@ class TestDigitalTwinSensorInstance:
         clears offsets so fresh calibration can be applied.
 
         Note: At device level, disconnect/reconnect serves as reset.
+
+        Arrangement:
+            Create driver with zero noise and calibrate with offsets.
+
+        Action:
+            Call reset() and read back values.
+
+        Assertion Strategy:
+            Verify readings return to uncalibrated initial values.
+
+        Testing Principle:
+            Tests state reset for sensor recalibration scenarios.
         """
         config = DigitalTwinSensorConfig(
             initial_altitude=45.0,
@@ -266,6 +374,18 @@ class TestDigitalTwinSensorInstance:
         Business context:
         Observatory software needs sensor health data. Status includes
         connection state and calibration state.
+
+        Arrangement:
+            Open DigitalTwinSensorDriver instance (uncalibrated).
+
+        Action:
+            Call get_status() to retrieve status dict.
+
+        Assertion Strategy:
+            Verify status contains connected=True, calibrated=False, is_open=True.
+
+        Testing Principle:
+            Tests status reporting for system health monitoring.
         """
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
@@ -286,6 +406,18 @@ class TestDigitalTwinSensorInstance:
         Business context:
         Closed sensors have released resources. Reading from closed
         instance would access invalid state.
+
+        Arrangement:
+            Open and then close DigitalTwinSensorDriver instance.
+
+        Action:
+            Attempt to read() from closed instance.
+
+        Assertion Strategy:
+            Verify RuntimeError raised with message containing "closed".
+
+        Testing Principle:
+            Tests lifecycle enforcement to prevent use-after-close errors.
         """
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
@@ -302,6 +434,18 @@ class TestDigitalTwinSensorInstance:
         Business context:
         Magnetometers suffer hard-iron distortion from nearby ferrous
         materials. Calibration computes offsets to center magnetic readings.
+
+        Arrangement:
+            Open DigitalTwinSensorDriver instance.
+
+        Action:
+            Call calibrate_magnetometer() to compute offsets.
+
+        Assertion Strategy:
+            Verify result contains offset_x, offset_y, offset_z fields.
+
+        Testing Principle:
+            Tests magnetometer calibration for heading accuracy.
         """
         driver = DigitalTwinSensorDriver()
         instance = driver.open()
@@ -339,6 +483,18 @@ class TestSensorDevice:
         Business context:
         The Sensor class wraps low-level drivers for application use.
         Connect/disconnect manage the underlying driver instance.
+
+        Arrangement:
+            Create Sensor with DigitalTwinSensorDriver.
+
+        Action:
+            Connect, verify state, disconnect, verify state.
+
+        Assertion Strategy:
+            Verify connected flag and info presence match lifecycle state.
+
+        Testing Principle:
+            Tests async device lifecycle management.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -362,6 +518,18 @@ class TestSensorDevice:
         Business context:
         Cleanup code may call disconnect() multiple times.
         Should be safe without raising errors.
+
+        Arrangement:
+            Create and connect Sensor.
+
+        Action:
+            Call disconnect() twice in succession.
+
+        Assertion Strategy:
+            Verify second disconnect does not raise and connected remains False.
+
+        Testing Principle:
+            Tests idempotent cleanup for robust resource management.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -381,6 +549,18 @@ class TestSensorDevice:
         Business context:
         Double-connect could cause resource leaks or state corruption.
         The Sensor class enforces single connection.
+
+        Arrangement:
+            Create and connect Sensor.
+
+        Action:
+            Attempt second connect() call.
+
+        Assertion Strategy:
+            Verify RuntimeError raised with "already connected" message.
+
+        Testing Principle:
+            Tests connection idempotency to prevent resource leaks.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -400,6 +580,18 @@ class TestSensorDevice:
         Business context:
         Reading requires an active connection. Attempting to read
         without connecting would access null instance.
+
+        Arrangement:
+            Create Sensor without connecting.
+
+        Action:
+            Attempt to call read().
+
+        Assertion Strategy:
+            Verify RuntimeError raised with "not connected" message.
+
+        Testing Principle:
+            Tests precondition validation for operation safety.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -416,6 +608,18 @@ class TestSensorDevice:
         Business context:
         Most reads want the current sensor value without averaging.
         Default samples=1 provides simple single-read behavior.
+
+        Arrangement:
+            Connect Sensor instance.
+
+        Action:
+            Call read() with default parameters.
+
+        Assertion Strategy:
+            Verify complete SensorReading returned with all expected fields.
+
+        Testing Principle:
+            Tests default read behavior for basic sensor data retrieval.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -439,6 +643,18 @@ class TestSensorDevice:
         Business context:
         Sensor noise can be reduced by averaging multiple samples.
         read(samples=5) takes 5 readings and returns the average.
+
+        Arrangement:
+            Create driver with noise, connect Sensor.
+
+        Action:
+            Call read(samples=5) to get averaged reading.
+
+        Assertion Strategy:
+            Verify reading returned (averaging logic tested separately).
+
+        Testing Principle:
+            Tests multi-sample averaging for noise reduction.
         """
         config = DigitalTwinSensorConfig(
             initial_altitude=45.0,
@@ -468,6 +684,18 @@ class TestSensorDevice:
         Business context:
         Sometimes you want to sample for a known duration rather than
         a specific count. read_for() calculates samples from sample_rate.
+
+        Arrangement:
+            Connect Sensor with known sample rate (10 Hz).
+
+        Action:
+            Call read_for(duration_ms=200) to read for 200ms.
+
+        Assertion Strategy:
+            Verify valid reading returned (2 samples at 10 Hz).
+
+        Testing Principle:
+            Tests duration-based sampling for time-constrained observations.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -490,6 +718,18 @@ class TestSensorDevice:
         Business context:
         Even with duration_ms=1, we should get at least one reading.
         Prevents edge case of zero samples.
+
+        Arrangement:
+            Connect Sensor instance.
+
+        Action:
+            Call read_for(duration_ms=1) with very short duration.
+
+        Assertion Strategy:
+            Verify valid reading returned (minimum 1 sample).
+
+        Testing Principle:
+            Tests minimum sample count enforcement for edge cases.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -511,6 +751,19 @@ class TestSensorDevice:
         Business context:
         Different hardware has different sample rates. Querying on connect
         ensures accurate duration-to-samples conversion.
+
+        Arrangement:
+            Create Sensor with default sample rate.
+
+        Action:
+            Connect and verify sample_rate_hz populated from driver.
+
+        Assertion Strategy:
+            Verify sample_rate_hz is 10.0 before and after connect
+            (DigitalTwin default).
+
+        Testing Principle:
+            Tests sample rate discovery during device initialization.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -534,6 +787,18 @@ class TestSensorDevice:
         Business context:
         Calibration is critical for telescope pointing accuracy.
         The Sensor class validates inputs and delegates to driver.
+
+        Arrangement:
+            Connect Sensor instance.
+
+        Action:
+            Call calibrate(true_altitude=50.0, true_azimuth=120.0).
+
+        Assertion Strategy:
+            Verify calibrated flag set in status after calibration.
+
+        Testing Principle:
+            Tests calibration delegation for positioning accuracy.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -556,6 +821,18 @@ class TestSensorDevice:
         Business context:
         Altitude must be 0-90° (horizon to zenith). Values outside
         this range are physically impossible.
+
+        Arrangement:
+            Connect Sensor instance.
+
+        Action:
+            Call calibrate with out-of-range altitude (100.0).
+
+        Assertion Strategy:
+            Verify ValueError raised with range validation message.
+
+        Testing Principle:
+            Tests input validation for physical measurement constraints.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -575,6 +852,18 @@ class TestSensorDevice:
         Business context:
         Azimuth must be 0-360° (full compass circle). Values outside
         this range indicate user error.
+
+        Arrangement:
+            Connect Sensor instance.
+
+        Action:
+            Call calibrate with out-of-range azimuth (400.0).
+
+        Assertion Strategy:
+            Verify ValueError raised with range validation message.
+
+        Testing Principle:
+            Tests input validation for compass heading constraints.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -593,6 +882,25 @@ class TestSensorDevice:
 
         Business context:
         Negative values are physically impossible for telescope coordinates.
+
+        Arrangement:
+        1. Create DigitalTwinSensorDriver for controlled testing.
+        2. Initialize Sensor and establish connection.
+        3. Prepare invalid calibration values (negative altitude/azimuth).
+
+        Action:
+        Call sensor.calibrate() twice with negative values:
+        - First with altitude=-10.0 (below 0° minimum)
+        - Second with azimuth=-45.0 (below 0° minimum)
+
+        Assertion Strategy:
+        - Both calls raise ValueError with specific error messages.
+        - Error messages specify valid ranges [0,90] and [0,360).
+        - Validates input bounds checked before applying calibration.
+
+        Testing Principle:
+        Validates precondition enforcement prevents invalid calibration,
+        ensuring sensor maintains physically meaningful coordinate system.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -614,6 +922,24 @@ class TestSensorDevice:
 
         Business context:
         Calibration requires active sensor to read current position.
+
+        Arrangement:
+        1. Create DigitalTwinSensorDriver for controlled testing.
+        2. Initialize Sensor but do NOT connect.
+        3. Sensor in disconnected state (no active instance).
+
+        Action:
+        Call sensor.calibrate(45.0, 180.0) without prior connection.
+        Attempts calibration when sensor cannot read current position.
+
+        Assertion Strategy:
+        - Raises RuntimeError with "not connected" message.
+        - Validates connection state checked before calibration.
+        - Prevents calibration attempts on inactive sensor.
+
+        Testing Principle:
+        Validates state precondition enforcement ensures calibration
+        only occurs when sensor can provide current readings.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -630,6 +956,18 @@ class TestSensorDevice:
         Business context:
         Observatory dashboards need unified sensor status combining
         driver status with device-level information.
+
+        Arrangement:
+            Connect Sensor instance.
+
+        Action:
+            Call get_status() to retrieve complete status dict.
+
+        Assertion Strategy:
+            Verify status contains connected, type, and sample_rate_hz fields.
+
+        Testing Principle:
+            Tests status aggregation for monitoring dashboards.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -652,6 +990,18 @@ class TestSensorDevice:
         Business context:
         RAII pattern ensures sensors are properly disconnected even
         on exceptions.
+
+        Arrangement:
+            Create Sensor instance.
+
+        Action:
+            Use async with statement to auto-connect and disconnect.
+
+        Assertion Strategy:
+            Verify connected inside context, disconnected after exit.
+
+        Testing Principle:
+            Tests context manager protocol for automatic resource cleanup.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -671,6 +1021,18 @@ class TestSensorDevice:
 
         Business context:
         Applications discover sensors through the Sensor class.
+
+        Arrangement:
+            Create Sensor with DigitalTwinSensorDriver.
+
+        Action:
+            Call get_available_sensors() synchronously.
+
+        Assertion Strategy:
+            Verify exactly one sensor returned (DigitalTwin).
+
+        Testing Principle:
+            Tests sensor discovery delegation to driver layer.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -686,6 +1048,26 @@ class TestSensorDevice:
 
         Business context:
         Applications need sensor metadata (type, name) for UI display.
+
+        Arrangement:
+        1. Create DigitalTwinSensorDriver providing sensor metadata.
+        2. Initialize Sensor in disconnected state.
+        3. info property initially None (no metadata available).
+
+        Action:
+        Check info property before connection (should be None).
+        Connect sensor to activate instance and populate metadata.
+        Check info property after connection (should have data).
+
+        Assertion Strategy:
+        - info is None when disconnected (no instance available).
+        - info is DeviceSensorInfo instance when connected.
+        - info.type matches driver type ("digital_twin").
+        - Validates metadata correctly extracted from driver.
+
+        Testing Principle:
+        Validates metadata lifecycle tied to connection state,
+        ensuring applications access sensor info only when available.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -707,6 +1089,26 @@ class TestSensorDevice:
 
         Business context:
         Debugging and logging benefit from informative repr.
+
+        Arrangement:
+        1. Create DigitalTwinSensorDriver for sensor instance.
+        2. Initialize Sensor in disconnected state.
+        3. repr() should show connection=False initially.
+
+        Action:
+        Check repr() before connection (disconnected state).
+        Connect sensor to establish active instance.
+        Check repr() after connection (connected state with type).
+
+        Assertion Strategy:
+        - repr() contains "connected=False" when disconnected.
+        - repr() contains "connected=True" after connection.
+        - repr() includes sensor type ("digital_twin") when connected.
+        - Provides human-readable debugging information.
+
+        Testing Principle:
+        Validates string representation provides useful debugging info,
+        showing both connection state and sensor type at a glance.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -737,6 +1139,18 @@ class TestSensorEdgeCases:
         Business context:
         Hardware failures (port busy, device not found) must be wrapped
         in a consistent exception type for application error handling.
+
+        Arrangement:
+            Create mock driver that raises exception on open().
+
+        Action:
+            Attempt to connect sensor.
+
+        Assertion Strategy:
+            Verify RuntimeError raised wrapping original exception.
+
+        Testing Principle:
+            Tests exception wrapping for consistent error handling.
         """
         mock_driver = Mock()
         mock_driver.open.side_effect = RuntimeError("Port /dev/ttyACM0 not found")
@@ -759,6 +1173,26 @@ class TestSensorEdgeCases:
         Business context:
         Serial port cleanup may fail (already closed, hardware removed).
         disconnect() must complete cleanup regardless.
+
+        Arrangement:
+        1. Create mock instance that raises RuntimeError on close().
+        2. Mock driver returns this error-prone instance.
+        3. Connect sensor to establish instance reference.
+
+        Action:
+        Call disconnect() which triggers instance.close() internally.
+        close() raises RuntimeError but disconnect() suppresses it.
+        Cleanup continues despite the error.
+
+        Assertion Strategy:
+        - disconnect() does not raise (error suppressed).
+        - sensor.connected becomes False (cleanup completed).
+        - sensor._instance set to None (resources released).
+        - mock_instance.close() was called (cleanup attempted).
+
+        Testing Principle:
+        Validates error resilience during cleanup ensures resources
+        released even when underlying hardware cleanup fails.
         """
         mock_instance = Mock()
         mock_instance.get_info.return_value = {"type": "mock", "name": "Mock Sensor"}
@@ -787,6 +1221,18 @@ class TestSensorEdgeCases:
         Business context:
         Cleanup code may call disconnect() unconditionally.
         Should be safe when already disconnected.
+
+        Arrangement:
+            Create Sensor without connecting.
+
+        Action:
+            Call disconnect() on disconnected sensor.
+
+        Assertion Strategy:
+            Verify no exception raised and connected remains False.
+
+        Testing Principle:
+            Tests idempotent cleanup for defensive programming.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -804,6 +1250,18 @@ class TestSensorEdgeCases:
         Business context:
         Applications need to know when reads fail so they can
         handle the error (retry, alert user, etc.).
+
+        Arrangement:
+            Create mock driver with instance that raises on read().
+
+        Action:
+            Connect and attempt read().
+
+        Assertion Strategy:
+            Verify RuntimeError propagates with original message.
+
+        Testing Principle:
+            Tests error propagation for application error handling.
         """
         mock_instance = Mock()
         mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
@@ -828,6 +1286,18 @@ class TestSensorEdgeCases:
         Business context:
         Status queries should never crash monitoring systems.
         If driver status fails, error is captured in response.
+
+        Arrangement:
+            Create mock driver with instance that raises on get_status().
+
+        Action:
+            Manually set connected state and call get_status().
+
+        Assertion Strategy:
+            Verify status dict contains connected=True and status_error field.
+
+        Testing Principle:
+            Tests defensive error handling in status queries.
         """
         mock_instance = Mock()
         mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
@@ -856,6 +1326,24 @@ class TestSensorEdgeCases:
 
         Business context:
         Status queries should work even when disconnected.
+
+        Arrangement:
+        1. Create DigitalTwinSensorDriver for sensor.
+        2. Initialize Sensor without connecting.
+        3. No instance available (disconnected state).
+
+        Action:
+        Call get_status() while sensor disconnected.
+        Status constructed from device layer only (no driver status).
+
+        Assertion Strategy:
+        - Returns dict with connected=False.
+        - type and name are None (no instance metadata).
+        - Validates status accessible regardless of connection state.
+
+        Testing Principle:
+        Validates status query robustness ensures monitoring
+        systems can check sensor state even when disconnected.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -874,6 +1362,24 @@ class TestSensorEdgeCases:
 
         Business context:
         Negative samples is nonsensical.
+
+        Arrangement:
+        1. Create DigitalTwinSensorDriver for sensor testing.
+        2. Connect sensor to enable reading.
+        3. Prepare invalid samples parameter (negative value).
+
+        Action:
+        Call sensor.read(samples=-1) with invalid parameter.
+        Validation should reject before attempting driver read.
+
+        Assertion Strategy:
+        - Raises ValueError with "positive" in error message.
+        - Validates parameter constraint enforcement.
+        - Prevents invalid read attempts to driver.
+
+        Testing Principle:
+        Validates input validation prevents nonsensical operations,
+        ensuring API contract enforcement at device layer.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -893,6 +1399,18 @@ class TestSensorEdgeCases:
         Business context:
         If connection fails during context entry, error should propagate
         and context should not be entered.
+
+        Arrangement:
+            Create mock driver that raises on open().
+
+        Action:
+            Attempt to use sensor in async with context.
+
+        Assertion Strategy:
+            Verify RuntimeError propagates and connected remains False.
+
+        Testing Principle:
+            Tests context manager exception handling during entry.
         """
         mock_driver = Mock()
         mock_driver.open.side_effect = RuntimeError("Connection failed")
@@ -914,6 +1432,22 @@ class TestSensorEdgeCases:
 
         Business context:
         Zero samples makes no sense - must read at least one.
+
+        Arrangement:
+        1. Create and connect DigitalTwinSensorDriver.
+        2. Sensor ready to accept read commands.
+        3. Prepare invalid samples=0 parameter.
+
+        Action:
+        Call sensor.read(samples=0) with invalid parameter.
+        Validation rejects before attempting driver read.
+
+        Assertion Strategy:
+        - Raises ValueError with "samples must be >= 1" message.
+        - Validates precondition enforced at API boundary.
+
+        Testing Principle:
+        Validates input validation prevents nonsensical read attempts.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -932,6 +1466,22 @@ class TestSensorEdgeCases:
 
         Business context:
         Zero duration makes no sense - must sample for some time.
+
+        Arrangement:
+        1. Create and connect DigitalTwinSensorDriver.
+        2. Sensor ready to accept timed read commands.
+        3. Prepare invalid duration_ms=0 parameter.
+
+        Action:
+        Call sensor.read_for(duration_ms=0) with invalid duration.
+        Validation rejects before calculating sample count.
+
+        Assertion Strategy:
+        - Raises ValueError with "duration_ms must be >= 1" message.
+        - Validates duration constraint at API boundary.
+
+        Testing Principle:
+        Validates input validation prevents impossible time-based reads.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -960,6 +1510,18 @@ class TestSensorReading:
         Business context:
         SensorReading is the core data contract for sensor data. All
         consuming code depends on these fields existing with correct types.
+
+        Arrangement:
+            Create SensorReading with all required fields.
+
+        Action:
+            Access fields to verify presence and values.
+
+        Assertion Strategy:
+            Verify altitude, azimuth, and accelerometer fields accessible.
+
+        Testing Principle:
+            Tests dataclass structure for API contract compliance.
         """
         reading = SensorReading(
             accelerometer={"aX": 0.0, "aY": 0.0, "aZ": 1.0},
@@ -984,6 +1546,21 @@ class TestSensorReading:
         Business context:
         Human-readable output for logging and debugging.
         Format: "ALT 45.00° AZ 180.00° | T=20.0°C H=50.0%"
+
+        Arrangement:
+        Create SensorReading with known ALT/AZ and environmental values.
+
+        Action:
+        Call __str__() to get formatted string representation.
+
+        Assertion Strategy:
+        - String contains altitude (45.00).
+        - String contains azimuth (180.00).
+        - String contains temperature and humidity.
+        - Format is human-readable for logs.
+
+        Testing Principle:
+        Validates string representation provides useful debugging output.
         """
         reading = SensorReading(
             accelerometer={"aX": 0.0, "aY": 0.0, "aZ": 1.0},
@@ -1013,6 +1590,18 @@ class TestSensorReading:
         Business context:
         When averaging, the timestamp should reflect when the
         averaging completed (last sample timestamp).
+
+        Arrangement:
+            Create driver with zero noise, connect Sensor.
+
+        Action:
+            Read with samples=3 to trigger averaging.
+
+        Assertion Strategy:
+            Verify reading.timestamp is valid datetime instance.
+
+        Testing Principle:
+            Tests timestamp preservation during multi-sample averaging.
         """
         config = DigitalTwinSensorConfig(
             initial_altitude=45.0,
@@ -1040,6 +1629,18 @@ class TestSensorReading:
         Business context:
         For debugging, raw_values should indicate multiple samples
         were taken (though exact format may vary).
+
+        Arrangement:
+            Connect Sensor instance.
+
+        Action:
+            Read with samples=2 to trigger averaging.
+
+        Assertion Strategy:
+            Verify reading.raw_values is non-empty string.
+
+        Testing Principle:
+            Tests raw value preservation during averaging for debugging.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -1061,6 +1662,18 @@ class TestSensorReading:
         Business context:
         Single sample should be returned as-is without overhead
         of averaging calculation.
+
+        Arrangement:
+            Create driver with zero noise, connect Sensor.
+
+        Action:
+            Read with samples=1 (no averaging).
+
+        Assertion Strategy:
+            Verify reading matches exact configured value (no noise).
+
+        Testing Principle:
+            Tests single-sample optimization path bypasses averaging.
         """
         config = DigitalTwinSensorConfig(
             initial_altitude=45.0,
@@ -1089,6 +1702,18 @@ class TestSensorReading:
         Business context:
         Averaging 350° and 10° should give ~0° (north), not 180° (south).
         This is critical for accurate pointing near north.
+
+        Arrangement:
+            Create mock readings straddling 0°/360° boundary (350° and 10°).
+
+        Action:
+            Call _average_readings() to compute circular mean.
+
+        Assertion Strategy:
+            Verify averaged azimuth near 0° (circular mean), not 180° (arithmetic).
+
+        Testing Principle:
+            Tests circular averaging for compass heading accuracy.
         """
         from telescope_mcp.drivers.sensors.types import SensorReading
 
@@ -1146,6 +1771,18 @@ class TestSensorSampleRate:
         Business context:
         Device layer can query sample rate from driver instance using
         the protocol method instead of accessing internal attributes.
+
+        Arrangement:
+            Create driver with custom sample rate (15 Hz), open instance.
+
+        Action:
+            Call instance.get_sample_rate() protocol method.
+
+        Assertion Strategy:
+            Verify returned rate matches configured value (15.0).
+
+        Testing Principle:
+            Tests protocol method for sample rate discovery.
         """
         config = DigitalTwinSensorConfig(sample_rate_hz=15.0)
         driver = DigitalTwinSensorDriver(config)
@@ -1166,6 +1803,18 @@ class TestSensorSampleRate:
         Business context:
         DigitalTwin drivers expose sample rate via _config.sample_rate_hz.
         This is used for read_for() duration calculation.
+
+        Arrangement:
+            Create driver with custom sample rate (20 Hz).
+
+        Action:
+            Connect sensor and check sample_rate_hz property.
+
+        Assertion Strategy:
+            Verify sensor.sample_rate_hz equals configured 20.0.
+
+        Testing Principle:
+            Tests sample rate extraction from driver configuration.
         """
         config = DigitalTwinSensorConfig(sample_rate_hz=20.0)
         driver = DigitalTwinSensorDriver(config)
@@ -1185,6 +1834,18 @@ class TestSensorSampleRate:
         Business context:
         Some drivers may not report sample rate. Default to 10 Hz
         (common Arduino rate) as reasonable fallback.
+
+        Arrangement:
+            Create mock driver that doesn't provide get_sample_rate().
+
+        Action:
+            Connect sensor and check sample_rate_hz property.
+
+        Assertion Strategy:
+            Verify sensor.sample_rate_hz falls back to default 10.0.
+
+        Testing Principle:
+            Tests default fallback for missing sample rate info.
         """
         mock_instance = Mock(spec=[])  # Empty spec = no methods by default
         mock_instance.get_info = Mock(return_value={"type": "mock", "name": "Mock"})
@@ -1208,6 +1869,23 @@ class TestSensorSampleRate:
 
         Business context:
         read_for(500) with 10 Hz rate should read 5 samples.
+
+        Arrangement:
+        1. Mock instance with sample_rate_hz=10.0.
+        2. Track read() call count with nested function.
+        3. Connect sensor to establish sample rate.
+
+        Action:
+        Call read_for(duration_ms=500).
+        Should convert to 5 samples (500ms / 100ms per sample).
+
+        Assertion Strategy:
+        - read() called exactly 5 times.
+        - Validates duration → sample count math.
+
+        Testing Principle:
+        Validates time-based reading uses correct sample rate
+        for accurate duration conversion.
         """
         mock_instance = Mock()
         mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
@@ -1218,6 +1896,36 @@ class TestSensorSampleRate:
         read_count = [0]
 
         def mock_read() -> SensorReading:
+            """Mock read function that increments counter and returns sample reading.
+
+            Tracks read() call count while providing valid SensorReading data.
+            Used to verify read_for() calls read() correct number of times.
+
+            Args:
+                None - closure accesses read_count from enclosing scope.
+
+            Returns:
+                SensorReading: Complete sensor reading with default test values.
+                    altitude=45.0, azimuth=180.0, temperature=20.0, humidity=50.0.
+                    Accelerometer and magnetometer populated with test vectors.
+
+            Raises:
+                None - always returns successfully with mock data.
+
+            Example:
+                >>> mock_instance.read = mock_read
+                >>> await sensor.read_for(duration_ms=500)
+                >>> assert read_count[0] == 5  # Verified 5 calls
+
+            Business Context:
+                Duration-based reads (read_for) must convert milliseconds to sample
+                count using sample rate. This mock verifies the calculation is
+                correct by counting actual read() invocations.
+
+            Implementation Details:
+                Uses closure over read_count list to maintain call counter across
+                invocations. Returns fixed SensorReading to simplify assertions.
+            """
             read_count[0] += 1
             return SensorReading(
                 accelerometer={"aX": 0.0, "aY": 0.0, "aZ": 1.0},
@@ -1255,6 +1963,22 @@ class TestSensorCoverageGaps:
         """Verifies _query_sample_rate returns early when instance is None.
 
         Tests the guard clause at start of _query_sample_rate.
+
+        Arrangement:
+        1. Create sensor without connecting.
+        2. Instance is None (no driver instance created).
+
+        Action:
+        Call _query_sample_rate() on disconnected sensor.
+        Guard clause should return early.
+
+        Assertion Strategy:
+        - No error raised (safe guard clause).
+        - Validates None check prevents attribute access errors.
+
+        Testing Principle:
+        Validates defensive programming pattern prevents errors
+        when called in unexpected state.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -1268,6 +1992,23 @@ class TestSensorCoverageGaps:
         """Verifies fallback when instance has neither _send_command nor _config.
 
         Tests the else branch in _query_sample_rate.
+
+        Arrangement:
+        1. Mock instance without _send_command or get_sample_rate methods.
+        2. Manually set connected state (bypass normal connect).
+        3. No sample rate discovery methods available.
+
+        Action:
+        Call _query_sample_rate() with minimal instance.
+        Falls back to default when no query methods exist.
+
+        Assertion Strategy:
+        - sample_rate_hz set to 10.0 (default).
+        - Validates fallback path for simple drivers.
+
+        Testing Principle:
+        Validates graceful degradation when driver lacks
+        sample rate reporting capabilities.
         """
         # Create mock excluding _send_command and get_sample_rate
         mock_instance = Mock(spec=[])  # Empty spec = no methods by default
@@ -1291,6 +2032,21 @@ class TestSensorCoverageGaps:
         """Verifies get_status includes is_open from driver status.
 
         Tests the is_open branch in get_status.
+
+        Arrangement:
+        1. Mock instance returning status with is_open field.
+        2. Connect sensor to populate status.
+
+        Action:
+        Call get_status() to retrieve merged status.
+        is_open field should pass through from driver.
+
+        Assertion Strategy:
+        - Status contains is_open=True.
+        - Validates driver field passthrough.
+
+        Testing Principle:
+        Validates status merging preserves driver-specific fields.
         """
         mock_instance = Mock()
         mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
@@ -1313,6 +2069,21 @@ class TestSensorCoverageGaps:
         """Verifies get_status includes error from driver status.
 
         Tests the error branch in get_status.
+
+        Arrangement:
+        1. Mock instance returning status with error field.
+        2. Connect sensor to populate status.
+
+        Action:
+        Call get_status() to retrieve merged status.
+        Error field should pass through from driver.
+
+        Assertion Strategy:
+        - Status contains error message.
+        - Validates error reporting mechanism.
+
+        Testing Principle:
+        Validates status merging preserves driver error information.
         """
         mock_instance = Mock()
         mock_instance.get_info.return_value = {"type": "mock", "name": "Mock"}
@@ -1335,6 +2106,24 @@ class TestSensorCoverageGaps:
         """Verifies __aenter__ skips connect when already connected.
 
         Tests the 'if not self._connected' branch in __aenter__.
+
+        Arrangement:
+        1. Create and connect sensor before context manager.
+        2. Sensor already in connected state.
+
+        Action:
+        Enter context manager with pre-connected sensor.
+        __aenter__ should detect existing connection and skip connect.
+        __aexit__ should still disconnect.
+
+        Assertion Strategy:
+        - Sensor remains connected during context.
+        - Sensor disconnected after context exit.
+        - Validates idempotent connect behavior.
+
+        Testing Principle:
+        Validates context manager handles already-connected state
+        gracefully without double-connect.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -1354,6 +2143,19 @@ class TestSensorCoverageGaps:
         """Verifies _average_readings raises on empty list.
 
         Tests the n == 0 branch.
+
+        Arrangement:
+        Create sensor instance.
+
+        Action:
+        Call _average_readings([]) with empty list.
+
+        Assertion Strategy:
+        - Raises ValueError with "No readings" message.
+        - Validates precondition check.
+
+        Testing Principle:
+        Validates input validation prevents division by zero.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -1366,6 +2168,22 @@ class TestSensorCoverageGaps:
         """Verifies _average_readings returns single item directly.
 
         Tests the n == 1 optimization path.
+
+        Arrangement:
+        1. Create sensor instance.
+        2. Create single SensorReading.
+
+        Action:
+        Call _average_readings([reading]) with one-item list.
+        Should return input directly (no averaging needed).
+
+        Assertion Strategy:
+        - Returns same object instance (no copy).
+        - Validates optimization path.
+
+        Testing Principle:
+        Validates performance optimization avoids unnecessary
+        averaging computation for single reading.
         """
         driver = DigitalTwinSensorDriver()
         sensor = Sensor(driver)
@@ -1392,6 +2210,18 @@ class TestSensorCoverageGaps:
 
         Tests the Arduino driver code path that uses STATUS command.
         Only triggered when get_sample_rate() is not available.
+
+        Arrangement:
+            Create mock instance with _send_command but no get_sample_rate().
+
+        Action:
+            Call _query_sample_rate() to trigger STATUS command path.
+
+        Assertion Strategy:
+            Verify sample_rate_hz parsed from STATUS response (15.0).
+
+        Testing Principle:
+            Tests Arduino-specific sample rate discovery via serial command.
         """
         mock_instance = Mock(spec=[])  # Empty spec = no methods by default
         mock_instance.get_info = Mock(
@@ -1421,6 +2251,18 @@ class TestSensorCoverageGaps:
         """Verifies fallback when STATUS response doesn't contain sample rate.
 
         Tests when regex doesn't match in _send_command path.
+
+        Arrangement:
+            Create mock instance with _send_command returning STATUS without rate.
+
+        Action:
+            Call _query_sample_rate() with non-matching response.
+
+        Assertion Strategy:
+            Verify sample_rate_hz remains unchanged (no match, no update).
+
+        Testing Principle:
+            Tests graceful handling of missing sample rate in STATUS response.
         """
         mock_instance = Mock(spec=[])  # Empty spec = no methods by default
         mock_instance.get_info = Mock(
@@ -1468,9 +2310,71 @@ class TestSensorCoverageGaps:
             """Instance with minimal interface - no sample rate methods."""
 
             def get_info(self) -> dict[str, str]:
+                """Return minimal sensor info for bare instance testing.
+
+                Provides type and name fields without sample rate capabilities.
+
+                Args:
+                    None - no parameters required for static info.
+
+                Returns:
+                    dict[str, str]: Sensor metadata with 'type' and 'name' keys.
+                        type='bare', name='Bare' for minimal test instance.
+
+                Raises:
+                    None - always returns successfully with hardcoded data.
+
+                Example:
+                    >>> instance = BareInstance()
+                    >>> info = instance.get_info()
+                    >>> assert info['type'] == 'bare'
+
+                Business Context:
+                    Sensors must provide identification even when sample rate
+                    query methods are unavailable. Bare instance simulates
+                    minimal sensor implementation.
+
+                Implementation Details:
+                    Returns hardcoded dict. No dependencies on configuration
+                    or state. Used to test fallback behavior when instance
+                    lacks get_sample_rate() and _send_command() methods.
+                """
                 return {"type": "bare", "name": "Bare"}
 
             def read(self) -> SensorReading:
+                """Return mock sensor reading with default/zero values.
+
+                Provides minimal valid reading for testing without actual sensor.
+
+                Args:
+                    None - no parameters for stateless mock reading.
+
+                Returns:
+                    SensorReading: Complete reading with default/zero values.
+                        altitude=0.0, azimuth=0.0 for horizon north position.
+                        temperature=20.0°C, humidity=50.0% for standard conditions.
+                        Accelerometer shows 1g vertical (aZ=1.0).
+                        Magnetometer all zeros (uncalibrated simulation).
+
+                Raises:
+                    None - always returns successfully with mock data.
+
+                Example:
+                    >>> instance = BareInstance()
+                    >>> reading = instance.read()
+                    >>> assert reading.altitude == 0.0
+                    >>> assert reading.azimuth == 0.0
+
+                Business Context:
+                    Testing sensor fallback behavior requires instance that
+                    can provide readings without sample rate capabilities.
+                    Simulates minimal sensor implementation.
+
+                Implementation Details:
+                    Returns new SensorReading on each call with current timestamp.
+                    No state maintained between reads. Raw values empty string
+                    since no actual hardware communication occurred.
+                """
                 return SensorReading(
                     accelerometer={"aX": 0.0, "aY": 0.0, "aZ": 1.0},
                     magnetometer={"mX": 0.0, "mY": 0.0, "mZ": 0.0},
@@ -1483,9 +2387,66 @@ class TestSensorCoverageGaps:
                 )
 
             def get_status(self) -> dict[str, object]:
+                """Return minimal status without sample rate info.
+
+                Returns calibration status only, no sample rate fields.
+
+                Args:
+                    None - no parameters for stateless status query.
+
+                Returns:
+                    dict[str, object]: Status dict with calibrated=False.
+                        Deliberately omits sample_rate_hz to test fallback.
+
+                Raises:
+                    None - always returns successfully with minimal status.
+
+                Example:
+                    >>> instance = BareInstance()
+                    >>> status = instance.get_status()
+                    >>> assert 'sample_rate_hz' not in status
+                    >>> assert status['calibrated'] is False
+
+                Business Context:
+                    Not all sensor drivers expose sample rate via status dict.
+                    Tests must verify graceful fallback to default when
+                    sample rate information unavailable.
+
+                Implementation Details:
+                    Returns minimal status to trigger fallback logic in
+                    _query_sample_rate(). Used alongside BareInstance
+                    lacking get_sample_rate() method to test else branch.
+                """
                 return {"calibrated": False}
 
             def close(self) -> None:
+                """No-op close for mock instance cleanup.
+
+                Bare instance has no resources to release.
+
+                Args:
+                    None - no parameters for cleanup operation.
+
+                Returns:
+                    None - cleanup operation has no return value.
+
+                Raises:
+                    None - safe no-op always succeeds.
+
+                Example:
+                    >>> instance = BareInstance()
+                    >>> instance.close()  # Safe to call, no effect
+
+                Business Context:
+                    Sensor instances must implement close() for resource cleanup
+                    protocol compliance. Bare instance simulates minimal sensor
+                    without hardware resources.
+
+                Implementation Details:
+                    Pass statement - no cleanup needed. Satisfies SensorInstance
+                    protocol requirement for close() method. Used in test to
+                    verify sample rate query works with minimal implementations.
+                """
                 pass
 
         bare_instance = BareInstance()

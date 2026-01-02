@@ -486,7 +486,9 @@ class ArduinoSensorInstance:
                     logger.info("Successfully parsed sensor data", line_num=lines_read)
             except Exception as e:
                 if self._is_open:
-                    logger.warning("Sensor read error", error=str(e), line_num=lines_read)
+                    logger.warning(
+                        "Sensor read error", error=str(e), line_num=lines_read
+                    )
         logger.info("Sensor reader thread stopped", lines_read=lines_read)
 
     def get_info(self) -> SensorInfo:
@@ -1265,7 +1267,12 @@ class ArduinoSensorDriver:
             desc = port.description.lower()
             device = port.device.lower()
             # Match by description OR by device name (ACM ports)
-            if any(x in desc for x in ["arduino", "nano", "ble", "usb serial", "ch340"]) or "acm" in device:
+            if (
+                any(
+                    x in desc for x in ["arduino", "nano", "ble", "usb serial", "ch340"]
+                )
+                or "acm" in device
+            ):
                 sensors.append(
                     AvailableSensor(
                         id=i,

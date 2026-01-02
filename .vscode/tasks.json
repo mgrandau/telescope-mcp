@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Open Web UI (localhost:8080)",
+      "command": "${input:openWebUI}",
+      "problemMatcher": []
+    },
+    {
+      "label": "Open AI tracking (localhost:8000)",
+      "command": "${input:openAITracking}",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "openWebUI",
+      "type": "command",
+      "command": "simpleBrowser.show",
+      "args": ["http://localhost:8080"]
+    },
+    {
+      "id": "openAITracking",
+      "type": "command",
+      "command": "simpleBrowser.show",
+      "args": ["http://localhost:8000"]
+    }
+  ]
+}

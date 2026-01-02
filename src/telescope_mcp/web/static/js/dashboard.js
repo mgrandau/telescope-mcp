@@ -204,7 +204,7 @@ async function gotoPosition() {
 async function updateFinderSettings() {
     const exposure = document.getElementById('finder-exposure').value;
     const gain = document.getElementById('finder-gain').value;
-    
+
     // Finder exposure is in seconds, convert to microseconds
     await setCameraControl(0, 'ASI_EXPOSURE', exposure * 1000000);
     await setCameraControl(0, 'ASI_GAIN', gain);
@@ -213,7 +213,7 @@ async function updateFinderSettings() {
 async function updateMainSettings() {
     const exposure = document.getElementById('main-exposure').value;
     const gain = document.getElementById('main-gain').value;
-    
+
     // Main exposure is in milliseconds, convert to microseconds
     await setCameraControl(1, 'ASI_EXPOSURE', exposure * 1000);
     await setCameraControl(1, 'ASI_GAIN', gain);
@@ -237,19 +237,19 @@ async function captureRaw(cameraId, statusId = null) {
     // Determine which status element and frame type to use
     const camName = statusId || (cameraId === 0 ? 'finder' : 'main');
     const statusEl = document.getElementById(`${camName}-capture-status`);
-    
+
     // Finder always captures as 'light', main uses dropdown
     const frameType = cameraId === 0 ? 'light' : document.getElementById('frame-type').value;
-    
+
     statusEl.textContent = `Capturing ${frameType}...`;
     statusEl.className = 'capture-status capturing';
-    
+
     try {
         const response = await fetch(`${API_BASE}/api/camera/${cameraId}/capture?frame_type=${frameType}`, {
             method: 'POST'
         });
         const data = await response.json();
-        
+
         if (data.status === 'success') {
             statusEl.textContent = `✓ ${data.camera}/${data.frame_type} #${data.frame_index} → ${data.filename}`;
             statusEl.className = 'capture-status success';
