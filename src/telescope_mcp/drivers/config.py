@@ -16,7 +16,12 @@ from telescope_mcp.drivers.cameras import (
     CameraDriver,
     DigitalTwinCameraDriver,
 )
-from telescope_mcp.drivers.motors import MotorController, StubMotorController
+from telescope_mcp.drivers.motors import (
+    DigitalTwinMotorDriver,
+    MotorDriver,
+    MotorInstance,
+    SerialMotorDriver,
+)
 from telescope_mcp.drivers.sensors import (
     DigitalTwinSensorDriver,
     SensorDriver,
@@ -219,38 +224,67 @@ class DriverFactory:
             )
             return DigitalTwinCameraDriver(twin_config)
 
-    def create_motor_controller(self) -> MotorController:
+    def create_motor_controller(self) -> MotorInstance:
         """Create motor controller for telescope altitude/azimuth motors.
 
-        Factory method returning motor controller. HARDWARE mode raises
-        NotImplementedError (not yet implemented). DIGITAL_TWIN mode returns
-        StubMotorController simulating movements with realistic timing but no
-        hardware interaction.
+        Factory method returning motor controller instance. HARDWARE mode returns
+        SerialMotorController for Teensy + AMIS hardware. DIGITAL_TWIN mode returns
+        DigitalTwinMotorInstance simulating movements with realistic timing.
 
         Business context: Enables development of telescope control logic (goto,
         tracking) without physical mount hardware. Digital twin allows testing
-        pointing algorithms, slewing patterns in CI/CD. Future hardware mode will
-        integrate stepper motors via serial/USB. Critical for teams with limited
-        hardware access.
+        pointing algorithms, slewing patterns in CI/CD. Hardware mode integrates
+        Teensy + AMIS stepper motor controllers via serial.
 
         Returns:
-            MotorController - StubMotorController in DIGITAL_TWIN mode with
-            move_altitude(), move_azimuth(), stop() methods.
+            MotorInstance - DigitalTwinMotorInstance in DIGITAL_TWIN mode,
+            SerialMotorController in HARDWARE mode (requires serial port config).
 
         Raises:
-            NotImplementedError: In HARDWARE mode (real motor driver not
-                implemented yet).
+            RuntimeError: In HARDWARE mode if motor_serial_port not configured.
 
         Example:
             >>> factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
             >>> motors = factory.create_motor_controller()
-            >>> motors.move_altitude(steps=1000, speed=50)  # Simulated
+            >>> motors.move(MotorType.ALTITUDE, 70000)  # Simulated 45°
         """
         if self.config.mode == DriverMode.HARDWARE:
-            # TODO: Import and return real motor driver
-            raise NotImplementedError("Hardware motor driver not yet implemented")
+            if not self.config.motor_serial_port:
+                raise RuntimeError(
+                    "motor_serial_port must be configured for hardware mode. "
+                    "Set via DriverConfig(motor_serial_port='/dev/ttyACM0')"
+                )
+            hw_driver = SerialMotorDriver(baudrate=self.config.motor_baud_rate)
+            return hw_driver.open(self.config.motor_serial_port)
         else:
-            return StubMotorController()
+            twin_driver = DigitalTwinMotorDriver()
+            return twin_driver.open()
+
+    def create_motor_driver(self) -> MotorDriver:
+        """Create motor driver for telescope altitude/azimuth motors.
+
+        Factory method returning motor driver (factory pattern). Use this when
+        you need to enumerate available controllers or manage connection lifecycle.
+        For simple cases, use create_motor_controller() directly.
+
+        Business context: Mirrors create_sensor_driver() pattern for consistency.
+        Enables controller discovery workflows where user selects from available
+        devices before connecting.
+
+        Returns:
+            MotorDriver - DigitalTwinMotorDriver in DIGITAL_TWIN mode,
+            SerialMotorDriver in HARDWARE mode.
+
+        Example:
+            >>> factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
+            >>> driver = factory.create_motor_driver()
+            >>> controllers = driver.get_available_controllers()
+            >>> controller = driver.open(controllers[0]['port'])
+        """
+        if self.config.mode == DriverMode.HARDWARE:
+            return SerialMotorDriver(baudrate=self.config.motor_baud_rate)
+        else:
+            return DigitalTwinMotorDriver()
 
     def create_sensor_driver(self) -> SensorDriver:
         """Create sensor driver for telescope orientation sensing.

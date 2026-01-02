@@ -412,17 +412,17 @@ class TestDriverFactory:
         assert isinstance(driver, ASICameraDriver)
 
     def test_create_motor_controller_digital_twin(self):
-        """Verifies DriverFactory creates StubMotorController in simulation mode.
+        """Verifies DriverFactory creates DigitalTwinMotorInstance in simulation mode.
 
         Tests factory instantiation by requesting motor controller in
         DIGITAL_TWIN mode.
 
         Business context:
         Enables telescope motion testing without physical motors by
-        providing simulated controller.
+        providing simulated controller with realistic timing.
 
         Arrangement:
-        1. Import StubMotorController for type checking.
+        1. Import DigitalTwinMotorInstance for type checking.
         2. Create DriverFactory with DriverConfig(mode=DIGITAL_TWIN).
         3. Factory configured for simulation mode.
 
@@ -431,17 +431,17 @@ class TestDriverFactory:
 
         Assertion Strategy:
         Validates factory routing by confirming:
-        - Returned controller is instance of StubMotorController.
-        - Factory creates stub for simulation mode.
+        - Returned controller is instance of DigitalTwinMotorInstance.
+        - Factory creates digital twin for simulation mode.
 
         Testing Principle:
         Validates consistent factory behavior, ensuring motor
         controllers follow same mode-based instantiation pattern."""
-        from telescope_mcp.drivers.motors import StubMotorController
+        from telescope_mcp.drivers.motors import DigitalTwinMotorInstance
 
         factory = DriverFactory(DriverConfig(mode=DriverMode.DIGITAL_TWIN))
         controller = factory.create_motor_controller()
-        assert isinstance(controller, StubMotorController)
+        assert isinstance(controller, DigitalTwinMotorInstance)
 
     def test_create_sensor_driver_digital_twin(self):
         """Verifies DriverFactory creates DigitalTwinSensorDriver in simulation mode.

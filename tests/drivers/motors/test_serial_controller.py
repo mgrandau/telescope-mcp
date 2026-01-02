@@ -1234,8 +1234,7 @@ class TestMotorStatus:
 
         Business context:
         get_info() provides metadata about controller for UI and
-        debugging. Includes type, port, open state, and per-axis
-        configuration.
+        debugging. Includes type, port, name, and steps_per_degree.
 
         Arrangement:
         1. Use motor_controller from fixture.
@@ -1247,8 +1246,8 @@ class TestMotorStatus:
         Validates info by confirming:
         - type is "serial_motor_controller".
         - port matches test port.
-        - is_open is True.
-        - Contains "altitude" and "azimuth" keys.
+        - name contains port identifier.
+        - altitude_steps_per_degree and azimuth_steps_per_degree present.
 
         Testing Principle:
         Validates metadata completeness, ensuring all expected
@@ -1258,9 +1257,9 @@ class TestMotorStatus:
 
         assert info["type"] == "serial_motor_controller"
         assert info["port"] == "/dev/ttyTEST"
-        assert info["is_open"] is True
-        assert "altitude" in info
-        assert "azimuth" in info
+        assert "/dev/ttyTEST" in info["name"]
+        assert info["altitude_steps_per_degree"] > 0
+        assert info["azimuth_steps_per_degree"] > 0
 
 
 # =============================================================================

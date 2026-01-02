@@ -8,10 +8,17 @@ Example:
     from telescope_mcp.drivers.motors import (
         MotorType,
         SerialMotorDriver,
+        DigitalTwinMotorDriver,
         StubMotorController,
     )
 
-    # For testing (no hardware)
+    # For testing (no hardware) - Full digital twin
+    driver = DigitalTwinMotorDriver()
+    controller = driver.open()
+    controller.move(MotorType.ALTITUDE, 70000)  # 45 degrees
+    driver.close()
+
+    # For testing (simple stub)
     controller = StubMotorController()
     controller.move(MotorType.ALTITUDE, 1000)
 
@@ -35,8 +42,19 @@ from telescope_mcp.drivers.motors.serial_controller import (
     steps_to_altitude_degrees,
     steps_to_azimuth_degrees,
 )
+
+# Digital twin motor driver
+from telescope_mcp.drivers.motors.twin import (
+    DigitalTwinMotorConfig,
+    DigitalTwinMotorDriver,
+    DigitalTwinMotorInstance,
+)
 from telescope_mcp.drivers.motors.types import (
+    AvailableMotorController,
     MotorController,
+    MotorDriver,
+    MotorInfo,
+    MotorInstance,
     MotorStatus,
     MotorType,
 )
@@ -223,12 +241,20 @@ __all__ = [
     # Enums and data classes
     "MotorType",
     "MotorStatus",
+    "MotorInfo",
     "MotorConfig",
+    "AvailableMotorController",
     "MOTOR_CONFIGS",
     # Protocols
     "MotorController",
-    # Stub (for testing)
+    "MotorDriver",
+    "MotorInstance",
+    # Stub (for simple testing)
     "StubMotorController",
+    # Digital twin (for realistic simulation)
+    "DigitalTwinMotorConfig",
+    "DigitalTwinMotorDriver",
+    "DigitalTwinMotorInstance",
     # Serial driver (real hardware)
     "SerialMotorController",
     "SerialMotorDriver",

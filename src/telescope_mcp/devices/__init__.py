@@ -4,17 +4,18 @@ This module provides the public API for telescope device management:
 - Camera: Image capture with overlays, streaming, and recovery
 - CameraController: Multi-camera synchronization for alignment
 - CameraRegistry: Discovery and singleton management
+- Motor: Stepper motor control for altitude/azimuth positioning
 - Sensor: Environmental (temperature, humidity) and positional (alt/az) data
 - CoordinateProvider: Automatic coordinate injection into frame metadata
 
 Example:
-    >>> from telescope_mcp.devices import Camera, CameraRegistry, Sensor
+    >>> from telescope_mcp.devices import Camera, CameraRegistry, Sensor, Motor
     >>> registry = CameraRegistry(driver)
     >>> camera = registry.get(0, auto_connect=True)
     >>> result = camera.capture()
 
 All public symbols are explicitly listed in __all__. Submodules (camera,
-controller, registry, sensor) are implementation details and not part of
+controller, registry, motor, sensor) are implementation details and not part of
 the public API.
 """
 
@@ -56,6 +57,12 @@ from telescope_mcp.devices.camera_registry import (
 from telescope_mcp.devices.coordinate_provider import (
     LocationConfig,
     SensorCoordinateProvider,
+)
+from telescope_mcp.devices.motor import (
+    DeviceMotorInfo,
+    Motor,
+    MotorConfig,
+    MotorDeviceStatus,
 )
 from telescope_mcp.devices.sensor import (
     DEFAULT_SAMPLE_RATE_HZ,
@@ -100,6 +107,11 @@ __all__ = [
     # Coordinate Provider (2 exports)
     "LocationConfig",
     "SensorCoordinateProvider",
+    # Motor (4 exports)
+    "DeviceMotorInfo",
+    "Motor",
+    "MotorConfig",
+    "MotorDeviceStatus",
     # Sensor (6 exports)
     "DEFAULT_SAMPLE_RATE_HZ",
     "STATUS_SETTLE_DELAY_SEC",
@@ -107,4 +119,4 @@ __all__ = [
     "Sensor",
     "SensorConfig",
     "SensorDeviceStatus",
-]  # Total: 35 exports
+]  # Total: 39 exports

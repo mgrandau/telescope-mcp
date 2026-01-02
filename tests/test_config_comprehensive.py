@@ -255,7 +255,7 @@ class TestDriverFactory:
             assert driver is not None
 
     def test_create_motor_controller_digital_twin(self):
-        """Verifies factory creates StubMotorController in simulation mode.
+        """Verifies factory creates DigitalTwinMotorInstance in simulation mode.
 
         Tests motor controller instantiation with DIGITAL_TWIN config.
 
@@ -269,7 +269,7 @@ class TestDriverFactory:
         Assertion Strategy:
         Validates controller type by confirming:
         - Returned controller is not None.
-        - Controller class name contains "Stub".
+        - Controller class name contains "DigitalTwin".
 
         Testing Principle:
         Validates consistent factory behavior, ensuring motor
@@ -278,7 +278,7 @@ class TestDriverFactory:
         factory = DriverFactory(config)
         controller = factory.create_motor_controller()
         assert controller is not None
-        assert "Stub" in controller.__class__.__name__
+        assert "DigitalTwin" in controller.__class__.__name__
 
     def test_create_sensor_driver_digital_twin(self):
         """Verifies factory creates DigitalTwinSensorDriver in simulation mode.

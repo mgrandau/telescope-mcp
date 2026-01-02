@@ -55,7 +55,13 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from telescope_mcp.drivers.motors.types import MotorStatus, MotorType
+from telescope_mcp.drivers.motors.types import (
+    AvailableMotorController,
+    MotorInfo,
+    MotorInstance,
+    MotorStatus,
+    MotorType,
+)
 from telescope_mcp.drivers.serial import PortEnumerator, SerialPort
 from telescope_mcp.observability import get_logger
 
@@ -639,31 +645,24 @@ class SerialMotorController:
             response = self._serial.read_until(b"?\tdisplay this help screen\r\n")
             return response.decode(errors="ignore")
 
-    def get_info(self) -> dict[str, object]:
+    def get_info(self) -> MotorInfo:
         """Get motor controller information and current state.
 
         Returns comprehensive information about the controller including
-        connection details and current positions of both motors. Used
-        for status displays and diagnostic tools.
+        connection details and configuration. Used for status displays
+        and diagnostic tools.
 
         Business context: Remote observatory control requires visibility
         into equipment state. This method provides the information needed
-        for dashboards, logging, and MCP tool responses. Motor positions
-        and limits are essential for safe operation.
+        for dashboards, logging, and MCP tool responses.
 
         Returns:
-            dict: Controller information containing:
+            MotorInfo TypedDict containing:
                 - type (str): Always 'serial_motor_controller'
+                - name (str): Human-readable controller name
                 - port (str): Serial port path (e.g., '/dev/ttyACM0')
-                - is_open (bool): Connection state
-                - altitude (dict): Altitude motor state with:
-                    - position (int): Current step position
-                    - min (int): Minimum allowed steps
-                    - max (int): Maximum allowed steps
-                - azimuth (dict): Azimuth motor state with:
-                    - position (int): Current step position
-                    - min (int): Minimum allowed steps
-                    - max (int): Maximum allowed steps
+                - altitude_steps_per_degree (float): Steps per degree for altitude
+                - azimuth_steps_per_degree (float): Steps per degree for azimuth
 
         Raises:
             No exceptions raised.
@@ -672,24 +671,16 @@ class SerialMotorController:
             >>> info = controller.get_info()
             >>> print(f"Connected to {info['port']}")
             Connected to /dev/ttyACM0
-            >>> print(f"Alt position: {info['altitude']['position']}")
-            Alt position: 70000
         """
-        return {
-            "type": "serial_motor_controller",
-            "port": self._port,
-            "is_open": self._is_open,
-            "altitude": {
-                "position": self._positions[MotorType.ALTITUDE],
-                "min": MOTOR_CONFIGS[MotorType.ALTITUDE].min_steps,
-                "max": MOTOR_CONFIGS[MotorType.ALTITUDE].max_steps,
-            },
-            "azimuth": {
-                "position": self._positions[MotorType.AZIMUTH],
-                "min": MOTOR_CONFIGS[MotorType.AZIMUTH].min_steps,
-                "max": MOTOR_CONFIGS[MotorType.AZIMUTH].max_steps,
-            },
-        }
+        return MotorInfo(
+            type="serial_motor_controller",
+            name=f"Serial Motor Controller ({self._port})",
+            port=self._port,
+            altitude_steps_per_degree=MOTOR_CONFIGS[
+                MotorType.ALTITUDE
+            ].steps_per_degree,
+            azimuth_steps_per_degree=MOTOR_CONFIGS[MotorType.AZIMUTH].steps_per_degree,
+        )
 
     def close(self) -> None:
         """Close the serial connection and release hardware resources.
@@ -722,6 +713,104 @@ class SerialMotorController:
             self._serial.close()
 
         logger.info("Motor controller closed", port=self._port)
+
+    @property
+    def is_open(self) -> bool:
+        """Return True if controller connection is open.
+
+        Returns:
+            bool: True if connected, False if closed.
+
+        Example:
+            >>> if controller.is_open:
+            ...     controller.move(MotorType.ALTITUDE, 1000)
+        """
+        return self._is_open
+
+    def is_at_limit(self, motor: MotorType) -> str | None:
+        """Check if motor is at a position limit.
+
+        For serial controller, checks if current position equals min/max limits.
+
+        Args:
+            motor: Which motor to check (ALTITUDE or AZIMUTH).
+
+        Returns:
+            'min' if at minimum limit, 'max' if at maximum limit,
+            None if within normal operating range.
+
+        Example:
+            >>> limit = controller.is_at_limit(MotorType.AZIMUTH)
+            >>> if limit == 'min':
+            ...     print("At CCW limit")
+        """
+        config = MOTOR_CONFIGS[motor]
+        position = self._positions[motor]
+
+        if position <= config.min_steps:
+            return "min"
+        elif position >= config.max_steps:
+            return "max"
+        return None
+
+    def move_until_stall(
+        self,
+        motor: MotorType,
+        direction: int,
+        speed: int = 20,
+        step_size: int = 100,
+    ) -> int:
+        """Move motor slowly until stall/slip is detected.
+
+        For serial controller, this moves incrementally until reaching
+        configured position limits. Real stall detection requires
+        hardware feedback not yet implemented.
+
+        Args:
+            motor: Which motor to move (ALTITUDE or AZIMUTH).
+            direction: Direction to move. Negative = CCW/down, Positive = CW/up.
+            speed: Speed percentage 1-100. Default 20 for slow homing.
+            step_size: Steps per increment. Default 100.
+
+        Returns:
+            Final position in steps when limit reached.
+
+        Raises:
+            RuntimeError: If controller not connected.
+
+        Example:
+            >>> ccw_limit = controller.move_until_stall(
+            ...     MotorType.AZIMUTH, direction=-1, speed=20
+            ... )
+        """
+        if not self._is_open:
+            raise RuntimeError("Controller not connected")
+
+        config = MOTOR_CONFIGS[motor]
+        step_delta = step_size if direction > 0 else -step_size
+
+        while True:
+            current = self._positions[motor]
+            target = current + step_delta
+
+            # Check if we would exceed limits
+            if target <= config.min_steps:
+                logger.info(
+                    "Motor reached minimum limit",
+                    motor=motor.value,
+                    position=config.min_steps,
+                )
+                return config.min_steps
+            elif target >= config.max_steps:
+                logger.info(
+                    "Motor reached maximum limit",
+                    motor=motor.value,
+                    position=config.max_steps,
+                )
+                return config.max_steps
+
+            # Move incrementally
+            self.move_relative(motor, step_delta, speed=speed)
 
 
 class SerialMotorDriver:
@@ -817,7 +906,7 @@ class SerialMotorDriver:
         driver._port_enumerator = port_enumerator
         return driver
 
-    def get_available_controllers(self) -> list[dict[str, object]]:
+    def get_available_controllers(self) -> list[AvailableMotorController]:
         """Discover motor controllers available on serial ports.
 
         Scans system serial ports for devices matching motor controller
@@ -830,7 +919,8 @@ class SerialMotorDriver:
         select motor controllers without prior configuration.
 
         Returns:
-            list[dict]: List of controller descriptors, each containing:
+            list[AvailableMotorController]: List of controller descriptors,
+                each containing:
                 - id (int): Index for use with open()
                 - type (str): Always 'serial_motor_controller'
                 - name (str): Human-readable name with port
@@ -862,26 +952,26 @@ class SerialMotorDriver:
                 return []
             ports = serial.tools.list_ports.comports()
 
-        controllers = []
+        controllers: list[AvailableMotorController] = []
 
         for i, port in enumerate(ports):
             # Check for likely motor controller devices
             desc = port.description.lower()
             if any(x in desc for x in ["acm", "usb serial", "ch340", "motor"]):
                 controllers.append(
-                    {
-                        "id": i,
-                        "type": "serial_motor_controller",
-                        "name": f"Motor Controller ({port.device})",
-                        "port": port.device,
-                        "description": port.description,
-                    }
+                    AvailableMotorController(
+                        id=i,
+                        type="serial_motor_controller",
+                        name=f"Motor Controller ({port.device})",
+                        port=port.device,
+                        description=port.description,
+                    )
                 )
 
         logger.debug("Found controllers", count=len(controllers))
         return controllers
 
-    def open(self, port: str) -> SerialMotorController:
+    def open(self, controller_id: int | str = 0) -> MotorInstance:
         """Open serial connection to motor controller.
 
         Creates a SerialMotorController instance connected to the specified
@@ -892,16 +982,17 @@ class SerialMotorDriver:
         motor movement operations. Must be called before any motor commands.
 
         Args:
-            port: Serial port path (e.g., '/dev/ttyACM0' on Linux,
-                'COM3' on Windows). Use get_available_controllers()
-                to discover valid ports.
+            controller_id: Either integer index from get_available_controllers()
+                or string port path (e.g., '/dev/ttyACM0' on Linux,
+                'COM3' on Windows). Default 0 opens first available.
 
         Returns:
-            SerialMotorController: Connected controller ready for use.
+            MotorInstance: Connected controller ready for use.
                 Provides move(), home(), get_status() and other methods.
 
         Raises:
             RuntimeError: If controller already open or connection fails.
+            ValueError: If controller_id is invalid index.
             serial.SerialException: If port cannot be opened (permissions,
                 device not found, port in use).
 
@@ -915,6 +1006,18 @@ class SerialMotorDriver:
         """
         if self._controller is not None and self._controller._is_open:
             raise RuntimeError("Controller already open")
+
+        # Resolve controller_id to port string
+        if isinstance(controller_id, int):
+            controllers = self.get_available_controllers()
+            if controller_id >= len(controllers):
+                raise ValueError(
+                    f"Controller index {controller_id} out of range "
+                    f"(found {len(controllers)} controllers)"
+                )
+            port = controllers[controller_id]["port"]
+        else:
+            port = controller_id
 
         self._controller = SerialMotorController(port, self._baudrate)
         return self._controller
