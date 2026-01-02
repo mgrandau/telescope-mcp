@@ -2793,3 +2793,91 @@ class TestGetControlValidation:
 
         with pytest.raises(CameraError, match="non-integer.*float"):
             camera.get_control("Gain")
+
+
+# =============================================================================
+# Coordinate Provider Integration Tests
+# =============================================================================
+
+
+class TestCameraCoordinateProviderIntegration:
+    """Test suite for Camera coordinate provider integration.
+
+    Tests that coordinates are properly injected into capture metadata
+    when a coordinate provider returns valid coordinates.
+
+    Total: 1 test.
+    """
+
+    def test_capture_includes_coordinates_when_provider_configured(self) -> None:
+        """Verifies capture metadata includes coordinates from provider.
+
+        Tests that when a coordinate provider is configured and returns
+        valid coordinates, those coordinates appear in the CaptureResult
+        metadata.
+
+        Business context:
+        Astrophotography requires precise positional metadata in each frame
+        for plate solving, stacking, and observation logging. This test
+        ensures the coordinate injection path works end-to-end.
+
+        Arrangement:
+        1. Create mock coordinate provider returning test coordinates.
+        2. Create Camera with DigitalTwinDriver and coordinate provider.
+        3. Connect camera.
+
+        Action:
+        Call camera.capture() with default options.
+
+        Assertion Strategy:
+        Validates coordinate injection by confirming:
+        - metadata["coordinates"] exists.
+        - Contains expected altitude and azimuth values.
+
+        Testing Principle:
+        Exercises line 1499 (_build_capture_result coordinate injection)
+        which is only reached when get_coordinates() returns truthy value.
+        """
+        from telescope_mcp.devices.camera import CaptureCoordinates
+
+        # Create mock coordinate provider that returns test coordinates
+        class MockCoordinateProvider:
+            """Mock provider that returns fixed test coordinates."""
+
+            def get_coordinates(self) -> CaptureCoordinates:
+                """Return test coordinates for coverage.
+
+                Returns:
+                    CaptureCoordinates with test values.
+                """
+                return CaptureCoordinates(
+                    altitude=45.0,
+                    azimuth=180.0,
+                    ra=12.5,
+                    dec=45.0,
+                    ra_hms="12h 30m 00.0s",
+                    dec_dms="+45° 00' 00.0\"",
+                )
+
+        driver = DigitalTwinCameraDriver()
+        camera = Camera(
+            driver,
+            CameraConfig(camera_id=0),
+            coordinate_provider=MockCoordinateProvider(),
+        )
+        camera.connect()
+
+        try:
+            result = camera.capture(
+                CaptureOptions(exposure_us=100000, gain=50, format="jpeg")
+            )
+
+            # Verify coordinates were injected into metadata
+            assert "coordinates" in result.metadata
+            coords = result.metadata["coordinates"]
+            assert coords["altitude"] == 45.0
+            assert coords["azimuth"] == 180.0
+            assert coords["ra"] == 12.5
+            assert coords["dec"] == 45.0
+        finally:
+            camera.disconnect()
