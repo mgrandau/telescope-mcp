@@ -2420,6 +2420,774 @@ class TestCloseAllCameras:
         assert len(_camera_streaming) == 0
 
 
+class TestGetCameraForceReopen:
+    """Tests for _get_camera force_reopen functionality."""
+
+    def test_force_reopen_closes_existing_camera(self):
+        """Verifies force_reopen=True closes and reopens camera.
+
+        Tests that when force_reopen is requested, the existing camera
+        is properly closed before opening a new instance.
+
+        Arrangement:
+        1. Mock camera in _cameras dict.
+        2. Mock ASI SDK functions.
+
+        Action:
+        Calls _get_camera with force_reopen=True.
+
+        Assertion Strategy:
+        Validates force reopen by confirming:
+        - Existing camera's stop_video_capture() called.
+        - Existing camera's close() called.
+        - Camera removed from dict and reopened.
+
+        Testing Principle:
+        Validates camera state reset functionality for recovering
+        from error states or mode conflicts.
+        """
+        from telescope_mcp.web.app import (
+            _camera_settings,
+            _camera_streaming,
+            _cameras,
+            _get_camera,
+        )
+
+        mock_old_camera = MagicMock()
+        mock_new_camera = MagicMock()
+
+        _cameras.clear()
+        _camera_streaming.clear()
+        _camera_settings.clear()
+        _cameras[0] = mock_old_camera
+        _camera_streaming[0] = True
+
+        with patch("telescope_mcp.web.app._sdk_initialized", True):
+            with patch("telescope_mcp.web.app.asi") as mock_asi:
+                mock_asi.get_num_cameras.return_value = 1
+                mock_asi.Camera.return_value = mock_new_camera
+
+                result = _get_camera(0, force_reopen=True)
+
+        # Old camera should be closed
+        mock_old_camera.stop_video_capture.assert_called_once()
+        mock_old_camera.close.assert_called_once()
+
+        # New camera should be returned
+        assert result is mock_new_camera
+        assert _cameras[0] is mock_new_camera
+
+        # Cleanup
+        _cameras.clear()
+        _camera_streaming.clear()
+        _camera_settings.clear()
+
+    def test_force_reopen_handles_stop_video_error(self):
+        """Verifies force_reopen handles stop_video_capture errors.
+
+        Tests that stop_video_capture exceptions don't prevent close.
+
+        Arrangement:
+        1. Mock camera with failing stop_video_capture.
+
+        Action:
+        Calls _get_camera with force_reopen=True.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - close() still called despite stop_video_capture error.
+        - New camera opened successfully.
+        """
+        from telescope_mcp.web.app import (
+            _camera_settings,
+            _camera_streaming,
+            _cameras,
+            _get_camera,
+        )
+
+        mock_old_camera = MagicMock()
+        mock_old_camera.stop_video_capture.side_effect = RuntimeError("Not capturing")
+        mock_new_camera = MagicMock()
+
+        _cameras.clear()
+        _camera_streaming.clear()
+        _camera_settings.clear()
+        _cameras[0] = mock_old_camera
+
+        with patch("telescope_mcp.web.app._sdk_initialized", True):
+            with patch("telescope_mcp.web.app.asi") as mock_asi:
+                mock_asi.get_num_cameras.return_value = 1
+                mock_asi.Camera.return_value = mock_new_camera
+
+                result = _get_camera(0, force_reopen=True)
+
+        # close() should still be called despite stop error
+        mock_old_camera.close.assert_called_once()
+        assert result is mock_new_camera
+
+        # Cleanup
+        _cameras.clear()
+        _camera_streaming.clear()
+        _camera_settings.clear()
+
+    def test_force_reopen_handles_close_error(self):
+        """Verifies force_reopen logs warning on close failure.
+
+        Tests that close() exceptions are caught and logged.
+
+        Arrangement:
+        1. Mock camera with failing close().
+
+        Action:
+        Calls _get_camera with force_reopen=True.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - New camera still opened despite close error.
+        - Function doesn't raise exception.
+        """
+        from telescope_mcp.web.app import (
+            _camera_settings,
+            _camera_streaming,
+            _cameras,
+            _get_camera,
+        )
+
+        mock_old_camera = MagicMock()
+        mock_old_camera.close.side_effect = RuntimeError("Close failed")
+        mock_new_camera = MagicMock()
+
+        _cameras.clear()
+        _camera_streaming.clear()
+        _camera_settings.clear()
+        _cameras[0] = mock_old_camera
+
+        with patch("telescope_mcp.web.app._sdk_initialized", True):
+            with patch("telescope_mcp.web.app.asi") as mock_asi:
+                mock_asi.get_num_cameras.return_value = 1
+                mock_asi.Camera.return_value = mock_new_camera
+
+                # Should not raise despite close error
+                result = _get_camera(0, force_reopen=True)
+
+        assert result is mock_new_camera
+
+        # Cleanup
+        _cameras.clear()
+        _camera_streaming.clear()
+        _camera_settings.clear()
+
+
+class TestCaptureFrameEndpoint:
+    """Tests for capture_frame endpoint coverage."""
+
+    @pytest.mark.asyncio
+    async def test_capture_frame_stream_not_running(self):
+        """Verifies capture_frame returns error when stream not running.
+
+        Tests the error path when camera stream is not active.
+
+        Arrangement:
+        1. Clear streaming state so camera appears stopped.
+
+        Action:
+        Calls capture_frame endpoint.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - Returns 400 status code.
+        - Error message indicates stream not running.
+        """
+        from telescope_mcp.web.app import _camera_streaming, create_app
+
+        app = create_app()
+        client = TestClient(app)
+
+        _camera_streaming.clear()
+        _camera_streaming[0] = False  # Stream not running
+
+        response = client.post("/api/camera/0/capture?frame_type=light")
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] == "error"
+        assert "not running" in data["error"]
+
+        # Cleanup
+        _camera_streaming.clear()
+
+    @pytest.mark.asyncio
+    async def test_capture_frame_no_frame_available(self):
+        """Verifies capture_frame returns error when no frame buffered.
+
+        Tests the error path when stream is running but no frame yet.
+
+        Arrangement:
+        1. Set stream running but no frame in buffer.
+
+        Action:
+        Calls capture_frame endpoint.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - Returns 400 status code.
+        - Error message indicates no frame available.
+        """
+        from telescope_mcp.web.app import (
+            _camera_streaming,
+            _latest_frames,
+            create_app,
+        )
+
+        app = create_app()
+        client = TestClient(app)
+
+        _camera_streaming.clear()
+        _latest_frames.clear()
+        _camera_streaming[0] = True  # Stream running
+        # No frame in _latest_frames
+
+        response = client.post("/api/camera/0/capture?frame_type=light")
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] == "error"
+        assert "No frame available" in data["error"]
+
+        # Cleanup
+        _camera_streaming.clear()
+        _latest_frames.clear()
+
+    @pytest.mark.asyncio
+    async def test_capture_frame_success(self, tmp_path, monkeypatch):
+        """Verifies capture_frame succeeds with valid frame data.
+
+        Tests the success path for capturing a RAW16 frame from stream.
+
+        Arrangement:
+        1. Set stream running with buffered frame.
+        2. Mock camera and file operations.
+
+        Action:
+        Calls capture_frame endpoint.
+
+        Assertion Strategy:
+        Validates capture by confirming:
+        - Returns 200 status code.
+        - Response includes filename and frame metadata.
+        """
+        from telescope_mcp.web.app import (
+            _camera_settings,
+            _camera_streaming,
+            _cameras,
+            _latest_frame_info,
+            _latest_frames,
+            create_app,
+        )
+
+        app = create_app()
+        client = TestClient(app)
+
+        # Setup streaming state
+        _camera_streaming.clear()
+        _latest_frames.clear()
+        _latest_frame_info.clear()
+        _cameras.clear()
+        _camera_settings.clear()
+
+        _camera_streaming[0] = True
+        _latest_frames[0] = np.zeros((100, 100), dtype=np.uint16)
+        _latest_frame_info[0] = {
+            "width": 100,
+            "height": 100,
+            "is_color": False,
+            "exposure_us": 1000,
+            "gain": 100,
+        }
+
+        mock_camera = MagicMock()
+        mock_camera.get_camera_property.return_value = {
+            "Name": "Test Camera",
+            "Temperature": 250,
+        }
+        _cameras[0] = mock_camera
+        _camera_settings[0] = {"exposure_us": 1000, "gain": 100}
+
+        # Redirect capture directory to tmp_path
+        monkeypatch.chdir(tmp_path)
+
+        response = client.post("/api/camera/0/capture?frame_type=light")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert "filename" in data
+        assert data["camera"] == "finder"
+        assert data["frame_type"] == "light"
+        assert data["capture_mode"] == "raw16_stream"
+
+        # Cleanup
+        _camera_streaming.clear()
+        _latest_frames.clear()
+        _latest_frame_info.clear()
+        _cameras.clear()
+        _camera_settings.clear()
+
+    @pytest.mark.asyncio
+    async def test_capture_frame_handles_exception(self, tmp_path, monkeypatch):
+        """Verifies capture_frame returns 500 on internal error.
+
+        Tests the exception handler path when capture fails.
+
+        Arrangement:
+        1. Set stream running with frame.
+        2. Mock _save_frame_to_asdf to raise exception.
+
+        Action:
+        Calls capture_frame endpoint.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - Returns 500 status code.
+        - Error message included in response.
+        """
+        from telescope_mcp.web.app import (
+            _camera_settings,
+            _camera_streaming,
+            _cameras,
+            _latest_frame_info,
+            _latest_frames,
+            create_app,
+        )
+
+        app = create_app()
+        client = TestClient(app)
+
+        _camera_streaming.clear()
+        _latest_frames.clear()
+        _latest_frame_info.clear()
+        _cameras.clear()
+        _camera_settings.clear()
+
+        _camera_streaming[0] = True
+        _latest_frames[0] = np.zeros((100, 100), dtype=np.uint16)
+        _latest_frame_info[0] = {
+            "width": 100,
+            "height": 100,
+            "is_color": False,
+            "exposure_us": 1000,
+            "gain": 100,
+        }
+
+        mock_camera = MagicMock()
+        mock_camera.get_camera_property.return_value = {
+            "Name": "Test Camera",
+            "Temperature": 250,
+        }
+        _cameras[0] = mock_camera
+        _camera_settings[0] = {"exposure_us": 1000, "gain": 100}
+
+        monkeypatch.chdir(tmp_path)
+
+        # Make _save_frame_to_asdf raise an exception
+        with patch(
+            "telescope_mcp.web.app._save_frame_to_asdf",
+            side_effect=RuntimeError("ASDF write failed"),
+        ):
+            response = client.post("/api/camera/0/capture?frame_type=light")
+
+        assert response.status_code == 500
+        data = response.json()
+        assert data["status"] == "error"
+        assert "ASDF write failed" in data["error"]
+
+        # Cleanup
+        _camera_streaming.clear()
+        _latest_frames.clear()
+        _latest_frame_info.clear()
+        _cameras.clear()
+        _camera_settings.clear()
+
+
+class TestAddCoordinatesToMetadata:
+    """Tests for _add_coordinates_to_metadata function."""
+
+    @pytest.mark.asyncio
+    async def test_adds_coordinates_with_connected_sensor(self):
+        """Verifies coordinates added when sensor is connected.
+
+        Tests that sensor readings are converted and added to metadata.
+
+        Arrangement:
+        1. Mock connected sensor with valid reading.
+        2. Mock config with location.
+
+        Action:
+        Calls _add_coordinates_to_metadata.
+
+        Assertion Strategy:
+        Validates coordinate injection by confirming:
+        - Metadata contains coordinates dict.
+        - RA/Dec values present from conversion.
+        """
+        import datetime
+
+        from telescope_mcp.web.app import _add_coordinates_to_metadata
+
+        mock_sensor = MagicMock()
+        mock_sensor.connected = True
+
+        # Create async mock for read()
+        async def mock_read():
+            reading = MagicMock()
+            reading.altitude = 45.0
+            reading.azimuth = 180.0
+            reading.temperature = 20.0
+            reading.humidity = 50.0
+            return reading
+
+        mock_sensor.read = mock_read
+
+        mock_config = MagicMock()
+        mock_config.location = {"lat": 30.0, "lon": -97.0, "alt": 100.0}
+        mock_factory = MagicMock()
+        mock_factory.config = mock_config
+
+        frame_meta: dict[str, object] = {}
+        capture_time = datetime.datetime.now(datetime.UTC)
+
+        with patch("telescope_mcp.web.app._sensor", mock_sensor):
+            with patch("telescope_mcp.web.app.get_factory", return_value=mock_factory):
+                with patch("telescope_mcp.web.app.altaz_to_radec") as mock_convert:
+                    mock_convert.return_value = {
+                        "ra": 180.0,
+                        "dec": 45.0,
+                        "ra_hours": 12.0,
+                        "ra_hms": "12h 00m 00s",
+                        "dec_dms": "+45° 00' 00\"",
+                    }
+
+                    await _add_coordinates_to_metadata(frame_meta, capture_time)
+
+        assert "coordinates" in frame_meta
+        coords = frame_meta["coordinates"]
+        assert isinstance(coords, dict)
+        assert coords["altitude"] == 45.0
+        assert coords["azimuth"] == 180.0
+        assert coords["ra"] == 180.0
+        assert coords["dec"] == 45.0
+        assert coords["coordinate_source"] == "sensor"
+
+    @pytest.mark.asyncio
+    async def test_no_coordinates_when_sensor_none(self):
+        """Verifies no error when sensor is None.
+
+        Tests graceful handling when sensor not initialized.
+
+        Arrangement:
+        1. Set _sensor to None.
+
+        Action:
+        Calls _add_coordinates_to_metadata.
+
+        Assertion Strategy:
+        Validates graceful degradation by confirming:
+        - No exception raised.
+        - Metadata unchanged.
+        """
+        import datetime
+
+        from telescope_mcp.web.app import _add_coordinates_to_metadata
+
+        frame_meta: dict[str, object] = {}
+        capture_time = datetime.datetime.now(datetime.UTC)
+
+        with patch("telescope_mcp.web.app._sensor", None):
+            await _add_coordinates_to_metadata(frame_meta, capture_time)
+
+        assert "coordinates" not in frame_meta
+
+    @pytest.mark.asyncio
+    async def test_no_coordinates_when_sensor_disconnected(self):
+        """Verifies no error when sensor not connected.
+
+        Tests graceful handling when sensor exists but disconnected.
+
+        Arrangement:
+        1. Mock sensor with connected=False.
+
+        Action:
+        Calls _add_coordinates_to_metadata.
+
+        Assertion Strategy:
+        Validates graceful degradation by confirming:
+        - No exception raised.
+        - Metadata unchanged.
+        """
+        import datetime
+
+        from telescope_mcp.web.app import _add_coordinates_to_metadata
+
+        mock_sensor = MagicMock()
+        mock_sensor.connected = False
+
+        frame_meta: dict[str, object] = {}
+        capture_time = datetime.datetime.now(datetime.UTC)
+
+        with patch("telescope_mcp.web.app._sensor", mock_sensor):
+            await _add_coordinates_to_metadata(frame_meta, capture_time)
+
+        assert "coordinates" not in frame_meta
+
+    @pytest.mark.asyncio
+    async def test_handles_sensor_read_error(self):
+        """Verifies error handling when sensor read fails.
+
+        Tests that sensor exceptions don't crash capture.
+
+        Arrangement:
+        1. Mock sensor that raises on read().
+
+        Action:
+        Calls _add_coordinates_to_metadata.
+
+        Assertion Strategy:
+        Validates error handling by confirming:
+        - No exception propagated.
+        - Metadata unchanged.
+        """
+        import datetime
+
+        from telescope_mcp.web.app import _add_coordinates_to_metadata
+
+        mock_sensor = MagicMock()
+        mock_sensor.connected = True
+
+        async def mock_read():
+            raise RuntimeError("Sensor communication error")
+
+        mock_sensor.read = mock_read
+
+        frame_meta: dict[str, object] = {}
+        capture_time = datetime.datetime.now(datetime.UTC)
+
+        with patch("telescope_mcp.web.app._sensor", mock_sensor):
+            # Should not raise
+            await _add_coordinates_to_metadata(frame_meta, capture_time)
+
+        assert "coordinates" not in frame_meta
+
+
+class TestSaveFrameToAsdf:
+    """Tests for _save_frame_to_asdf function."""
+
+    @pytest.mark.asyncio
+    async def test_creates_new_asdf_file(self, tmp_path):
+        """Verifies new ASDF file created when none exists.
+
+        Tests the creation path for new session files.
+
+        Arrangement:
+        1. Use tmp_path for clean file system.
+        2. Prepare frame data and metadata.
+
+        Action:
+        Calls _save_frame_to_asdf with non-existent file.
+
+        Assertion Strategy:
+        Validates file creation by confirming:
+        - File created on disk.
+        - Returns frame_index 0.
+        - File contains expected structure.
+        """
+        from telescope_mcp.web.app import _save_frame_to_asdf
+
+        filepath = tmp_path / "test_session.asdf"
+        img = np.zeros((100, 100), dtype=np.uint16)
+        frame_meta = {
+            "width": 100,
+            "height": 100,
+            "is_color": False,
+            "exposure_us": 1000,
+        }
+        info = {"Name": "Test Camera"}
+
+        frame_index = await _save_frame_to_asdf(
+            filepath, "finder", "light", img, frame_meta, info
+        )
+
+        assert filepath.exists()
+        assert frame_index == 0
+
+        # Verify file structure
+        import asdf
+
+        with asdf.open(str(filepath)) as af:
+            assert "cameras" in af.tree
+            assert "finder" in af.tree["cameras"]
+            assert len(af.tree["cameras"]["finder"]["light"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_appends_to_existing_asdf_file(self, tmp_path):
+        """Verifies frames appended to existing ASDF file.
+
+        Tests the append path for existing session files.
+
+        Arrangement:
+        1. Create initial ASDF file with one frame.
+        2. Prepare second frame data.
+
+        Action:
+        Calls _save_frame_to_asdf with existing file.
+
+        Assertion Strategy:
+        Validates append by confirming:
+        - Returns frame_index 1.
+        - File contains two frames.
+        """
+        import asdf
+
+        from telescope_mcp.web.app import _save_frame_to_asdf
+
+        filepath = tmp_path / "test_session.asdf"
+
+        # Create initial file
+        initial_tree = {
+            "metadata": {"created": "2025-01-01", "session_date": "20250101"},
+            "cameras": {
+                "finder": {
+                    "info": {"name": "Test"},
+                    "light": [
+                        {"data": np.zeros((10, 10), dtype=np.uint16), "meta": {}}
+                    ],
+                    "dark": [],
+                    "flat": [],
+                    "bias": [],
+                }
+            },
+        }
+        af = asdf.AsdfFile(initial_tree)
+        af.write_to(str(filepath))
+
+        # Append second frame
+        img = np.ones((100, 100), dtype=np.uint16)
+        frame_meta = {"width": 100, "height": 100, "is_color": False}
+        info = {"Name": "Test Camera"}
+
+        frame_index = await _save_frame_to_asdf(
+            filepath, "finder", "light", img, frame_meta, info
+        )
+
+        assert frame_index == 1
+
+        # Verify two frames now
+        with asdf.open(str(filepath)) as af:
+            assert len(af.tree["cameras"]["finder"]["light"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_creates_new_camera_section_in_existing_file(self, tmp_path):
+        """Verifies new camera section added to existing file.
+
+        Tests adding a different camera to existing session.
+
+        Arrangement:
+        1. Create ASDF with finder camera.
+        2. Add frame from main camera.
+
+        Action:
+        Calls _save_frame_to_asdf with different camera_key.
+
+        Assertion Strategy:
+        Validates new section by confirming:
+        - File now has both camera sections.
+        - Main camera has one frame.
+        """
+        import asdf
+
+        from telescope_mcp.web.app import _save_frame_to_asdf
+
+        filepath = tmp_path / "test_session.asdf"
+
+        # Create initial file with finder only
+        initial_tree = {
+            "metadata": {"created": "2025-01-01"},
+            "cameras": {
+                "finder": {
+                    "info": {"name": "Finder"},
+                    "light": [],
+                    "dark": [],
+                    "flat": [],
+                    "bias": [],
+                }
+            },
+        }
+        af = asdf.AsdfFile(initial_tree)
+        af.write_to(str(filepath))
+
+        # Add main camera frame
+        img = np.zeros((200, 200), dtype=np.uint16)
+        frame_meta = {"width": 200, "height": 200, "is_color": True}
+        info = {"Name": "Main Camera"}
+
+        frame_index = await _save_frame_to_asdf(
+            filepath, "main", "light", img, frame_meta, info
+        )
+
+        assert frame_index == 0
+
+        with asdf.open(str(filepath)) as af:
+            assert "finder" in af.tree["cameras"]
+            assert "main" in af.tree["cameras"]
+            assert len(af.tree["cameras"]["main"]["light"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_adds_cameras_dict_to_existing_file_without_cameras(self, tmp_path):
+        """Verifies cameras dict created when missing from existing file.
+
+        Tests the path where an existing ASDF file lacks a cameras section.
+
+        Arrangement:
+        1. Create ASDF file without cameras dict.
+
+        Action:
+        Calls _save_frame_to_asdf.
+
+        Assertion Strategy:
+        Validates cameras dict creation by confirming:
+        - File now has cameras dict.
+        - Camera section created with frame.
+        """
+        import asdf
+
+        from telescope_mcp.web.app import _save_frame_to_asdf
+
+        filepath = tmp_path / "test_session.asdf"
+
+        # Create initial file WITHOUT cameras section
+        initial_tree = {
+            "metadata": {"created": "2025-01-01", "session_date": "20250101"},
+            # No "cameras" key
+        }
+        af = asdf.AsdfFile(initial_tree)
+        af.write_to(str(filepath))
+
+        # Add frame - should create cameras dict
+        img = np.zeros((100, 100), dtype=np.uint16)
+        frame_meta = {"width": 100, "height": 100, "is_color": False}
+        info = {"Name": "Test Camera"}
+
+        frame_index = await _save_frame_to_asdf(
+            filepath, "finder", "light", img, frame_meta, info
+        )
+
+        assert frame_index == 0
+
+        with asdf.open(str(filepath)) as af:
+            assert "cameras" in af.tree
+            assert "finder" in af.tree["cameras"]
+            assert len(af.tree["cameras"]["finder"]["light"]) == 1
+
+
 class TestMainFunction:
     """Tests for main() entry point."""
 

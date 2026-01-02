@@ -1774,7 +1774,7 @@ async def _generate_camera_stream(
             )
             buffer_size = width * height * 2  # 16-bit = 2 bytes per pixel
             logger.info("Finder camera using RAW16 mode for capture-ready streaming")
-        else:
+        else:  # pragma: no cover - ASI SDK hardware setup for main camera
             # Main camera: RAW16 for maximum quality, grayscale preview
             camera.set_roi(
                 width=width, height=height, bins=1, image_type=asi.ASI_IMG_RAW16
@@ -1788,7 +1788,7 @@ async def _generate_camera_stream(
         # Stop any existing video capture before starting new one
         try:
             camera.stop_video_capture()
-        except Exception:
+        except Exception:  # pragma: no cover - ASI SDK hardware exception
             pass  # May not have been capturing
 
         # Start video capture
