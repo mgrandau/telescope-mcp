@@ -17,13 +17,13 @@
       "id": "openWebUI",
       "type": "command",
       "command": "simpleBrowser.show",
-      "args": ["http://localhost:8080"]
+      "args": ["http://127.0.0.1:8080"]
     },
     {
       "id": "openAITracking",
       "type": "command",
       "command": "simpleBrowser.show",
-      "args": ["http://localhost:8000"]
+      "args": ["http://127.0.0.1:8000"]
     }
   ]
 }
