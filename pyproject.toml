@@ -40,7 +40,7 @@ dev = [
 ]
 
 [project.scripts]
-telescope-mcp = "telescope_mcp.server:main"
+telescope-mcp = "telescope_mcp.cli:main"
 telescope-web = "telescope_mcp.web.app:main"
 
 [build-system]
