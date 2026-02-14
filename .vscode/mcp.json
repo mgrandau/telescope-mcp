@@ -12,7 +12,14 @@
         // "--mode", "hardware",
         "--latitude", "42.97990940",
         "--longitude", "-89.53109220",
-        "--height", "291.23"
+        "--height", "291.23",
+        // Per-camera defaults (uncomment to override code defaults)
+        // Finder camera (Camera 0: ASI120MC-S) — wide-field, long exposure
+        // "--finder-exposure-us", "10000000",  // 10s (range: 1-180000000)
+        // "--finder-gain", "80",               // (range: 0-510)
+        // Main camera (Camera 1: ASI482MC) — high-res, short exposure
+        // "--main-exposure-us", "60000",       // 60ms (range: 1-600000000)
+        // "--main-gain", "80"                  // (range: 0-570)
       ]
     },
     "docscope-mcp": {

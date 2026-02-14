@@ -61,9 +61,68 @@ _encoder: ImageEncoder | None = None
 # Finder camera (0): Long exposures for wide-field, up to ~180 seconds
 DEFAULT_FINDER_EXPOSURE_US = 10_000_000  # 10 second (quick startup, user can increase)
 # Main camera (1): Short exposures for high-res, ~300ms typical
-DEFAULT_MAIN_EXPOSURE_US = 60_000  # 300ms
-DEFAULT_GAIN = 80
+DEFAULT_MAIN_EXPOSURE_US = 60_000  # 60ms
+DEFAULT_FINDER_GAIN = 80
+DEFAULT_MAIN_GAIN = 80
 DEFAULT_FPS = 15
+
+
+def configure_camera_defaults(
+    finder_exposure_us: int | None = None,
+    finder_gain: int | None = None,
+    main_exposure_us: int | None = None,
+    main_gain: int | None = None,
+) -> None:
+    """Configure per-camera default settings from MCP config.
+
+    Called at startup to override hardcoded defaults with values from
+    the MCP configuration (mcp.json CLI args). If a value is None,
+    the hardcoded default is retained.
+
+    Business context: Different observing conditions (moonlit vs dark sky)
+    require different camera defaults. Config-driven approach avoids code
+    changes for routine adjustments. Values are set via --finder-exposure-us,
+    --finder-gain, --main-exposure-us, --main-gain CLI args in mcp.json.
+
+    Args:
+        finder_exposure_us: Finder camera (0) exposure in microseconds.
+            None keeps DEFAULT_FINDER_EXPOSURE_US (10,000,000 = 10s).
+        finder_gain: Finder camera (0) gain value (0-510).
+            None keeps DEFAULT_FINDER_GAIN (80).
+        main_exposure_us: Main camera (1) exposure in microseconds.
+            None keeps DEFAULT_MAIN_EXPOSURE_US (60,000 = 60ms).
+        main_gain: Main camera (1) gain value (0-570).
+            None keeps DEFAULT_MAIN_GAIN (80).
+
+    Returns:
+        None. Modifies module-level defaults.
+
+    Raises:
+        None.
+
+    Example:
+        >>> configure_camera_defaults(
+        ...     finder_exposure_us=5_000_000,  # 5s finder
+        ...     finder_gain=100,
+        ...     main_exposure_us=300_000,  # 300ms main
+        ...     main_gain=50,
+        ... )
+    """
+    global DEFAULT_FINDER_EXPOSURE_US, DEFAULT_MAIN_EXPOSURE_US
+    global DEFAULT_FINDER_GAIN, DEFAULT_MAIN_GAIN
+
+    if finder_exposure_us is not None:
+        DEFAULT_FINDER_EXPOSURE_US = finder_exposure_us
+        logger.info(f"Finder exposure configured: {finder_exposure_us}us")
+    if finder_gain is not None:
+        DEFAULT_FINDER_GAIN = finder_gain
+        logger.info(f"Finder gain configured: {finder_gain}")
+    if main_exposure_us is not None:
+        DEFAULT_MAIN_EXPOSURE_US = main_exposure_us
+        logger.info(f"Main exposure configured: {main_exposure_us}us")
+    if main_gain is not None:
+        DEFAULT_MAIN_GAIN = main_gain
+        logger.info(f"Main gain configured: {main_gain}")
 
 
 def _get_default_exposure(camera_id: int) -> int:
@@ -98,6 +157,29 @@ def _get_default_exposure(camera_id: int) -> int:
     if camera_id == 0:
         return DEFAULT_FINDER_EXPOSURE_US
     return DEFAULT_MAIN_EXPOSURE_US
+
+
+def _get_default_gain(camera_id: int) -> int:
+    """Get default gain for a camera.
+
+    Returns per-camera gain defaults. Configurable via
+    configure_camera_defaults() at startup.
+
+    Args:
+        camera_id: Camera index (0=finder, 1=main).
+
+    Returns:
+        Gain value for the specified camera.
+
+    Example:
+        >>> _get_default_gain(0)
+        80
+        >>> _get_default_gain(1)
+        80
+    """
+    if camera_id == 0:
+        return DEFAULT_FINDER_GAIN
+    return DEFAULT_MAIN_GAIN
 
 
 def _init_sdk() -> None:
@@ -193,7 +275,7 @@ def _get_camera(camera_id: int, force_reopen: bool = False) -> asi.Camera | None
             _camera_streaming[camera_id] = False
             _camera_settings[camera_id] = {
                 "exposure_us": _get_default_exposure(camera_id),
-                "gain": DEFAULT_GAIN,
+                "gain": _get_default_gain(camera_id),
             }
             logger.info(f"Opened camera {camera_id}")
         except Exception as e:
@@ -465,40 +547,40 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
     ) -> StreamingResponse:
         """Stream MJPEG video from the finder camera (camera 0).
 
-        Convenience endpoint for the finder/guide camera. Returns a
-        continuous MJPEG stream suitable for <img> tags or video players.
-        The finder camera is typically used for alignment and tracking.
-/stream/finder
-        Business context: Enables real-time finder camera display in web
-        dashboards for telescope alignment and target acquisition. The shorter
-        exposures and higher frame rates typical of finder cameras make them
-        ideal for live view while the main camera takes long exposures.
-        Critical for "goto" operation verification and autoguiding feedback.
+                Convenience endpoint for the finder/guide camera. Returns a
+                continuous MJPEG stream suitable for <img> tags or video players.
+                The finder camera is typically used for alignment and tracking.
+        /stream/finder
+                Business context: Enables real-time finder camera display in web
+                dashboards for telescope alignment and target acquisition. The shorter
+                exposures and higher frame rates typical of finder cameras make them
+                ideal for live view while the main camera takes long exposures.
+                Critical for "goto" operation verification and autoguiding feedback.
 
-        Args:
-            exposure_us: Exposure time in microseconds. None uses default.
-            gain: Gain value (camera-specific range). None uses default.
-            fps: Target frame rate, default 15. Actual rate may be lower
-                if exposure time exceeds frame interval.
+                Args:
+                    exposure_us: Exposure time in microseconds. None uses default.
+                    gain: Gain value (camera-specific range). None uses default.
+                    fps: Target frame rate, default 15. Actual rate may be lower
+                        if exposure time exceeds frame interval.
 
-        Returns:
-            StreamingResponse with multipart MJPEG content.
+                Returns:
+                    StreamingResponse with multipart MJPEG content.
 
-        Raises:
-            None. Camera errors displayed as text on error frames.
+                Raises:
+                    None. Camera errors displayed as text on error frames.
 
-        Example:
-            # In HTML dashboard:
-            <img src="/stream/finder?exposure_us=50000&gain=50&fps=15">
+                Example:
+                    # In HTML dashboard:
+                    <img src="/stream/finder?exposure_us=50000&gain=50&fps=15">
 
-            # Or via requests:
-            import requests
-            resp = requests.get(
-                'http://localhost:8080/stream/finder?fps=10', stream=True
-            )
-            for chunk in resp.iter_content(chunk_size=1024):
-                # Process MJPEG frames
-                pass
+                    # Or via requests:
+                    import requests
+                    resp = requests.get(
+                        'http://localhost:8080/stream/finder?fps=10', stream=True
+                    )
+                    for chunk in resp.iter_content(chunk_size=1024):
+                        # Process MJPEG frames
+                        pass
         """
         return StreamingResponse(  # pragma: no cover - infinite stream
             _generate_camera_stream(
@@ -527,8 +609,8 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         focusing, framing, and quick target verification before committing to
         long exposures. Short preview exposures (50-200 ms) allow responsive
         framing while the main camera actual imaging uses much longer exposures
-        (1-10 minutes). Essential for unguided set/stream/finderups to verify field before
-        starting imaging sequences.
+        (1-10 minutes). Essential for unguided setups to verify
+        field before starting imaging sequences.
 
         Args:
             exposure_us: Exposure time in microseconds. None uses default.
@@ -1334,7 +1416,7 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             height = frame_info.get("height", img.shape[0])
             is_color = frame_info.get("is_color", False)
             exp = frame_info.get("exposure_us", _get_default_exposure(camera_id))
-            gain = frame_info.get("gain", DEFAULT_GAIN)
+            gain = frame_info.get("gain", _get_default_gain(camera_id))
 
             logger.info(
                 f"Capturing RAW16 {frame_type} from {camera_key} stream: "
@@ -1692,8 +1774,8 @@ async def _generate_camera_stream(
             defaults (finder: 10s, main: 300ms). Finder supports up to ~180s,
             main typically 10-5000ms.
         gain: Gain value (amplification). None uses stored settings or
-            DEFAULT_GAIN (50). Range 0-600 (camera-dependent). Higher gain =
-            brighter but more noise.
+            per-camera default (80). Range 0-600 (camera-dependent). Higher
+            gain = brighter but more noise.
         fps: Target frames per second (yield rate). Default 15. Actual FPS
             limited by exposure time (cannot exceed 1000000/exposure_us).
             Higher FPS reduces latency but increases bandwidth.
@@ -1757,7 +1839,11 @@ async def _generate_camera_stream(
             if exposure_us is not None
             else settings.get("exposure_us", _get_default_exposure(camera_id))
         )
-        g = gain if gain is not None else settings.get("gain", DEFAULT_GAIN)
+        g = (
+            gain
+            if gain is not None
+            else settings.get("gain", _get_default_gain(camera_id))
+        )
 
         # Configure camera for video
         camera.set_control_value(asi.ASI_GAIN, g)

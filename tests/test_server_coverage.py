@@ -304,6 +304,10 @@ class TestMainCoverage:
             latitude=None,
             longitude=None,
             height=0.0,
+            finder_exposure_us=None,
+            finder_gain=None,
+            main_exposure_us=None,
+            main_gain=None,
         )
 
         with patch("telescope_mcp.server.parse_args", return_value=mock_args):
@@ -343,6 +347,10 @@ class TestMainCoverage:
             latitude=None,
             longitude=None,
             height=0.0,
+            finder_exposure_us=None,
+            finder_gain=None,
+            main_exposure_us=None,
+            main_gain=None,
         )
 
         with patch("telescope_mcp.server.parse_args", return_value=mock_args):
@@ -383,6 +391,10 @@ class TestMainCoverage:
             latitude=40.7128,
             longitude=-74.0060,
             height=10.0,
+            finder_exposure_us=None,
+            finder_gain=None,
+            main_exposure_us=None,
+            main_gain=None,
         )
 
         with patch("telescope_mcp.server.parse_args", return_value=mock_args):
@@ -426,6 +438,10 @@ class TestMainCoverage:
             latitude=91.0,  # Invalid: > 90
             longitude=-74.0060,
             height=0.0,
+            finder_exposure_us=None,
+            finder_gain=None,
+            main_exposure_us=None,
+            main_gain=None,
         )
 
         with patch("telescope_mcp.server.parse_args", return_value=mock_args):
@@ -458,6 +474,10 @@ class TestMainCoverage:
             latitude=40.7128,
             longitude=181.0,  # Invalid: > 180
             height=0.0,
+            finder_exposure_us=None,
+            finder_gain=None,
+            main_exposure_us=None,
+            main_gain=None,
         )
 
         with patch("telescope_mcp.server.parse_args", return_value=mock_args):
@@ -491,6 +511,10 @@ class TestMainCoverage:
             latitude=None,
             longitude=None,
             height=0.0,
+            finder_exposure_us=None,
+            finder_gain=None,
+            main_exposure_us=None,
+            main_gain=None,
         )
 
         with patch("telescope_mcp.server.parse_args", return_value=mock_args):

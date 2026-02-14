@@ -13,7 +13,7 @@ from mcp.server.stdio import stdio_server
 
 from telescope_mcp.observability import configure_logging, get_logger
 from telescope_mcp.tools import cameras, motors, position, sessions
-from telescope_mcp.web.app import create_app
+from telescope_mcp.web.app import configure_camera_defaults, create_app
 
 logger = get_logger(__name__)
 
@@ -355,6 +355,39 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Observer height above sea level in meters (default: 0).",
     )
+
+    # Per-camera defaults (configurable via mcp.json args)
+    parser.add_argument(
+        "--finder-exposure-us",
+        type=int,
+        default=None,
+        help=(
+            "Finder camera (0) default exposure in microseconds. "
+            "Default: 10000000 (10s). Range: 1-180000000."
+        ),
+    )
+    parser.add_argument(
+        "--finder-gain",
+        type=int,
+        default=None,
+        help=("Finder camera (0) default gain. " "Default: 80. Range: 0-510."),
+    )
+    parser.add_argument(
+        "--main-exposure-us",
+        type=int,
+        default=None,
+        help=(
+            "Main camera (1) default exposure in microseconds. "
+            "Default: 60000 (60ms). Range: 1-600000000."
+        ),
+    )
+    parser.add_argument(
+        "--main-gain",
+        type=int,
+        default=None,
+        help=("Main camera (1) default gain. " "Default: 80. Range: 0-570."),
+    )
+
     return parser.parse_args()
 
 
@@ -430,6 +463,14 @@ def main() -> None:
             longitude=args.longitude,
             height=args.height,
         )
+
+    # Configure per-camera defaults if specified
+    configure_camera_defaults(
+        finder_exposure_us=args.finder_exposure_us,
+        finder_gain=args.finder_gain,
+        main_exposure_us=args.main_exposure_us,
+        main_gain=args.main_gain,
+    )
 
     # Initialize session manager and log startup
     from telescope_mcp.drivers.config import get_session_manager
