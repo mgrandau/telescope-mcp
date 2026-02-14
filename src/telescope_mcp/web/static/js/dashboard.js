@@ -200,25 +200,7 @@ async function gotoPosition() {
     }
 }
 
-// Camera controls - exposure and gain only (RAW16 mode, no color)
-async function updateFinderSettings() {
-    const exposure = document.getElementById('finder-exposure').value;
-    const gain = document.getElementById('finder-gain').value;
-
-    // Finder exposure is in seconds, convert to microseconds
-    await setCameraControl(0, 'ASI_EXPOSURE', exposure * 1000000);
-    await setCameraControl(0, 'ASI_GAIN', gain);
-}
-
-async function updateMainSettings() {
-    const exposure = document.getElementById('main-exposure').value;
-    const gain = document.getElementById('main-gain').value;
-
-    // Main exposure is in milliseconds, convert to microseconds
-    await setCameraControl(1, 'ASI_EXPOSURE', exposure * 1000);
-    await setCameraControl(1, 'ASI_GAIN', gain);
-}
-
+// Camera control - available for MCP tool use, not exposed in UI
 async function setCameraControl(cameraId, control, value) {
     try {
         await fetch(`${API_BASE}/api/camera/${cameraId}/control?control=${control}&value=${value}`, {
