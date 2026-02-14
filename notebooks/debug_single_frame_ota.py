@@ -22,7 +22,7 @@ if num_cameras == 0:
     exit(1)
 
 # Open camera 0
-camera = asi.Camera(0)
+camera = asi.Camera(1)
 info = camera.get_camera_property()
 print(f"Camera: {info['Name']}")
 print(f"Resolution: {info['MaxWidth']}x{info['MaxHeight']}")
@@ -32,9 +32,9 @@ width = info["MaxWidth"]
 height = info["MaxHeight"]
 is_color = info["IsColorCam"]
 
-# spotter camera 5 sec gain 100
+# spotter camera 5 sec gain 80
 # Configure camera
-exposure_us = 10_000_000 # 10 s
+exposure_us = 50_000 # 22ms
 gain = 80
 
 camera.set_control_value(asi.ASI_GAIN, gain)

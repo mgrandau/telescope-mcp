@@ -59,10 +59,10 @@ _encoder: ImageEncoder | None = None
 
 # Default settings (per-camera)
 # Finder camera (0): Long exposures for wide-field, up to ~180 seconds
-DEFAULT_FINDER_EXPOSURE_US = 1_000_000  # 1 second (quick startup, user can increase)
+DEFAULT_FINDER_EXPOSURE_US = 10_000_000  # 10 second (quick startup, user can increase)
 # Main camera (1): Short exposures for high-res, ~300ms typical
-DEFAULT_MAIN_EXPOSURE_US = 300_000  # 300ms
-DEFAULT_GAIN = 50
+DEFAULT_MAIN_EXPOSURE_US = 60_000  # 300ms
+DEFAULT_GAIN = 80
 DEFAULT_FPS = 15
 
 
@@ -421,7 +421,7 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         endpoints, WebSocket connections for position updates (if enabled).
         FastAPI handles async rendering. Static assets (CSS, JS) served from
         /static mount. Template not found raises TemplateNotFound (500 error).
-        Request object required by Jinja2 for URL generation.
+        Request object required by Jinja2 f/stream/finderor URL generation.
 
         Args:
             request: FastAPI Request object providing URL context, headers,
@@ -433,7 +433,7 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             telescope control interface. Content-Type: text/html. Status 200
             on success.
 
-        Raises:
+        Raises:0
             None explicitly. TemplateNotFound (500) if dashboard.html missing
             from templates directory.
 
@@ -468,7 +468,7 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         Convenience endpoint for the finder/guide camera. Returns a
         continuous MJPEG stream suitable for <img> tags or video players.
         The finder camera is typically used for alignment and tracking.
-
+/stream/finder
         Business context: Enables real-time finder camera display in web
         dashboards for telescope alignment and target acquisition. The shorter
         exposures and higher frame rates typical of finder cameras make them
@@ -527,7 +527,7 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         focusing, framing, and quick target verification before committing to
         long exposures. Short preview exposures (50-200 ms) allow responsive
         framing while the main camera actual imaging uses much longer exposures
-        (1-10 minutes). Essential for unguided setups to verify field before
+        (1-10 minutes). Essential for unguided set/stream/finderups to verify field before
         starting imaging sequences.
 
         Args:
