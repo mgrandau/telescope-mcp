@@ -1406,6 +1406,72 @@ class TestMotorAPIEndpoints:
         response = client.post("/api/motor/altitude/start?direction=up&speed=101")
         assert response.status_code == 422
 
+    def test_set_home_succeeds(self, client):
+        """Verifies set home returns 200 when motor is initialized.
+
+        Business context:
+            Set Home zeros both motor position counters. In test context,
+            the digital twin motor is always initialized via lifespan,
+            so the endpoint should succeed.
+
+        Arrangement:
+            1. TestClient with lifespan (motor initialized via digital twin).
+
+        Action:
+            POST /api/motor/home/set
+
+        Assertion Strategy:
+            - HTTP 200 indicates success.
+            - Response status is "ok".
+            - Response message confirms home set.
+        """
+        response = client.post("/api/motor/home/set")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert "0,0" in data["message"]
+
+    def test_generic_nudge_altitude(self, client):
+        """Verifies generic /api/motor/nudge route dispatches to altitude.
+
+        Business context:
+            JavaScript dashboard calls generic /api/motor/nudge?axis=...
+            instead of per-axis routes. This test verifies the dispatch.
+        """
+        response = client.post(
+            "/api/motor/nudge?axis=altitude&direction=up&degrees=0.1"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["axis"] == "altitude"
+        assert data["direction"] == "up"
+
+    def test_generic_nudge_azimuth(self, client):
+        """Verifies generic /api/motor/nudge route dispatches to azimuth."""
+        response = client.post(
+            "/api/motor/nudge?axis=azimuth&direction=left&degrees=0.5"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["axis"] == "azimuth"
+        assert data["direction"] == "left"
+
+    def test_generic_start_altitude(self, client):
+        """Verifies generic /api/motor/start route dispatches to altitude."""
+        response = client.post("/api/motor/start?axis=altitude&direction=up&speed=50")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["axis"] == "altitude"
+        assert data["status"] == "moving"
+
+    def test_generic_start_azimuth(self, client):
+        """Verifies generic /api/motor/start route dispatches to azimuth."""
+        response = client.post("/api/motor/start?axis=azimuth&direction=ccw&speed=75")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["axis"] == "azimuth"
+        assert data["status"] == "moving"
+
 
 class TestPositionAPIEndpoint:
     """Tests for telescope position readout endpoint."""

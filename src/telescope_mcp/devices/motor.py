@@ -546,6 +546,77 @@ class Motor:
 
         logger.info("All motors homed")
 
+    async def zero_position(self, motor: MotorType) -> None:
+        """Zero the position counter for a single motor axis.
+
+        Sets the motor's internal position counter to 0 without any
+        physical movement. Used to establish the current physical
+        position as the reference origin.
+
+        Args:
+            motor: Which motor to zero (ALTITUDE or AZIMUTH).
+
+        Returns:
+            None. Position counter set to 0 immediately.
+
+        Raises:
+            RuntimeError: If motor not connected.
+
+        Example:
+            >>> await motor.zero_position(MotorType.ALTITUDE)
+        """
+        if not self._connected or self._instance is None:
+            raise RuntimeError("Motor not connected. Call connect() first.")
+
+        logger.info("Zeroing position", motor=motor.value)
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._instance.zero_position, motor)
+
+        logger.info("Position zeroed", motor=motor.value)
+
+    async def set_home(self) -> None:
+        """Zero both motor axes at current position (Set Home).
+
+        Sets altitude and azimuth position counters to 0 without any
+        physical movement. Called when user presses 'Set Home' on the
+        dashboard to establish the current telescope position as (0,0)
+        reference for the observing session.
+
+        Business context: At the start of an observing session, the operator
+        physically positions the telescope to a known reference point (e.g.,
+        level, pointed north), then calls set_home to record that position
+        as the zero reference. All subsequent position readouts will be
+        relative to this home.
+
+        Returns:
+            None. Both axes read position 0 after this call.
+
+        Raises:
+            RuntimeError: If motor not connected.
+
+        Example:
+            >>> # Operator positions telescope manually, then:
+            >>> await motor.set_home()
+            >>> # Both axes now read 0
+        """
+        if not self._connected or self._instance is None:
+            raise RuntimeError("Motor not connected. Call connect() first.")
+
+        from telescope_mcp.drivers.motors.types import MotorType
+
+        logger.info("Setting home - zeroing both axes")
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, self._instance.zero_position, MotorType.ALTITUDE
+        )
+        await loop.run_in_executor(
+            None, self._instance.zero_position, MotorType.AZIMUTH
+        )
+
+        logger.info("Home set - both axes zeroed")
+
     def get_device_status(self) -> MotorDeviceStatus:
         """Get comprehensive motor controller status for debugging.
 

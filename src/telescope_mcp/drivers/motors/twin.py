@@ -25,7 +25,6 @@ Example:
 from __future__ import annotations
 
 import threading
-import time
 from dataclasses import dataclass
 from types import TracebackType
 
@@ -190,6 +189,7 @@ class DigitalTwinMotorInstance:
 
         # Thread safety
         self._lock = threading.Lock()
+        self._stop_event = threading.Event()
 
         logger.debug(
             "Digital twin motor controller initialized",
@@ -329,8 +329,9 @@ class DigitalTwinMotorInstance:
             self._target_positions[motor] = steps
             self._current_speeds[motor] = speed
 
-        # Simulate move time
+        # Simulate move time (interruptible via _stop_event)
         move_time = self._simulate_move_time(distance, speed)
+        self._stop_event.clear()
         if move_time > 0:
             logger.debug(
                 "Simulating move",
@@ -339,7 +340,18 @@ class DigitalTwinMotorInstance:
                 to_steps=steps,
                 duration_sec=f"{move_time:.2f}",
             )
-            time.sleep(move_time)
+            interrupted = self._stop_event.wait(timeout=move_time)
+            if interrupted:
+                # Stop was called during move — position stays unchanged
+                with self._lock:
+                    self._is_moving[motor] = False
+                    self._current_speeds[motor] = 0
+                logger.info(
+                    "Move interrupted by stop",
+                    motor=motor.value,
+                    position=current_pos,
+                )
+                return
 
         with self._lock:
             self._positions[motor] = steps
@@ -392,28 +404,37 @@ class DigitalTwinMotorInstance:
         self.move(motor, new_position, speed)
 
     def stop(self, motor: MotorType | None = None) -> None:
-        """Stop motor(s) immediately.
+        """Stop motor(s) immediately by interrupting any active move.
 
-        In digital twin, movement is synchronous so this is a no-op for
-        current moves. Logs the stop request for debugging.
+        Sets the stop event to wake any blocking move() call, causing it
+        to return early without updating position. This provides true
+        interruptible stop for the digital twin.
+
+        Thread Safety:
+            The _stop_event.set() call is thread-safe and interrupts any
+            thread blocked in Event.wait() inside move(). No lock needed
+            for the interrupt itself.
 
         Args:
             motor: Motor to stop, or None for emergency stop all.
 
         Returns:
-            None.
+            None. Any in-progress moves will return immediately.
 
         Example:
             >>> controller.stop(MotorType.ALTITUDE)
-            >>> controller.stop()  # Stop all
+            >>> controller.stop()  # Emergency stop all
         """
+        # Signal any blocking move() to wake up and abort
+        self._stop_event.set()
+
         if motor is not None:
-            logger.debug("Stop requested", motor=motor.value)
+            logger.info("Stop requested", motor=motor.value)
             with self._lock:
                 self._is_moving[motor] = False
                 self._current_speeds[motor] = 0
         else:
-            logger.debug("Emergency stop all requested")
+            logger.info("Emergency stop all requested")
             with self._lock:
                 for m in MotorType:
                     self._is_moving[m] = False
@@ -527,6 +548,45 @@ class DigitalTwinMotorInstance:
         self.home(MotorType.ALTITUDE)
         self.home(MotorType.AZIMUTH)
         logger.info("All motors homed")
+
+    def zero_position(self, motor: MotorType) -> None:
+        """Zero the position counter at current physical location.
+
+        Sets the specified motor's internal position counter to 0 without
+        any simulated movement. Used to establish the current telescope
+        position as the reference origin.
+
+        Business context: Called when user presses 'Set Home' on dashboard.
+        Records current physical position as (0,0) reference for the
+        observing session.
+
+        Args:
+            motor: Which motor to zero (ALTITUDE or AZIMUTH).
+
+        Returns:
+            None. Position counter set to 0 immediately.
+
+        Raises:
+            RuntimeError: If controller is closed.
+
+        Example:
+            >>> controller.zero_position(MotorType.ALTITUDE)
+            >>> status = controller.get_status(MotorType.ALTITUDE)
+            >>> assert status.position_steps == 0
+        """
+        if not self._is_open:
+            raise RuntimeError("Controller is closed")
+
+        with self._lock:
+            old_pos = self._positions[motor]
+            self._positions[motor] = 0
+            self._stalled[motor] = False
+
+        logger.info(
+            "Position zeroed",
+            motor=motor.value,
+            old_position=old_pos,
+        )
 
     def move_until_stall(
         self,

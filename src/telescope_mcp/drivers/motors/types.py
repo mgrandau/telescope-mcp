@@ -252,6 +252,35 @@ class MotorController(Protocol):  # pragma: no cover
         """
         ...
 
+    def zero_position(self, motor: MotorType) -> None:
+        """Zero the position counter at current physical location.
+
+        Sets the motor's internal position counter to 0 without any physical
+        movement. Used to establish the current telescope position as the
+        reference origin (0,0) at the start of an observing session.
+
+        Business context: Essential for session setup. Operator physically
+        positions telescope to a known reference (e.g., level, pointed north),
+        then calls zero_position to establish that as (0,0). All subsequent
+        position readouts are relative to this home. Equivalent to pressing
+        "Set Home" on the dashboard.
+
+        Args:
+            motor: Which motor to zero (ALTITUDE or AZIMUTH).
+
+        Returns:
+            None. Position counter set to 0 immediately.
+
+        Raises:
+            RuntimeError: If motor controller not connected.
+
+        Example:
+            >>> controller.zero_position(MotorType.ALTITUDE)
+            >>> controller.zero_position(MotorType.AZIMUTH)
+            >>> # Both axes now read 0 steps
+        """
+        ...
+
 
 @runtime_checkable
 class MotorInstance(Protocol):  # pragma: no cover
@@ -413,6 +442,35 @@ class MotorInstance(Protocol):  # pragma: no cover
 
         Example:
             >>> controller.home_all()
+        """
+        ...
+
+    def zero_position(self, motor: MotorType) -> None:
+        """Zero the position counter at current physical location.
+
+        Sets the motor's internal position counter to 0 without any physical
+        movement. Used to establish the current telescope position as the
+        reference origin (0,0) at the start of an observing session.
+
+        Business context: Essential for session setup. Operator physically
+        positions telescope to a known reference (e.g., level, pointed north),
+        then calls zero_position to establish that as (0,0). All subsequent
+        position readouts are relative to this home. Maps to stepper_amis
+        setPosition(axis, 0) on Teensy hardware.
+
+        Args:
+            motor: Which motor to zero (ALTITUDE or AZIMUTH).
+
+        Returns:
+            None. Position counter set to 0 immediately.
+
+        Raises:
+            RuntimeError: If controller not connected.
+
+        Example:
+            >>> controller.zero_position(MotorType.ALTITUDE)
+            >>> status = controller.get_status(MotorType.ALTITUDE)
+            >>> assert status.position_steps == 0
         """
         ...
 

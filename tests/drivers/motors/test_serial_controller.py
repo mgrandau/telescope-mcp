@@ -1794,3 +1794,139 @@ class TestMotorConfiguration:
         assert config.axis_id == 1
         assert config.min_steps == -110000
         assert config.max_steps == 110000
+
+
+# =============================================================================
+# Test: zero_position (Set Home - Issue #4)
+# =============================================================================
+
+
+class TestSerialZeroPosition:
+    """Tests for zero_position() on serial motor controller."""
+
+    def test_zero_altitude_sends_serial_command(
+        self,
+        motor_controller: SerialMotorController,
+        mock_serial: MockSerialPort,
+    ) -> None:
+        """Verifies zero_position sends axis select + set position command.
+
+        Business context:
+            Set Home must select correct axis and send p0 command to Teensy
+            firmware to zero the position counter without movement.
+
+        Arrangement:
+            1. Move altitude to 50000.
+            2. Queue axis response for zero_position.
+            3. Queue set position acknowledgment.
+
+        Assertion Strategy:
+            - p0 command appears in serial writes.
+            - Internal position tracking shows 0.
+        """
+        # First move to a position
+        mock_serial.queue_axis_response()
+        mock_serial.queue_move_complete()
+        motor_controller.move(MotorType.ALTITUDE, 50000)
+
+        # Now zero the position
+        mock_serial.queue_axis_response()
+        mock_serial.queue_response(b"{'position': 0}")
+        motor_controller.zero_position(MotorType.ALTITUDE)
+
+        commands = mock_serial.get_written_commands()
+        assert any("p0" in cmd for cmd in commands), f"Expected 'p0' in {commands}"
+        assert motor_controller.get_status(MotorType.ALTITUDE).position_steps == 0
+
+    def test_zero_azimuth_sends_correct_axis(
+        self,
+        motor_controller: SerialMotorController,
+        mock_serial: MockSerialPort,
+    ) -> None:
+        """Verifies zero_position selects azimuth axis (A1) before zeroing.
+
+        Arrangement:
+            1. Queue axis response and set position ack for azimuth.
+
+        Assertion Strategy:
+            - A1 axis select appears before p0 in serial writes.
+        """
+        mock_serial.queue_axis_response()
+        mock_serial.queue_response(b"{'position': 0}")
+        motor_controller.zero_position(MotorType.AZIMUTH)
+
+        commands = mock_serial.get_written_commands()
+        assert any("A1" in cmd for cmd in commands), f"Expected 'A1' in {commands}"
+        assert any("p0" in cmd for cmd in commands), f"Expected 'p0' in {commands}"
+
+    def test_zero_when_closed_raises(
+        self,
+        motor_controller: SerialMotorController,
+    ) -> None:
+        """zero_position on closed controller raises RuntimeError."""
+        motor_controller.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            motor_controller.zero_position(MotorType.ALTITUDE)
+
+
+# =============================================================================
+# Test: Stop with Priority Bypass
+# =============================================================================
+
+
+class TestSerialStop:
+    """Tests for stop() with lock-bypass priority on serial controller."""
+
+    def test_stop_writes_to_serial(
+        self,
+        motor_controller: SerialMotorController,
+        mock_serial: MockSerialPort,
+    ) -> None:
+        """Verifies stop sends S command to serial port.
+
+        Business context:
+            Stop must write directly to serial without waiting for lock.
+            The S command tells firmware to halt current motor movement.
+        """
+        motor_controller.stop(MotorType.ALTITUDE)
+
+        commands = mock_serial.get_written_commands()
+        assert any("S" in cmd for cmd in commands), f"Expected 'S' in {commands}"
+
+    def test_stop_all_writes_to_serial(
+        self,
+        motor_controller: SerialMotorController,
+        mock_serial: MockSerialPort,
+    ) -> None:
+        """Emergency stop (motor=None) also writes S command."""
+        motor_controller.stop()
+
+        commands = mock_serial.get_written_commands()
+        assert any("S" in cmd for cmd in commands), f"Expected 'S' in {commands}"
+
+    def test_stop_clears_moving_flags(
+        self,
+        motor_controller: SerialMotorController,
+    ) -> None:
+        """Stop clears is_moving flag for specified motor."""
+        motor_controller.stop(MotorType.ALTITUDE)
+        assert motor_controller.get_status(MotorType.ALTITUDE).is_moving is False
+
+    def test_stop_all_clears_all_flags(
+        self,
+        motor_controller: SerialMotorController,
+    ) -> None:
+        """Emergency stop clears all is_moving flags."""
+        motor_controller.stop()
+        assert motor_controller.get_status(MotorType.ALTITUDE).is_moving is False
+        assert motor_controller.get_status(MotorType.AZIMUTH).is_moving is False
+
+    def test_stop_is_idempotent(
+        self,
+        motor_controller: SerialMotorController,
+        mock_serial: MockSerialPort,
+    ) -> None:
+        """Multiple stop calls are safe (no errors)."""
+        motor_controller.stop(MotorType.ALTITUDE)
+        motor_controller.stop(MotorType.ALTITUDE)
+        motor_controller.stop()  # Emergency stop too

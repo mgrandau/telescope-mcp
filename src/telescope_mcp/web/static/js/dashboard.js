@@ -183,6 +183,27 @@ async function stopMotors() {
     }
 }
 
+// Set Home - zero both motor position counters at current location
+async function setHome() {
+    if (!confirm('Set current position as Home (0,0)?\\n\\nThis zeros both motor position counters at the current physical location.')) {
+        return;
+    }
+
+    updateStatus('connected', 'Setting home...');
+    try {
+        const response = await fetch(`${API_BASE}/api/motor/home/set`, { method: 'POST' });
+        const data = await response.json();
+        if (response.ok) {
+            updateStatus('connected', '🏠 Home set (0,0)');
+        } else {
+            updateStatus('error', data.detail || 'Set home failed');
+        }
+    } catch (err) {
+        console.error('Set home failed:', err);
+        updateStatus('error', 'Set home failed!');
+    }
+}
+
 // Goto position
 async function gotoPosition() {
     const alt = document.getElementById('goto-alt').value;

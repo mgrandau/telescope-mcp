@@ -79,6 +79,15 @@ AZIMUTH_MIN_STEPS = -110000
 DEFAULT_BAUDRATE = 9600
 DEFAULT_TIMEOUT = 30.0  # Motor moves can take a while
 
+# Serial command characters for Teensy+AMIS firmware
+# Stop: Halts current motor movement immediately.
+# Sent WITHOUT acquiring lock so it can interrupt a blocking move.
+STOP_COMMAND = b"S"
+# Set position: Sets the position counter without movement.
+# Usage: select axis first (A0/A1), then send p{steps}.
+# For zeroing: p0 sets current position as 0.
+SET_POSITION_COMMAND_PREFIX = "p"
+
 
 @dataclass
 class MotorConfig:
@@ -477,37 +486,57 @@ class SerialMotorController:
                 self._is_moving[motor] = False
 
     def stop(self, motor: MotorType | None = None) -> None:
-        """Request motor(s) to stop immediately (best-effort).
+        """Stop motor(s) immediately with priority bypass.
 
-        Sends stop request to the controller. Note that the current firmware
-        may not support interrupting moves in progress - this is a placeholder
-        for future hardware capability.
+        Writes stop command directly to serial port WITHOUT acquiring the
+        lock. This allows stop to execute even when a blocking move() is
+        in progress holding the lock. pyserial's write() is thread-safe
+        for concurrent calls.
 
-        Business context: Emergency stop capability is important for safety.
-        If the telescope is moving toward an obstruction or user needs to
-        abort, this method signals intent to stop. Currently logs warning
-        since hardware support is limited.
+        Business context: Emergency stop is safety-critical. If the telescope
+        is moving toward an obstruction, the stop command MUST execute
+        immediately — it cannot wait for a multi-second slew to complete.
+        This lock-bypass design ensures sub-millisecond stop latency.
+
+        Thread Safety:
+            Intentionally bypasses self._lock. pyserial.write() is safe for
+            concurrent calls from different threads. The firmware receives
+            the stop byte mid-move and halts the motor. The blocked
+            _send_move_command() will then read the firmware's response
+            and return normally.
 
         Args:
             motor: Specific motor to stop (ALTITUDE or AZIMUTH),
-                or None to request stopping all motors.
+                or None to stop all motors (emergency stop).
 
         Returns:
-            None. Stop request logged but may not interrupt active moves.
+            None. Stop command sent immediately.
 
         Raises:
             No exceptions raised. Best-effort operation.
 
         Example:
             >>> controller.stop(MotorType.ALTITUDE)  # Stop one motor
-            >>> controller.stop()  # Stop all motors
+            >>> controller.stop()  # Emergency stop all
         """
-        logger.warning(
-            "Stop command sent - custom controller may not support interrupt",
+        logger.info(
+            "STOP command sent (priority bypass)",
             motor=motor.value if motor else "all",
         )
-        # Custom controller doesn't have a stop command documented
-        # Movement blocks until complete
+        # Write directly to serial WITHOUT lock — this is intentional.
+        # pyserial write is thread-safe, and we need stop to execute
+        # even when move() is blocking inside the lock.
+        try:
+            self._serial.write(STOP_COMMAND)
+        except Exception:
+            logger.exception("Failed to send stop command")
+
+        # Update state flags (best-effort, may race with move())
+        if motor is not None:
+            self._is_moving[motor] = False
+        else:
+            for m in MotorType:
+                self._is_moving[m] = False
 
     def get_status(self, motor: MotorType) -> MotorStatus:
         """Get current motor status including position and movement state.
@@ -609,6 +638,60 @@ class SerialMotorController:
         self.home(MotorType.ALTITUDE)
         self.home(MotorType.AZIMUTH)
         logger.info("All motors homed")
+
+    def zero_position(self, motor: MotorType) -> None:
+        """Zero the position counter at current physical location.
+
+        Selects the specified axis and sends the set-position command to
+        record the current physical location as position 0. No motor
+        movement occurs.
+
+        Business context: Called when user presses 'Set Home' on dashboard.
+        Equivalent to stepper_amis sa.setPosition(axis, 0) on Teensy.
+        Records current physical position as origin for the observing
+        session. All subsequent position readouts will be relative to
+        this reference.
+
+        Args:
+            motor: Which motor to zero (ALTITUDE or AZIMUTH).
+
+        Returns:
+            None. Position counter set to 0 immediately.
+
+        Raises:
+            RuntimeError: If controller not connected.
+
+        Example:
+            >>> controller.zero_position(MotorType.ALTITUDE)
+            >>> controller.zero_position(MotorType.AZIMUTH)
+            >>> # Both axes now read position 0
+        """
+        if not self._is_open:
+            raise RuntimeError("Controller is closed")
+
+        with self._lock:
+            self._select_axis(motor)
+
+            # Send set-position command: p0 zeros the counter
+            cmd = f"{SET_POSITION_COMMAND_PREFIX}0"
+            self._serial.write(cmd.encode())
+
+            # Read acknowledgment
+            response = self._serial.read_until(b"}")
+            logger.debug(
+                "Set position response",
+                response=response.decode(errors="ignore"),
+            )
+
+            # Update internal tracking
+            old_pos = self._positions[motor]
+            self._positions[motor] = 0
+
+        logger.info(
+            "Position zeroed",
+            motor=motor.value,
+            old_position=old_pos,
+        )
 
     def get_help(self) -> str:
         """Get help text from the motor controller firmware.

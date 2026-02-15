@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from telescope_mcp.devices.motor import Motor
 from telescope_mcp.devices.sensor import Sensor
 from telescope_mcp.drivers.asi_sdk import get_sdk_library_path
 from telescope_mcp.drivers.config import get_factory
@@ -66,6 +67,9 @@ MOTOR_STEPS_PER_DEGREE_AZ = 110000 / 135.0  # ~815 steps per degree
 
 # IMU sensor for position feedback
 _sensor: Sensor | None = None
+
+# Motor device for telescope mount control
+_motor: Motor | None = None
 
 # Image encoder (injectable for testing)
 _encoder: ImageEncoder | None = None
@@ -396,6 +400,74 @@ async def _cleanup_sensor() -> None:
         _sensor = None
 
 
+async def _init_motor() -> None:
+    """Initialize motor device for telescope mount control.
+
+    Creates Motor device with driver from factory, connects to hardware
+    or digital twin based on configuration. Motor provides stop, set_home,
+    and movement operations for the web dashboard.
+
+    Business context: Motor device enables dashboard motor controls (stop,
+    nudge, set home) to communicate with actual hardware or digital twin.
+    Without this, dashboard buttons are disconnected stubs.
+
+    Args:
+        None. Uses global factory configuration.
+
+    Returns:
+        None. Sets global _motor on success.
+
+    Raises:
+        None. Connection failures are logged but don't prevent startup.
+
+    Example:
+        >>> await _init_motor()
+        >>> if _motor:
+        ...     await _motor.stop()
+    """
+    global _motor
+    try:
+        factory = get_factory()
+        driver = factory.create_motor_driver()
+        _motor = Motor(driver)
+        await _motor.connect()
+        logger.info("Motor device initialized", motor_type=type(driver).__name__)
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize motor device, motor controls disabled",
+            error=str(e),
+        )
+        _motor = None
+
+
+async def _cleanup_motor() -> None:
+    """Disconnect and cleanup motor device.
+
+    Gracefully disconnects motor connection on application shutdown.
+    Safe to call even if motor was never initialized.
+
+    Args:
+        None. Uses global _motor.
+
+    Returns:
+        None. Clears global _motor.
+
+    Raises:
+        None. Errors are logged but don't prevent shutdown.
+
+    Example:
+        >>> await _cleanup_motor()
+    """
+    global _motor
+    if _motor is not None:
+        try:
+            await _motor.disconnect()
+            logger.info("Motor device disconnected")
+        except Exception as e:
+            logger.error("Error disconnecting motor", error=str(e))
+        _motor = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle for startup and shutdown.
@@ -429,9 +501,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting telescope control services...")
     _init_sdk()
     await _init_sensor()
+    await _init_motor()
     yield
     # Shutdown: Clean up
     logger.info("Shutting down telescope control services...")
+    await _cleanup_motor()
     await _cleanup_sensor()
     _close_all_cameras()
 
@@ -1113,8 +1187,129 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             stopped_axes.append(axis)
             logger.info("Motor stop", axis=axis)
 
-        # TODO: Integrate with motor controller - send stop commands
+        # Send stop to actual motor hardware/digital twin
+        if _motor is not None:
+            try:
+                from telescope_mcp.drivers.motors.types import MotorType
+
+                if axis is not None:
+                    motor_type = (
+                        MotorType.ALTITUDE if axis == "altitude" else MotorType.AZIMUTH
+                    )
+                    await _motor.stop(motor_type)
+                else:
+                    await _motor.stop()  # Stop all
+            except Exception as e:
+                logger.error("Motor stop failed", error=str(e))
+                return {"status": "error", "error": str(e), "axes": stopped_axes}
+
         return {"status": "stopped", "axes": stopped_axes}
+
+    @app.post("/api/motor/home/set")
+    async def api_set_home() -> dict[str, object]:
+        """Zero both motor position counters at current physical location.
+
+        Records the current telescope position as (0,0) origin without
+        any physical movement. Used at the start of an observing session
+        after manually positioning the telescope to a known reference.
+
+        Business context: Essential session setup step. Operator physically
+        positions telescope to a known reference (e.g., level, pointed
+        north), then presses 'Set Home' button on dashboard. All subsequent
+        position readouts will be relative to this home reference.
+
+        Equivalent to stepper_amis sa.setPosition(axis, 0) for both axes
+        on Teensy hardware.
+
+        Returns:
+            Dict confirming home was set:
+            {"status": "ok", "message": "Home position set (0,0)"}
+
+        Raises:
+            HTTPException(503): If motor controller not available.
+            HTTPException(500): If zeroing operation fails.
+
+        Example:
+            >>> fetch('/api/motor/home/set', {method: 'POST'});
+        """
+        if _motor is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Motor controller not available",
+            )
+
+        try:
+            await _motor.set_home()
+            logger.info("Home position set via dashboard")
+            return {
+                "status": "ok",
+                "message": "Home position set (0,0)",
+            }
+        except Exception as e:
+            logger.error("Failed to set home", error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to set home: {e}",
+            ) from e
+
+    @app.post("/api/motor/nudge")
+    async def api_nudge_motor(
+        axis: str = Query(..., pattern="^(altitude|azimuth)$"),
+        direction: str = Query(...),
+        degrees: float = Query(default=MOTOR_NUDGE_DEGREES, ge=0.01, le=10.0),
+    ) -> dict[str, object]:
+        """Nudge motor by small fixed amount (generic route for JS).
+
+        Dispatches to the appropriate per-axis nudge handler. This generic
+        route matches the JavaScript dashboard calls which use query params
+        for axis selection.
+
+        Args:
+            axis: Which motor axis - "altitude" or "azimuth".
+            direction: Movement direction. For altitude: "up"/"down".
+                For azimuth: "cw"/"ccw"/"left"/"right".
+            degrees: Amount to move in degrees. Default 0.1°.
+
+        Returns:
+            Dict with movement details from per-axis handler.
+
+        Example:
+            >>> fetch('/api/motor/nudge?axis=altitude&direction=up', {method: 'POST'});
+        """
+        if axis == "altitude":
+            return await api_nudge_altitude(direction=direction, degrees=degrees)
+        else:
+            return await api_nudge_azimuth(direction=direction, degrees=degrees)
+
+    @app.post("/api/motor/start")
+    async def api_start_motor(
+        axis: str = Query(..., pattern="^(altitude|azimuth)$"),
+        direction: str = Query(...),
+        speed: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        """Start continuous motor motion (generic route for JS).
+
+        Dispatches to the appropriate per-axis start handler. This generic
+        route matches the JavaScript dashboard calls which use query params
+        for axis selection.
+
+        Args:
+            axis: Which motor axis - "altitude" or "azimuth".
+            direction: Movement direction. For altitude: "up"/"down".
+                For azimuth: "cw"/"ccw"/"left"/"right".
+            speed: Motor speed percentage (1-100). Default 50%.
+
+        Returns:
+            Dict confirming motion started from per-axis handler.
+
+        Example:
+            >>> fetch('/api/motor/start?axis=altitude&direction=up&speed=50',
+            ...        {method: 'POST'});
+        """
+        if axis == "altitude":
+            return await api_start_altitude(direction=direction, speed=speed)
+        else:
+            return await api_start_azimuth(direction=direction, speed=speed)
 
     @app.get("/api/position")
     async def api_get_position() -> dict[str, object]:

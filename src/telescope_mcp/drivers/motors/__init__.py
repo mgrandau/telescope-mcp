@@ -236,6 +236,33 @@ class StubMotorController:
         self._positions[motor] = 0
         print(f"[STUB] Homing {motor.value}")
 
+    def zero_position(self, motor: MotorType) -> None:
+        """Zero the position counter at current physical location.
+
+        Sets the specified motor's position counter to 0 without movement.
+        Used to establish the current telescope position as the reference
+        origin for an observing session.
+
+        Business context: Called when user presses 'Set Home' on the
+        dashboard. Records current physical position as (0,0) reference.
+
+        Args:
+            motor: Which motor to zero (ALTITUDE or AZIMUTH).
+
+        Returns:
+            None. Position counter set to 0 immediately.
+
+        Example:
+            >>> stub = StubMotorController()
+            >>> stub.move(MotorType.ALTITUDE, 5000)
+            >>> stub.zero_position(MotorType.ALTITUDE)
+            [STUB] Zeroing altitude position
+            >>> status = stub.get_status(MotorType.ALTITUDE)
+            >>> print(status.position_steps)  # 0
+        """
+        self._positions[motor] = 0
+        print(f"[STUB] Zeroing {motor.value} position")
+
 
 __all__ = [
     # Enums and data classes
