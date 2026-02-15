@@ -46,11 +46,12 @@ _motor_moving: dict[str, bool] = {"altitude": False, "azimuth": False}
 _motor_direction: dict[str, int] = {"altitude": 0, "azimuth": 0}  # -1, 0, +1
 _motor_speed: dict[str, int] = {"altitude": 0, "azimuth": 0}  # 0-100%
 
-# USB bandwidth management for dual-camera operation
+# USB bandwidth for dual-camera operation
 # ASI_BANDWIDTHOVERLOAD range: 0-100 (percentage of USB bus)
-# Two cameras sharing one USB controller need <=50% each
-USB_BANDWIDTH_SINGLE = 80  # Single camera can use most of the bus
-USB_BANDWIDTH_DUAL = 40  # Each camera gets 40% when both streaming
+# This rig always has 2 cameras (finder + main) sharing one USB controller,
+# so each camera gets 40% to avoid contention. 40% is sufficient for both
+# ASI120MC-S and ASI482MC at their typical frame rates.
+USB_BANDWIDTH_PER_CAMERA = 40
 
 # Stream error recovery
 MAX_CONSECUTIVE_ERRORS = 10  # Stop stream after this many errors in a row
@@ -1860,21 +1861,13 @@ async def _generate_camera_stream(
         # Configure camera for video
         camera.set_control_value(asi.ASI_GAIN, g)
         camera.set_control_value(asi.ASI_EXPOSURE, exp)
-        # USB bandwidth: reduce per-camera when both are streaming to
-        # prevent USB contention that crashes the secondary camera.
-        # Count how many cameras are currently streaming (including this one)
-        active_streams = sum(
-            1
-            for cid, streaming in _camera_streaming.items()
-            if streaming and cid != camera_id
-        )
-        bandwidth = USB_BANDWIDTH_DUAL if active_streams > 0 else USB_BANDWIDTH_SINGLE
-        camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, bandwidth)
+        # USB bandwidth: always 40% per camera. This is a dedicated
+        # dual-camera rig (finder + main), both share one USB controller.
+        camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, USB_BANDWIDTH_PER_CAMERA)
         logger.info(
             "USB bandwidth configured",
             camera_id=camera_id,
-            bandwidth_pct=bandwidth,
-            other_active_streams=active_streams,
+            bandwidth_pct=USB_BANDWIDTH_PER_CAMERA,
         )
 
         # Finder camera (0): Use RAW16 for maximum quality, no mode switch for capture
