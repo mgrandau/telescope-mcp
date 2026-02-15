@@ -246,6 +246,66 @@ sensors = ["smbus2"]  # For I2C sensors
 - Security: Need auth or link-based access to prevent open access to the telescope
 - Could start simple (ngrok or Tailscale Funnel for one-off sessions) before building a proper AWS relay
 
+#### Streaming Options — Low Cost, Audience Building
+
+The goal: stream the telescope feed cheaply, build a following over time. Here are the approaches ranked by cost and complexity:
+
+**Option 1: YouTube Live Stream (Free, Best for Audience Building)**
+- Convert MJPEG → RTMP on the telescope controller or AWS relay, push to YouTube Live
+- YouTube handles all the CDN, scaling, chat, and discovery — zero cost to you
+- Viewers find you through YouTube search, recommendations, notifications
+- Built-in chat for interactivity during star parties
+- Can schedule events ("Live Meteor Shower Watch — Geminids 2026") to build anticipation
+- Recordings auto-save as YouTube videos — free content library
+- **How:** `ffmpeg` on the Pi/controller converts MJPEG → RTMP: `ffmpeg -i http://localhost:8080/stream/main -c:v libx264 -f flv rtmp://a.rtmp.youtube.com/live2/<stream-key>`
+- **Cost: $0** (YouTube is free for streaming)
+
+**Option 2: Discord Stage/Stream (Free, Good for Community)**
+- Stream directly into the Discord server using a bot or OBS → Discord
+- Viewers are already in the community — low friction
+- Stage channels allow voice interaction (people can ask to speak)
+- Good for small interactive sessions (< 25 viewers ideal)
+- Less discoverable than YouTube — better for existing community
+- **Cost: $0**
+
+**Option 3: Twitch (Free, Gaming/Niche Audience)**
+- Same RTMP approach as YouTube
+- Twitch has a Science & Technology category — some astronomy streamers do well
+- Better real-time chat interaction than YouTube
+- Smaller discovery potential than YouTube for astronomy content
+- Can multi-stream to both YouTube + Twitch simultaneously with `ffmpeg` or restream.io
+- **Cost: $0**
+
+**Option 4: AWS Static Site + CloudFront (Low Cost, Full Control)**
+- Simple webpage that embeds the stream, hosted on S3 + CloudFront
+- Telescope → AWS relay (small EC2 or Lightsail, ~$3.50-5/month) → CloudFront CDN → viewers
+- Full control over the experience (custom UI, overlays, annotations)
+- Can embed YouTube chat or Discord widget for interaction
+- Good as a "home base" that links to YouTube/Twitch streams
+- **Cost: ~$5-10/month** (mostly the relay instance; CloudFront bandwidth is cheap)
+
+**Option 5: HLS via AWS MediaLive (Overkill for Now)**
+- Professional-grade: MJPEG → AWS MediaLive → MediaPackage → CloudFront
+- Auto-scaling, adaptive bitrate, DVR/rewind
+- Way too expensive for starting out (~$50-100+/month)
+- **Skip this until audience justifies it**
+
+#### Recommended Path (Low Cost → Growth)
+
+1. **Start with YouTube Live** — free, discoverable, zero infrastructure. Just need `ffmpeg` running on the controller to push RTMP. Schedule streams around interesting events (meteor showers, conjunctions, ISS passes).
+2. **Simultaneously stream to Discord** for your community — they get the interactive experience with voice chat.
+3. **Add a simple AWS landing page** later (S3 static site, ~$1/month) as a hub: links to YouTube, Discord, GitHub repo, schedule of upcoming sessions.
+4. **Multi-stream to Twitch** when you want to reach that audience — restream.io free tier handles 2 destinations.
+
+The key insight: **YouTube/Twitch handle the hard part (CDN, scaling, chat, discovery) for free.** Don't pay for infrastructure until you need custom features they don't provide.
+
+**Building a following:**
+- Consistent schedule matters more than frequency (e.g., "First clear Friday of each month")
+- Meteor showers are natural events to build around — post the schedule on the YouTube channel
+- Time-lapse compilations from the all-sky camera make great short-form content (YouTube Shorts, TikTok)
+- Plate-solved images with annotations ("Here's what we're looking at") make great thumbnails/posts
+- Cross-post to r/telescopes, r/astrophotography, astronomy Discord servers
+
 **This is a stretch goal — no immediate action needed, but a compelling use case for the web dashboard.**
 
 ### Meteor Shower / Satellite Streak Monitoring with Wide-Field Camera
