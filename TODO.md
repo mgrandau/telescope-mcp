@@ -248,6 +248,29 @@ sensors = ["smbus2"]  # For I2C sensors
 
 **This is a stretch goal — no immediate action needed, but a compelling use case for the web dashboard.**
 
+### Meteor Shower / Satellite Streak Monitoring with Wide-Field Camera
+
+**Concept:** During meteor showers, set the telescope outside with the wide-field finder camera (ASI120MC-S, 150° all-sky) running continuously. The camera's massive field of view should capture meteor streaks and satellite trails depending on the exposure time.
+
+**How it would work:**
+- Deploy the telescope during known meteor showers (Perseids, Geminids, etc.)
+- Run the finder camera on continuous capture with appropriate exposure (a few seconds per frame should show streaks as lines)
+- Stream via `/stream/finder` — could combine with the virtual star party relay for remote meteor watching
+- Optionally save frames to disk for later review or stacking
+
+**What you'd see:**
+- **Meteor streaks** — bright lines across the frame during active showers
+- **Satellite trails** — Starlink trains, ISS passes, etc. as slower-moving lines
+- **Star trails** — at longer exposures, stars will trail too (which helps distinguish meteors by their brightness and speed)
+
+**Future possibilities:**
+- Automated meteor detection (frame differencing — compare consecutive frames, flag new streaks)
+- Count rate tracking over the night (plot meteors/hour vs. time)
+- Plate-solve the frames (#7) to determine radiant direction
+- Time-lapse compilation of an entire shower night
+
+**The finder camera's all-sky FOV makes this nearly zero-effort — just point up and record.**
+
 ---
 
 *Last updated: 2026-02-15*
