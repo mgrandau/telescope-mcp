@@ -46,6 +46,18 @@ _motor_moving: dict[str, bool] = {"altitude": False, "azimuth": False}
 _motor_direction: dict[str, int] = {"altitude": 0, "azimuth": 0}  # -1, 0, +1
 _motor_speed: dict[str, int] = {"altitude": 0, "azimuth": 0}  # 0-100%
 
+# USB bandwidth management for dual-camera operation
+# ASI_BANDWIDTHOVERLOAD range: 0-100 (percentage of USB bus)
+# Two cameras sharing one USB controller need <=50% each
+USB_BANDWIDTH_SINGLE = 80  # Single camera can use most of the bus
+USB_BANDWIDTH_DUAL = 40  # Each camera gets 40% when both streaming
+
+# Stream error recovery
+MAX_CONSECUTIVE_ERRORS = 10  # Stop stream after this many errors in a row
+ERROR_BACKOFF_BASE_S = 0.5  # Base sleep between error retries
+ERROR_BACKOFF_MAX_S = 5.0  # Maximum backoff sleep
+STREAM_TIMEOUT_BUFFER_US = 5_000_000  # 5s buffer added to exposure for timeout
+
 # Motor configuration
 MOTOR_NUDGE_DEGREES = 0.1  # Default nudge amount in degrees
 MOTOR_STEPS_PER_DEGREE_ALT = 140000 / 90.0  # ~1556 steps per degree
@@ -1848,7 +1860,22 @@ async def _generate_camera_stream(
         # Configure camera for video
         camera.set_control_value(asi.ASI_GAIN, g)
         camera.set_control_value(asi.ASI_EXPOSURE, exp)
-        camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, 80)  # USB bandwidth
+        # USB bandwidth: reduce per-camera when both are streaming to
+        # prevent USB contention that crashes the secondary camera.
+        # Count how many cameras are currently streaming (including this one)
+        active_streams = sum(
+            1
+            for cid, streaming in _camera_streaming.items()
+            if streaming and cid != camera_id
+        )
+        bandwidth = USB_BANDWIDTH_DUAL if active_streams > 0 else USB_BANDWIDTH_SINGLE
+        camera.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, bandwidth)
+        logger.info(
+            "USB bandwidth configured",
+            camera_id=camera_id,
+            bandwidth_pct=bandwidth,
+            other_active_streams=active_streams,
+        )
 
         # Finder camera (0): Use RAW16 for maximum quality, no mode switch for capture
         # Main camera (1): Use RGB24 for color preview (debayered by SDK)
@@ -1887,17 +1914,33 @@ async def _generate_camera_stream(
 
         frame_interval = 1.0 / fps
         frame_count = 0
+        consecutive_errors = 0
+
+        # Timeout: exposure time + generous buffer for USB transfer,
+        # SDK overhead, and contention with other cameras.
+        # Previous: 2x exposure + 2s — too tight for long exposures
+        # or dual-camera USB contention scenarios.
+        timeout_ms = max(
+            (exp + STREAM_TIMEOUT_BUFFER_US) // 1000,
+            3000,
+        )
+        logger.info(
+            "Stream timeout configured",
+            camera_id=camera_id,
+            exposure_us=exp,
+            timeout_ms=timeout_ms,
+            fps=fps,
+            frame_interval_s=round(frame_interval, 3),
+        )
 
         while _camera_streaming.get(
             camera_id, False
         ):  # pragma: no cover - infinite loop
+            frame_start = asyncio.get_event_loop().time()
             try:
-                # Capture video frame into buffer (timeout in ms)
-                # Use 2x exposure + 2 seconds margin for processing overhead
-                timeout_ms = max(int(exp / 1000) * 2 + 2000, 3000)
-
                 # Run blocking capture in executor to not block event loop
-                # This allows other streams to process while waiting for long exposures
+                # This allows other streams to process while waiting
+                # for long exposures
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None,
@@ -1907,6 +1950,7 @@ async def _generate_camera_stream(
                 )
 
                 frame_count += 1
+                consecutive_errors = 0  # Reset on success
 
                 # All cameras use RAW16 - reshape and convert for display
                 img_raw = np.frombuffer(frame_buffer, dtype=np.uint16).reshape(
@@ -1942,16 +1986,66 @@ async def _generate_camera_stream(
 
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
 
+                # Log frame timing periodically (every 100 frames)
+                if frame_count % 100 == 0:
+                    elapsed = loop.time() - frame_start
+                    logger.info(
+                        "Stream health",
+                        camera_id=camera_id,
+                        frames=frame_count,
+                        last_frame_s=round(elapsed, 3),
+                        timeout_ms=timeout_ms,
+                    )
+
                 await asyncio.sleep(frame_interval)
 
             except Exception as e:
-                logger.warning(f"Frame capture error: {e}")
+                consecutive_errors += 1
+                error_msg = str(e)
+
+                # Classify error severity
+                is_timeout = "timeout" in error_msg.lower()
+                logger.warning(
+                    "Frame capture error",
+                    camera_id=camera_id,
+                    error=error_msg[:80],
+                    is_timeout=is_timeout,
+                    consecutive_errors=consecutive_errors,
+                    max_errors=MAX_CONSECUTIVE_ERRORS,
+                    frame_count=frame_count,
+                )
+
+                # Stop stream after too many consecutive errors
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    logger.error(
+                        "Stream stopped: too many consecutive errors",
+                        camera_id=camera_id,
+                        consecutive_errors=consecutive_errors,
+                        last_error=error_msg[:80],
+                    )
+                    # Yield final error frame
+                    err_img = np.zeros((height, width), dtype=np.uint8)
+                    assert _encoder is not None
+                    _encoder.put_text(
+                        err_img,
+                        f"Stream stopped: {consecutive_errors} errors",
+                        (10, height // 2),
+                        0.5,
+                        255,
+                        1,
+                    )
+                    jpeg = _encoder.encode_jpeg(err_img)
+                    yield (
+                        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+                    )
+                    break
+
                 # Yield error frame but keep trying
                 frame_error_img = np.zeros((height, width), dtype=np.uint8)
                 assert _encoder is not None
                 _encoder.put_text(
                     frame_error_img,
-                    f"Frame error: {str(e)[:30]}",
+                    f"Frame error: {error_msg[:30]}",
                     (10, height // 2),
                     0.5,
                     255,
@@ -1959,7 +2053,13 @@ async def _generate_camera_stream(
                 )
                 jpeg = _encoder.encode_jpeg(frame_error_img)
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
-                await asyncio.sleep(0.5)
+
+                # Exponential backoff on errors
+                backoff = min(
+                    ERROR_BACKOFF_BASE_S * (2 ** (consecutive_errors - 1)),
+                    ERROR_BACKOFF_MAX_S,
+                )
+                await asyncio.sleep(backoff)
 
     except Exception as e:  # pragma: no cover - stream fatal error
         logger.error(f"Video stream error for camera {camera_id}: {e}")
