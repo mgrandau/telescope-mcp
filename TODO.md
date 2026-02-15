@@ -221,4 +221,33 @@ sensors = ["smbus2"]  # For I2C sensors
 
 ---
 
-*Last updated: 2025-12-13*
+## Future Ideas
+
+### Virtual Star Parties — Remote Observing via Web Stream
+
+**Concept:** The MJPEG camera streams (`/stream/main`, `/stream/finder`) already work on a phone over the local network. By proxying or relaying these streams through an AWS-hosted webpage, remote participants could observe the telescope feed in real-time without any local network access.
+
+**How it would work:**
+- Telescope controller streams camera feeds locally (already working)
+- A relay service forwards the MJPEG stream to a public-facing AWS endpoint (EC2, Lambda + API Gateway, or CloudFront)
+- Viewers open a URL in their browser and see the live telescope feed
+- Combine with voice/video chat (Discord, Zoom, etc.) for interactive sessions
+- The operator (Mark) controls the telescope; viewers observe and suggest targets
+
+**Benefits:**
+- True virtual star parties — anyone with a link can watch
+- No hardware or software required for viewers (just a browser)
+- Operator retains full control of the telescope
+- Could integrate chat/reactions directly into the web page
+
+**Considerations:**
+- Latency: MJPEG over the internet adds delay, but fine for observing (not tracking)
+- Bandwidth: Outbound stream from home → AWS, then fan-out to viewers
+- Security: Need auth or link-based access to prevent open access to the telescope
+- Could start simple (ngrok or Tailscale Funnel for one-off sessions) before building a proper AWS relay
+
+**This is a stretch goal — no immediate action needed, but a compelling use case for the web dashboard.**
+
+---
+
+*Last updated: 2026-02-15*
