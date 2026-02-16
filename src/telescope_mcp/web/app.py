@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+from collections import deque
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -81,6 +82,13 @@ _motor_tasks: dict[str, asyncio.Task[None]] = {}
 
 # IMU sensor for position feedback
 _sensor: Sensor | None = None
+
+# Rolling average buffer for position smoothing (issue #11)
+# Stores last 5 sensor readings to smooth IMU noise (±0.5° jitter → ~0.1° stable).
+# With 5-second read intervals this is a 25-second rolling window.
+# On startup, averages whatever readings are available until buffer fills.
+_POSITION_BUFFER_SIZE = 5
+_position_buffer: deque[tuple[float, float]] = deque(maxlen=_POSITION_BUFFER_SIZE)
 
 # Motor device for telescope mount control
 _motor: Motor | None = None
@@ -1549,8 +1557,12 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         if _sensor is not None:
             try:
                 reading = await _sensor.read()
-                altitude = reading.altitude
-                azimuth = reading.azimuth
+                # Add raw reading to rolling average buffer (issue #11)
+                _position_buffer.append((reading.altitude, reading.azimuth))
+                # Average all readings in buffer for smooth display
+                buf = _position_buffer
+                altitude = sum(r[0] for r in buf) / len(buf)
+                azimuth = sum(r[1] for r in buf) / len(buf)
                 sensor_status = "ok"
             except Exception as e:
                 logger.warning("Sensor read failed", error=str(e))

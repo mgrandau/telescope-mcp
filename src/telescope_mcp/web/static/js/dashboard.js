@@ -2,8 +2,9 @@
 
 const API_BASE = '';
 
-// Position polling - 500ms for responsive feedback during motion
-const POSITION_POLL_INTERVAL_MS = 500;
+// Position polling - 5000ms to match sensor read rate (issue #11)
+// Prevents stale-to-fresh jumps by syncing display refresh with sensor cadence
+const POSITION_POLL_INTERVAL_MS = 5000;
 let positionInterval;
 
 // Motor state tracking for start/stop pattern
