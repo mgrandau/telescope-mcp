@@ -1158,7 +1158,7 @@ class TestMotorAPIEndpoints:
     @pytest.mark.parametrize(
         "axis,steps",
         [
-            ("altitude", 10000),
+            ("altitude", -10000),
             ("azimuth", -120000),
         ],
         ids=["altitude_exceeds_positive_limit", "azimuth_exceeds_range"],
@@ -1170,6 +1170,10 @@ class TestMotorAPIEndpoints:
         Motor position limits protect hardware from damage. Moving
         beyond configured limits must return HTTP 400 with a
         descriptive error.
+
+        Note: Altitude direction is inverted at the driver layer (issue #10),
+        so -10000 logical steps become +10000 physical steps, exceeding
+        the positive hardware limit.
 
         Args:
             client: FastAPI TestClient fixture.

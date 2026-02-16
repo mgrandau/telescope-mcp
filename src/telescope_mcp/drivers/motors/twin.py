@@ -116,6 +116,11 @@ class DigitalTwinMotorConfig:
     # Noise simulation (for testing error handling)
     position_noise_steps: int = 0
 
+    # Direction inversion — compensate for reversed motor wiring.
+    # When True, negate step direction before applying. See issue #10.
+    altitude_invert_direction: bool = True
+    azimuth_invert_direction: bool = False
+
     def __repr__(self) -> str:
         """Return concise config representation for logging.
 
@@ -416,6 +421,15 @@ class DigitalTwinMotorInstance:
 
         with self._lock:
             current_pos = self._positions[motor]
+
+        # Apply direction inversion from config (issue #10)
+        invert = (
+            self._config.altitude_invert_direction
+            if motor == MotorType.ALTITUDE
+            else self._config.azimuth_invert_direction
+        )
+        if invert:
+            steps = -steps
 
         new_position = current_pos + steps
         min_steps, max_steps = self._get_limits(motor)

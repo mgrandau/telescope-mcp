@@ -103,6 +103,10 @@ class MotorConfig:
         max_steps: Maximum allowed position in steps.
         home_position: Home position in steps.
         steps_per_degree: Steps per degree of rotation.
+        invert_direction: If True, negate step direction before sending
+            to hardware. Compensates for reversed motor wiring where
+            positive logical steps (toward zenith) need negative
+            physical steps. See issue #10.
     """
 
     axis_id: int
@@ -110,6 +114,7 @@ class MotorConfig:
     max_steps: int
     home_position: int
     steps_per_degree: float
+    invert_direction: bool = False
 
 
 # Default motor configurations
@@ -120,6 +125,7 @@ MOTOR_CONFIGS = {
         max_steps=ALTITUDE_MAX_STEPS,
         home_position=0,  # Zenith
         steps_per_degree=ALTITUDE_STEPS_PER_DEGREE,  # ~1555 steps/degree
+        invert_direction=True,  # Hardware wiring reversed (issue #10)
     ),
     MotorType.AZIMUTH: MotorConfig(
         axis_id=1,
@@ -467,6 +473,8 @@ class SerialMotorController:
             raise RuntimeError("Controller is closed")
 
         config = MOTOR_CONFIGS[motor]
+        if config.invert_direction:
+            steps = -steps
         new_position = self._positions[motor] + steps
 
         # Enforce limits

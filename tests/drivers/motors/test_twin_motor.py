@@ -296,16 +296,16 @@ class TestMovement:
         assert controller.get_status(MotorType.ALTITUDE).position_steps == -50000
 
     def test_move_relative(self, controller: DigitalTwinMotorInstance) -> None:
-        """Relative move adds to current position."""
+        """Relative move adds to current position (altitude inverted, issue #10)."""
         controller.move(MotorType.ALTITUDE, -40000)
         controller.move_relative(MotorType.ALTITUDE, 10000)
-        assert controller.get_status(MotorType.ALTITUDE).position_steps == -30000
+        assert controller.get_status(MotorType.ALTITUDE).position_steps == -50000
 
     def test_move_relative_negative(self, controller: DigitalTwinMotorInstance) -> None:
-        """Relative move with negative steps subtracts from position."""
+        """Relative move with negative steps (altitude inverted, issue #10)."""
         controller.move(MotorType.ALTITUDE, -40000)
         controller.move_relative(MotorType.ALTITUDE, -10000)
-        assert controller.get_status(MotorType.ALTITUDE).position_steps == -50000
+        assert controller.get_status(MotorType.ALTITUDE).position_steps == -30000
 
     def test_move_exceeds_max_raises(
         self, controller: DigitalTwinMotorInstance

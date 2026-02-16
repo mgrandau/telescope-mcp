@@ -766,7 +766,8 @@ class TestMotorMovement:
 
         Assertion Strategy:
         Validates command by confirming:
-        - "O1000" appears in written commands.
+        - "O-1000" appears in written commands (altitude is inverted,
+          issue #10).
 
         Testing Principle:
         Validates protocol correctness, ensuring relative move
@@ -778,7 +779,7 @@ class TestMotorMovement:
         motor_controller.move_relative(MotorType.ALTITUDE, 1000)
 
         commands = mock_serial.get_written_commands()
-        assert any("O1000" in cmd for cmd in commands)
+        assert any("O-1000" in cmd for cmd in commands)
 
     def test_move_relative_negative(
         self,
@@ -803,23 +804,24 @@ class TestMotorMovement:
 
         Assertion Strategy:
         Validates negative handling by confirming:
-        - Final position is -51000 (-50000 - 1000).
+        - Final position is -49000 (-50000 + 1000, because altitude
+          inversion negates -1000 to +1000). See issue #10.
 
         Testing Principle:
         Validates sign handling, ensuring negative relative
-        moves correctly decrement position.
+        moves correctly apply with direction inversion.
         """
         # First move to a position
         mock_serial.queue_axis_response()
         mock_serial.queue_move_complete()
         motor_controller.move(MotorType.ALTITUDE, -50000)
 
-        # Then relative move back
+        # Then relative move back (inverted: -1000 becomes +1000)
         mock_serial.queue_move_complete()
         motor_controller.move_relative(MotorType.ALTITUDE, -1000)
 
         status = motor_controller.get_status(MotorType.ALTITUDE)
-        assert status.position_steps == -51000
+        assert status.position_steps == -49000
 
     def test_move_azimuth(
         self,
