@@ -12,6 +12,8 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+
 import pytest
 
 from telescope_mcp.devices.motor import Motor
@@ -38,7 +40,9 @@ def driver() -> DigitalTwinMotorDriver:
 
 
 @pytest.fixture
-async def motor(driver: DigitalTwinMotorDriver) -> Motor:
+async def motor(
+    driver: DigitalTwinMotorDriver,
+) -> AsyncGenerator[Motor, None]:
     """Create and connect a Motor device for testing.
 
     Args:
