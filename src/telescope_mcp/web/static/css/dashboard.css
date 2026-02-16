@@ -193,6 +193,13 @@ main {
     background: #2563eb;
 }
 
+.pad-hint {
+    font-size: 0.75rem;
+    color: #888;
+    margin-top: 0.25rem;
+    letter-spacing: 0.05em;
+}
+
 .btn-stop {
     background: #7f1d1d !important;
 }
@@ -201,16 +208,49 @@ main {
     background: #991b1b !important;
 }
 
-/* Speed Control */
+/* Step Size Controls */
 .speed-control {
     display: flex;
-    align-items: center;
-    gap: 1rem;
+    flex-direction: column;
+    gap: 0.5rem;
     margin-bottom: 1.5rem;
+}
+
+.step-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.step-label {
+    color: #94a3b8;
+    min-width: 5rem;
+}
+
+.step-value {
+    color: #60a5fa;
+    font-family: monospace;
+    font-weight: bold;
+    min-width: 2.5rem;
+    text-align: right;
 }
 
 .speed-control input[type="range"] {
     flex: 1;
+    max-width: 160px;
+}
+
+.motor-feedback {
+    font-size: 0.8rem;
+    color: #facc15;
+    min-height: 1.2em;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.motor-feedback.visible {
+    opacity: 1;
 }
 
 /* Set Home Button */

@@ -62,8 +62,22 @@ STREAM_TIMEOUT_BUFFER_US = 5_000_000  # 5s buffer added to exposure for timeout
 
 # Motor configuration
 MOTOR_NUDGE_DEGREES = 0.1  # Default nudge amount in degrees
+# Steps-per-degree: hardware constant (motor/gearing/microstep config)
 MOTOR_STEPS_PER_DEGREE_ALT = 140000 / 90.0  # ~1556 steps per degree
 MOTOR_STEPS_PER_DEGREE_AZ = 110000 / 135.0  # ~815 steps per degree
+# Altitude limits: 0=zenith, +3° positive, -60° negative (toward horizon)
+MOTOR_ALT_MAX_STEPS = int(3 * MOTOR_STEPS_PER_DEGREE_ALT)  # +3° past zenith
+MOTOR_ALT_MIN_STEPS = int(-60 * MOTOR_STEPS_PER_DEGREE_ALT)  # -60° toward horizon
+MOTOR_CONTINUOUS_STEPS_ALT = (
+    MOTOR_ALT_MAX_STEPS - MOTOR_ALT_MIN_STEPS
+)  # Full altitude range
+# Azimuth limits: home=0, +190° in positive direction
+MOTOR_AZ_MAX_STEPS = int(190 * MOTOR_STEPS_PER_DEGREE_AZ)  # +190° from home
+MOTOR_AZ_MIN_STEPS = 0  # Home position
+MOTOR_CONTINUOUS_STEPS_AZ = MOTOR_AZ_MAX_STEPS  # Full azimuth range for continuous move
+
+# Background tasks for continuous motor motion (interrupted by stop)
+_motor_tasks: dict[str, asyncio.Task[None]] = {}
 
 # IMU sensor for position feedback
 _sensor: Sensor | None = None
@@ -880,11 +894,10 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         Altitude control is essential for object tracking as celestial objects
         change elevation throughout the night.
 
-        Note: Currently a stub - returns placeholder response.
-
         Args:
-            steps: Number of motor steps to move. Range: ±140000.
-                0 = zenith (90°), 140000 = horizon (0°).
+            steps: Number of motor steps to move.
+                0 = zenith. Positive = past zenith (+3°),
+                negative = toward horizon (-60°).
             speed: Motor speed as percentage (1-100). Default 100.
 
         Returns:
@@ -898,8 +911,29 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             )
         """
         logger.info("Motor altitude move", steps=steps, speed=speed)
-        # TODO: Integrate with motor controller
-        return {"status": "ok", "axis": "altitude", "steps": steps, "speed": speed}
+        if _motor is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Motor controller not available",
+            )
+
+        try:
+            from telescope_mcp.drivers.motors.types import MotorType
+
+            await _motor.move_by(MotorType.ALTITUDE, steps, speed)
+            return {"status": "ok", "axis": "altitude", "steps": steps, "speed": speed}
+        except ValueError as e:
+            logger.warning("Motor altitude move rejected", error=str(e))
+            raise HTTPException(
+                status_code=400,
+                detail=str(e),
+            ) from e
+        except Exception as e:
+            logger.error("Motor altitude move failed", error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Motor altitude move failed: {e}",
+            ) from e
 
     @app.post("/api/motor/azimuth")
     async def api_move_azimuth(steps: int, speed: int = 100) -> dict[str, object]:
@@ -912,8 +946,6 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         Business context: Enables horizontal telescope positioning for target
         acquisition and tracking. Azimuth adjustments compensate for Earth
         rotation and allow slewing between targets.
-
-        Note: Currently a stub - returns placeholder response.
 
         Args:
             steps: Number of motor steps to move. Range: ±110000.
@@ -930,8 +962,29 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             )
         """
         logger.info("Motor azimuth move", steps=steps, speed=speed)
-        # TODO: Integrate with motor controller
-        return {"status": "ok", "axis": "azimuth", "steps": steps, "speed": speed}
+        if _motor is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Motor controller not available",
+            )
+
+        try:
+            from telescope_mcp.drivers.motors.types import MotorType
+
+            await _motor.move_by(MotorType.AZIMUTH, steps, speed)
+            return {"status": "ok", "axis": "azimuth", "steps": steps, "speed": speed}
+        except ValueError as e:
+            logger.warning("Motor azimuth move rejected", error=str(e))
+            raise HTTPException(
+                status_code=400,
+                detail=str(e),
+            ) from e
+        except Exception as e:
+            logger.error("Motor azimuth move failed", error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Motor azimuth move failed: {e}",
+            ) from e
 
     @app.post("/api/motor/altitude/nudge")
     async def api_nudge_altitude(
@@ -975,14 +1028,35 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         logger.info(
             "Motor altitude nudge", direction=direction, degrees=degrees, steps=steps
         )
-        # TODO: Integrate with motor controller - call move_relative()
-        return {
-            "status": "ok",
-            "axis": "altitude",
-            "direction": direction,
-            "degrees": degrees,
-            "steps": steps,
-        }
+        if _motor is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Motor controller not available",
+            )
+
+        try:
+            from telescope_mcp.drivers.motors.types import MotorType
+
+            await _motor.move_by(MotorType.ALTITUDE, steps)
+            return {
+                "status": "ok",
+                "axis": "altitude",
+                "direction": direction,
+                "degrees": degrees,
+                "steps": steps,
+            }
+        except ValueError as e:
+            logger.warning("Motor altitude nudge rejected", error=str(e))
+            raise HTTPException(
+                status_code=400,
+                detail=str(e),
+            ) from e
+        except Exception as e:
+            logger.error("Motor altitude nudge failed", error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Motor altitude nudge failed: {e}",
+            ) from e
 
     @app.post("/api/motor/azimuth/nudge")
     async def api_nudge_azimuth(
@@ -1021,20 +1095,41 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             ... );
         """
         steps = int(degrees * MOTOR_STEPS_PER_DEGREE_AZ)
-        if direction in ("cw", "right"):
-            steps = -steps  # CW = negative direction
+        if direction in ("ccw", "left"):
+            steps = -steps  # CCW/left = negative direction
 
         logger.info(
             "Motor azimuth nudge", direction=direction, degrees=degrees, steps=steps
         )
-        # TODO: Integrate with motor controller - call move_relative()
-        return {
-            "status": "ok",
-            "axis": "azimuth",
-            "direction": direction,
-            "degrees": degrees,
-            "steps": steps,
-        }
+        if _motor is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Motor controller not available",
+            )
+
+        try:
+            from telescope_mcp.drivers.motors.types import MotorType
+
+            await _motor.move_by(MotorType.AZIMUTH, steps)
+            return {
+                "status": "ok",
+                "axis": "azimuth",
+                "direction": direction,
+                "degrees": degrees,
+                "steps": steps,
+            }
+        except ValueError as e:
+            logger.warning("Motor azimuth nudge rejected", error=str(e))
+            raise HTTPException(
+                status_code=400,
+                detail=str(e),
+            ) from e
+        except Exception as e:
+            logger.error("Motor azimuth nudge failed", error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Motor azimuth nudge failed: {e}",
+            ) from e
 
     @app.post("/api/motor/altitude/start")
     async def api_start_altitude(
@@ -1079,7 +1174,41 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
         _motor_speed["altitude"] = speed
 
         logger.info("Motor altitude start", direction=direction, speed=speed)
-        # TODO: Integrate with motor controller - start continuous move
+        if _motor is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Motor controller not available",
+            )
+
+        # Cancel any existing continuous move on this axis
+        existing = _motor_tasks.get("altitude")
+        if existing and not existing.done():
+            existing.cancel()
+
+        # Fire background move with full range — stop endpoint interrupts it
+        from telescope_mcp.drivers.motors.types import MotorType
+
+        continuous_steps = (
+            MOTOR_CONTINUOUS_STEPS_ALT
+            if direction == "up"
+            else -MOTOR_CONTINUOUS_STEPS_ALT
+        )
+
+        async def _continuous_altitude() -> None:
+            """Background task for continuous altitude motion."""
+            try:
+                await _motor.move_by(MotorType.ALTITUDE, continuous_steps, speed)
+            except asyncio.CancelledError:
+                logger.info("Continuous altitude move cancelled")
+            except Exception as e:
+                logger.error("Continuous altitude move failed", error=str(e))
+            finally:
+                _motor_moving["altitude"] = False
+                _motor_direction["altitude"] = 0
+                _motor_speed["altitude"] = 0
+
+        _motor_tasks["altitude"] = asyncio.create_task(_continuous_altitude())
+
         return {
             "status": "moving",
             "axis": "altitude",
@@ -1127,11 +1256,45 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             >>> leftBtn.onmouseup = () => fetch('/api/motor/stop', {method: 'POST'});
         """
         _motor_moving["azimuth"] = True
-        _motor_direction["azimuth"] = -1 if direction in ("cw", "right") else 1
+        _motor_direction["azimuth"] = 1 if direction in ("cw", "right") else -1
         _motor_speed["azimuth"] = speed
 
         logger.info("Motor azimuth start", direction=direction, speed=speed)
-        # TODO: Integrate with motor controller - start continuous move
+        if _motor is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Motor controller not available",
+            )
+
+        # Cancel any existing continuous move on this axis
+        existing = _motor_tasks.get("azimuth")
+        if existing and not existing.done():
+            existing.cancel()
+
+        # Fire background move with full range — stop endpoint interrupts it
+        from telescope_mcp.drivers.motors.types import MotorType
+
+        continuous_steps = (
+            MOTOR_CONTINUOUS_STEPS_AZ
+            if direction in ("cw", "right")
+            else -MOTOR_CONTINUOUS_STEPS_AZ
+        )
+
+        async def _continuous_azimuth() -> None:
+            """Background task for continuous azimuth motion."""
+            try:
+                await _motor.move_by(MotorType.AZIMUTH, continuous_steps, speed)
+            except asyncio.CancelledError:
+                logger.info("Continuous azimuth move cancelled")
+            except Exception as e:
+                logger.error("Continuous azimuth move failed", error=str(e))
+            finally:
+                _motor_moving["azimuth"] = False
+                _motor_direction["azimuth"] = 0
+                _motor_speed["azimuth"] = 0
+
+        _motor_tasks["azimuth"] = asyncio.create_task(_continuous_azimuth())
+
         return {
             "status": "moving",
             "axis": "azimuth",
@@ -1173,11 +1336,15 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
 
         if axis is None:
             # Emergency stop - all motors
-            for motor in ["altitude", "azimuth"]:
-                _motor_moving[motor] = False
-                _motor_direction[motor] = 0
-                _motor_speed[motor] = 0
-                stopped_axes.append(motor)
+            for motor_axis in ["altitude", "azimuth"]:
+                _motor_moving[motor_axis] = False
+                _motor_direction[motor_axis] = 0
+                _motor_speed[motor_axis] = 0
+                stopped_axes.append(motor_axis)
+                # Cancel background continuous move task
+                task = _motor_tasks.pop(motor_axis, None)
+                if task and not task.done():
+                    task.cancel()
             logger.warning("Emergency stop - all motors")
         else:
             # Single axis stop
@@ -1185,6 +1352,10 @@ def create_app(encoder: ImageEncoder | None = None) -> FastAPI:
             _motor_direction[axis] = 0
             _motor_speed[axis] = 0
             stopped_axes.append(axis)
+            # Cancel background continuous move task
+            task = _motor_tasks.pop(axis, None)
+            if task and not task.done():
+                task.cancel()
             logger.info("Motor stop", axis=axis)
 
         # Send stop to actual motor hardware/digital twin

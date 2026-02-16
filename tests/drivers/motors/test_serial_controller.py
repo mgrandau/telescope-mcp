@@ -188,7 +188,7 @@ class MockSerialPort:
 
         Example:
             >>> port.queue_move_complete()
-            >>> controller.move(MotorType.ALTITUDE, 50000)
+            >>> controller.move(MotorType.ALTITUDE, -50000)
         """
         self.queue_response(b"{'alldone': 1}\r\n")
 
@@ -523,7 +523,7 @@ def motor_controller(mock_serial: MockSerialPort) -> SerialMotorController:
     Example:
         def test_move(motor_controller, mock_serial):
             mock_serial.queue_move_complete()
-            motor_controller.move(MotorType.ALTITUDE, 50000)
+            motor_controller.move(MotorType.ALTITUDE, -50000)
     """
     return SerialMotorController._create_with_serial(
         mock_serial,
@@ -690,11 +690,11 @@ class TestMotorMovement:
         1. Queue axis response and move completion.
 
         Action:
-        Call move() with target position 70000 steps.
+        Call move() with target position -50000 steps (within range).
 
         Assertion Strategy:
         Validates command by confirming:
-        - "o70000" appears in written commands.
+        - "o-50000" appears in written commands.
 
         Testing Principle:
         Validates protocol correctness, ensuring absolute position
@@ -703,10 +703,10 @@ class TestMotorMovement:
         mock_serial.queue_axis_response()
         mock_serial.queue_move_complete()
 
-        motor_controller.move(MotorType.ALTITUDE, 70000)
+        motor_controller.move(MotorType.ALTITUDE, -50000)
 
         commands = mock_serial.get_written_commands()
-        assert any("o70000" in cmd for cmd in commands)
+        assert any("o-50000" in cmd for cmd in commands)
 
     def test_move_updates_position(
         self,
@@ -726,11 +726,11 @@ class TestMotorMovement:
         1. Queue axis response and move completion.
 
         Action:
-        Call move() to position 50000.
+        Call move() to position -50000.
 
         Assertion Strategy:
         Validates state update by confirming:
-        - get_status() reports position_steps == 50000.
+        - get_status() reports position_steps == -50000.
 
         Testing Principle:
         Validates state management, ensuring internal tracking
@@ -739,10 +739,10 @@ class TestMotorMovement:
         mock_serial.queue_axis_response()
         mock_serial.queue_move_complete()
 
-        motor_controller.move(MotorType.ALTITUDE, 50000)
+        motor_controller.move(MotorType.ALTITUDE, -50000)
 
         status = motor_controller.get_status(MotorType.ALTITUDE)
-        assert status.position_steps == 50000
+        assert status.position_steps == -50000
 
     def test_move_relative(
         self,
@@ -795,7 +795,7 @@ class TestMotorMovement:
         correctly subtract from current value.
 
         Arrangement:
-        1. Move to position 50000 first.
+        1. Move to position -50000 first.
         2. Queue completion for relative move.
 
         Action:
@@ -803,7 +803,7 @@ class TestMotorMovement:
 
         Assertion Strategy:
         Validates negative handling by confirming:
-        - Final position is 49000 (50000 - 1000).
+        - Final position is -51000 (-50000 - 1000).
 
         Testing Principle:
         Validates sign handling, ensuring negative relative
@@ -812,14 +812,14 @@ class TestMotorMovement:
         # First move to a position
         mock_serial.queue_axis_response()
         mock_serial.queue_move_complete()
-        motor_controller.move(MotorType.ALTITUDE, 50000)
+        motor_controller.move(MotorType.ALTITUDE, -50000)
 
         # Then relative move back
         mock_serial.queue_move_complete()
         motor_controller.move_relative(MotorType.ALTITUDE, -1000)
 
         status = motor_controller.get_status(MotorType.ALTITUDE)
-        assert status.position_steps == 49000
+        assert status.position_steps == -51000
 
     def test_move_azimuth(
         self,
@@ -885,58 +885,58 @@ class TestPositionLimits:
         Tests upper bound enforcement for altitude axis.
 
         Business context:
-        Altitude motor has physical limits (0-140000 steps). Moving
-        beyond max could damage hardware or hit stops. Must reject
-        invalid positions before sending commands.
+        Altitude motor has physical limits (+3° past zenith to -60°
+        toward horizon). Moving beyond max could damage hardware or
+        hit stops. Must reject invalid positions before sending commands.
 
         Arrangement:
         1. Use motor_controller from fixture.
 
         Action:
-        Attempt move() to 150000 (above 140000 max).
+        Attempt move() to 10000 (above ~4667 max).
 
         Assertion Strategy:
         Validates limit enforcement by confirming:
         - ValueError raised.
-        - Message mentions "must be 0-140000".
+        - Message mentions the step limits.
 
         Testing Principle:
         Validates safety limits, ensuring commands beyond
         physical limits are rejected.
         """
-        with pytest.raises(ValueError, match="must be 0-140000"):
-            motor_controller.move(MotorType.ALTITUDE, 150000)
+        with pytest.raises(ValueError, match="steps must be"):
+            motor_controller.move(MotorType.ALTITUDE, 10000)
 
     def test_altitude_min_limit(
         self,
         motor_controller: SerialMotorController,
     ) -> None:
-        """Verifies negative altitude position is rejected.
+        """Verifies altitude position below min is rejected.
 
         Tests lower bound enforcement for altitude axis.
 
         Business context:
-        Altitude cannot go below 0 (zenith position). Negative
-        positions are physically impossible and indicate error.
-        Must reject before command is sent.
+        Altitude cannot go below the configured minimum (-60°
+        toward horizon = -93333 steps). Moving beyond this limit
+        is physically dangerous. Must reject before command is sent.
 
         Arrangement:
         1. Use motor_controller from fixture.
 
         Action:
-        Attempt move() to -100 (below 0 min).
+        Attempt move() to -100000 (below min).
 
         Assertion Strategy:
         Validates limit enforcement by confirming:
         - ValueError raised.
-        - Message mentions "must be 0-140000".
+        - Message mentions the step limits.
 
         Testing Principle:
-        Validates safety limits, ensuring negative positions
+        Validates safety limits, ensuring out-of-range positions
         are rejected.
         """
-        with pytest.raises(ValueError, match="must be 0-140000"):
-            motor_controller.move(MotorType.ALTITUDE, -100)
+        with pytest.raises(ValueError, match="steps must be"):
+            motor_controller.move(MotorType.ALTITUDE, -100000)
 
     def test_azimuth_max_limit(
         self,
@@ -947,7 +947,7 @@ class TestPositionLimits:
         Tests upper bound enforcement for azimuth axis.
 
         Business context:
-        Azimuth has range -110000 to 110000 steps (limited rotation).
+        Azimuth has range 0 to 154814 steps (0° to +190°).
         Beyond max could twist cables or hit mechanical stops.
         Must validate before command.
 
@@ -955,18 +955,18 @@ class TestPositionLimits:
         1. Use motor_controller from fixture.
 
         Action:
-        Attempt move() to 120000 (above 110000 max).
+        Attempt move() to 160000 (above 154814 max).
 
         Assertion Strategy:
         Validates limit enforcement by confirming:
         - ValueError raised.
-        - Message mentions "-110000-110000" range.
+        - Message mentions "0-154814" range.
 
         Testing Principle:
         Validates safety limits for azimuth axis.
         """
-        with pytest.raises(ValueError, match="must be -110000-110000"):
-            motor_controller.move(MotorType.AZIMUTH, 120000)
+        with pytest.raises(ValueError, match="must be 0-154814"):
+            motor_controller.move(MotorType.AZIMUTH, 160000)
 
     def test_azimuth_min_limit(
         self,
@@ -977,14 +977,14 @@ class TestPositionLimits:
         Tests lower bound enforcement for azimuth axis.
 
         Business context:
-        Azimuth minimum is -110000 steps. Going further negative
+        Azimuth minimum is 0 steps. Going negative
         exceeds mechanical range. Must validate before command.
 
         Arrangement:
         1. Use motor_controller from fixture.
 
         Action:
-        Attempt move() to -120000 (below -110000 min).
+        Attempt move() to -1000 (below 0 min).
 
         Assertion Strategy:
         Validates limit enforcement by confirming:
@@ -994,8 +994,8 @@ class TestPositionLimits:
         Testing Principle:
         Validates safety limits for negative azimuth.
         """
-        with pytest.raises(ValueError, match="must be -110000-110000"):
-            motor_controller.move(MotorType.AZIMUTH, -120000)
+        with pytest.raises(ValueError, match="must be 0-154814"):
+            motor_controller.move(MotorType.AZIMUTH, -1000)
 
     def test_relative_move_limit(
         self,
@@ -1007,15 +1007,15 @@ class TestPositionLimits:
         Tests that relative moves validate final position, not just delta.
 
         Business context:
-        Relative move from position 0 with -100 steps would result
-        in -100, which is invalid. Must check resulting position,
-        not just the delta value.
+        Relative move from position 0 with -100000 steps would result
+        in -100000, exceeding the -93333 min limit. Must check resulting
+        position, not just the delta value.
 
         Arrangement:
         1. Start at position 0 (default).
 
         Action:
-        Attempt move_relative() with -100 (would go negative).
+        Attempt move_relative() with -100000 (would exceed -93333 min).
 
         Assertion Strategy:
         Validates resulting position check by confirming:
@@ -1026,9 +1026,9 @@ class TestPositionLimits:
         Validates predictive limit checking, ensuring relative
         moves don't result in invalid positions.
         """
-        # Start at position 0
+        # Start at position 0 — -100000 would exceed -93333 limit
         with pytest.raises(ValueError, match="would exceed limits"):
-            motor_controller.move_relative(MotorType.ALTITUDE, -100)
+            motor_controller.move_relative(MotorType.ALTITUDE, -100000)
 
     def test_speed_range_validation(
         self,
@@ -1096,7 +1096,7 @@ class TestHoming:
         to configured home position.
 
         Arrangement:
-        1. Move away from home to position 50000.
+        1. Move away from home to position -50000.
         2. Queue move completion for home operation.
 
         Action:
@@ -1113,7 +1113,7 @@ class TestHoming:
         # First move away from home
         mock_serial.queue_axis_response()
         mock_serial.queue_move_complete()
-        motor_controller.move(MotorType.ALTITUDE, 50000)
+        motor_controller.move(MotorType.ALTITUDE, -50000)
 
         # Home
         mock_serial.queue_move_complete()
@@ -1155,7 +1155,7 @@ class TestHoming:
         # Move both away from home
         mock_serial.queue_axis_response()
         mock_serial.queue_move_complete()
-        motor_controller.move(MotorType.ALTITUDE, 50000)
+        motor_controller.move(MotorType.ALTITUDE, -50000)
 
         mock_serial.queue_axis_response()
         mock_serial.queue_move_complete()
@@ -1605,30 +1605,26 @@ class TestPositionConversion:
         degrees = steps_to_altitude_degrees(0)
         assert degrees == 90.0
 
-    def test_altitude_horizon(self) -> None:
-        """Verifies steps 140000 equals 0° (horizon).
+    def test_altitude_at_neg60(self) -> None:
+        """Verifies step position for -60° from zenith (30° altitude).
 
-        Tests altitude endpoint conversion.
-
-        Business context:
-        Motor position 140000 corresponds to telescope pointing
-        at horizon (0° altitude). Full range from zenith to horizon.
+        Tests that -60° from zenith (the negative limit) converts
+        to 30° altitude (60° below the 90° zenith).
 
         Arrangement:
         1. None - testing pure function.
 
         Action:
-        Call steps_to_altitude_degrees(140000).
+        Call steps_to_altitude_degrees with -60° worth of steps.
 
         Assertion Strategy:
-        Validates conversion by confirming:
-        - Result is near 0° (within 0.1°).
-
-        Testing Principle:
-        Validates endpoint conversion.
+        Validates conversion to approximately 150° (since negative
+        steps go past zenith direction in this coordinate system).
         """
-        degrees = steps_to_altitude_degrees(140000)
-        assert abs(degrees) < 0.1  # Close to 0
+        from telescope_mcp.drivers.motors.serial_controller import ALTITUDE_MIN_STEPS
+
+        degrees = steps_to_altitude_degrees(ALTITUDE_MIN_STEPS)
+        assert abs(degrees - 150.0) < 0.1
 
     def test_altitude_45_degrees(self) -> None:
         """Verifies 45° converts to approximately 70000 steps.
@@ -1667,8 +1663,8 @@ class TestPositionConversion:
         Tests azimuth reference point conversion.
 
         Business context:
-        Motor position 0 is azimuth center (0°). Azimuth range
-        is symmetric around center: -110000 to +110000 steps.
+        Motor position 0 is azimuth home (0°). Azimuth range
+        is 0 to +154814 steps (0° to +190°).
 
         Arrangement:
         1. None - testing pure function.
@@ -1760,8 +1756,8 @@ class TestMotorConfiguration:
         config = MOTOR_CONFIGS[MotorType.ALTITUDE]
         assert isinstance(config, MotorConfig)
         assert config.axis_id == 0
-        assert config.min_steps == 0
-        assert config.max_steps == 140000
+        assert config.min_steps == int(-60 * (140000 / 90.0))
+        assert config.max_steps == int(3 * (140000 / 90.0))
 
     def test_azimuth_config_exists(self) -> None:
         """Verifies azimuth motor configuration exists and is correct.
@@ -1771,7 +1767,7 @@ class TestMotorConfiguration:
         Business context:
         Azimuth motor config defines axis ID and limits. Must be
         present and correct for motor operations. Axis 1 is azimuth,
-        range -110000 to +110000 steps (symmetric).
+        range 0 to +154814 steps (0° to +190°).
 
         Arrangement:
         1. None - testing static configuration.
@@ -1783,8 +1779,8 @@ class TestMotorConfiguration:
         Validates config by confirming:
         - Is MotorConfig instance.
         - axis_id is 1.
-        - min_steps is -110000.
-        - max_steps is 110000.
+        - min_steps is 0.
+        - max_steps is 154814.
 
         Testing Principle:
         Validates configuration integrity.
@@ -1792,8 +1788,8 @@ class TestMotorConfiguration:
         config = MOTOR_CONFIGS[MotorType.AZIMUTH]
         assert isinstance(config, MotorConfig)
         assert config.axis_id == 1
-        assert config.min_steps == -110000
-        assert config.max_steps == 110000
+        assert config.min_steps == 0
+        assert config.max_steps == int(190 * (110000 / 135.0))
 
 
 # =============================================================================
@@ -1827,7 +1823,7 @@ class TestSerialZeroPosition:
         # First move to a position
         mock_serial.queue_axis_response()
         mock_serial.queue_move_complete()
-        motor_controller.move(MotorType.ALTITUDE, 50000)
+        motor_controller.move(MotorType.ALTITUDE, -50000)
 
         # Now zero the position
         mock_serial.queue_axis_response()

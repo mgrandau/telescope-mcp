@@ -63,11 +63,21 @@
                         <button class="btn-right" data-axis="azimuth" data-direction="1">▶</button>
                     </div>
                     <button class="btn-down" data-axis="altitude" data-direction="-1">▼</button>
+                    <div class="pad-hint">tap = nudge · hold = step</div>
                 </div>
 
                 <div class="speed-control">
-                    <label>Speed: <input type="range" id="speed" min="10" max="100" value="50"></label>
-                    <span id="speed-value">50</span>%
+                    <div class="step-info">
+                        <span class="step-label">Nudge:</span>
+                        <span class="step-value" id="nudge-step">0.1</span>°
+                    </div>
+                    <div class="step-info">
+                        <label class="step-label">Hold step:
+                            <input type="range" id="hold-step" min="1" max="100" value="10" step="1">
+                        </label>
+                        <span class="step-value" id="hold-step-value">1.0</span>°
+                    </div>
+                    <div id="motor-feedback" class="motor-feedback"></div>
                 </div>
 
                 <div class="home-control">

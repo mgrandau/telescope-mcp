@@ -51,8 +51,10 @@ def config_with_timing() -> DigitalTwinMotorConfig:
     """
     return DigitalTwinMotorConfig(
         simulate_timing=True,
-        slew_speed_steps_per_sec=1000,  # Slow enough that moves take measurable time
-        acceleration_time_sec=0.0,  # No accel ramp for predictable timing
+        altitude_slew_speed=1000,  # Slow enough that moves take measurable time
+        altitude_accel_time=0.0,  # No accel ramp for predictable timing
+        azimuth_slew_speed=1000,
+        azimuth_accel_time=0.0,
     )
 
 
@@ -100,8 +102,8 @@ class TestZeroPosition:
         Verifies that zero_position sets the counter to 0 without
         physical movement.
         """
-        controller.move(MotorType.ALTITUDE, 70000)
-        assert controller.get_status(MotorType.ALTITUDE).position_steps == 70000
+        controller.move(MotorType.ALTITUDE, -50000)
+        assert controller.get_status(MotorType.ALTITUDE).position_steps == -50000
 
         controller.zero_position(MotorType.ALTITUDE)
         assert controller.get_status(MotorType.ALTITUDE).position_steps == 0
@@ -118,7 +120,7 @@ class TestZeroPosition:
 
     def test_zero_both_axes(self, controller: DigitalTwinMotorInstance) -> None:
         """Zero both axes simulating full Set Home operation."""
-        controller.move(MotorType.ALTITUDE, 70000)
+        controller.move(MotorType.ALTITUDE, -50000)
         controller.move(MotorType.AZIMUTH, 30000)
 
         controller.zero_position(MotorType.ALTITUDE)
@@ -148,7 +150,7 @@ class TestZeroPosition:
         self, controller: DigitalTwinMotorInstance
     ) -> None:
         """Zeroing one axis does not change the other axis position."""
-        controller.move(MotorType.ALTITUDE, 70000)
+        controller.move(MotorType.ALTITUDE, -50000)
         controller.move(MotorType.AZIMUTH, 30000)
 
         controller.zero_position(MotorType.ALTITUDE)
@@ -189,8 +191,8 @@ class TestInterruptibleStop:
         def do_move() -> None:
             """Execute a long move in background thread."""
             move_start_time[0] = time.monotonic()
-            # 100000 steps at 1000 steps/sec = 100 seconds (would take forever)
-            timed_controller.move(MotorType.ALTITUDE, 100000)
+            # -90000 steps at 1000 steps/sec = 90 seconds (would take forever)
+            timed_controller.move(MotorType.ALTITUDE, -90000)
             move_end_time[0] = time.monotonic()
             move_completed.set()
 
@@ -243,13 +245,13 @@ class TestInterruptibleStop:
         """
         # Move to known position first
         timed_controller._config.simulate_timing = False
-        timed_controller.move(MotorType.ALTITUDE, 50000)
+        timed_controller.move(MotorType.ALTITUDE, -50000)
         timed_controller._config.simulate_timing = True
 
         move_completed = threading.Event()
 
         def do_move() -> None:
-            timed_controller.move(MotorType.ALTITUDE, 100000)
+            timed_controller.move(MotorType.ALTITUDE, 4000)
             move_completed.set()
 
         t = threading.Thread(target=do_move)
@@ -259,9 +261,9 @@ class TestInterruptibleStop:
         timed_controller.stop(MotorType.ALTITUDE)
         move_completed.wait(timeout=2.0)
 
-        # Position should be at 50000 (pre-move), not 100000 (target)
+        # Position should be at -50000 (pre-move), not 4000 (target)
         status = timed_controller.get_status(MotorType.ALTITUDE)
-        assert status.position_steps == 50000
+        assert status.position_steps == -50000
         t.join(timeout=2.0)
 
     def test_stop_without_active_move(
@@ -290,20 +292,20 @@ class TestMovement:
 
     def test_move_absolute(self, controller: DigitalTwinMotorInstance) -> None:
         """Move to absolute position updates position correctly."""
-        controller.move(MotorType.ALTITUDE, 70000)
-        assert controller.get_status(MotorType.ALTITUDE).position_steps == 70000
+        controller.move(MotorType.ALTITUDE, -50000)
+        assert controller.get_status(MotorType.ALTITUDE).position_steps == -50000
 
     def test_move_relative(self, controller: DigitalTwinMotorInstance) -> None:
         """Relative move adds to current position."""
-        controller.move(MotorType.ALTITUDE, 50000)
+        controller.move(MotorType.ALTITUDE, -40000)
         controller.move_relative(MotorType.ALTITUDE, 10000)
-        assert controller.get_status(MotorType.ALTITUDE).position_steps == 60000
+        assert controller.get_status(MotorType.ALTITUDE).position_steps == -30000
 
     def test_move_relative_negative(self, controller: DigitalTwinMotorInstance) -> None:
         """Relative move with negative steps subtracts from position."""
-        controller.move(MotorType.ALTITUDE, 50000)
+        controller.move(MotorType.ALTITUDE, -40000)
         controller.move_relative(MotorType.ALTITUDE, -10000)
-        assert controller.get_status(MotorType.ALTITUDE).position_steps == 40000
+        assert controller.get_status(MotorType.ALTITUDE).position_steps == -50000
 
     def test_move_exceeds_max_raises(
         self, controller: DigitalTwinMotorInstance
@@ -315,7 +317,7 @@ class TestMovement:
     def test_move_below_min_raises(self, controller: DigitalTwinMotorInstance) -> None:
         """Move below minimum limit raises ValueError."""
         with pytest.raises(ValueError, match="steps must be"):
-            controller.move(MotorType.ALTITUDE, -1)
+            controller.move(MotorType.ALTITUDE, -100000)
 
     def test_move_when_closed_raises(
         self, controller: DigitalTwinMotorInstance

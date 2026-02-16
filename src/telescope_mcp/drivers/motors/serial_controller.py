@@ -72,10 +72,14 @@ logger = get_logger(__name__)
 
 
 # Motor configuration constants
-ALTITUDE_MAX_STEPS = 140000  # 0° (horizon)
-ALTITUDE_MIN_STEPS = 0  # 90° (zenith)
-AZIMUTH_MAX_STEPS = 110000
-AZIMUTH_MIN_STEPS = -110000
+# Steps-per-degree is a physical constant of the motor/gearing/microstep config.
+# Position 0 = zenith.  Positive → past zenith, Negative → toward horizon.
+ALTITUDE_STEPS_PER_DEGREE = 140000 / 90.0  # ~1555.56 (hardware constant)
+ALTITUDE_MAX_STEPS = int(3 * ALTITUDE_STEPS_PER_DEGREE)  # +3° past zenith
+ALTITUDE_MIN_STEPS = int(-60 * ALTITUDE_STEPS_PER_DEGREE)  # -60° toward horizon
+AZIMUTH_STEPS_PER_DEGREE = 110000 / 135.0  # ~814.81 (hardware constant)
+AZIMUTH_MAX_STEPS = int(190 * AZIMUTH_STEPS_PER_DEGREE)  # +190° from home
+AZIMUTH_MIN_STEPS = 0  # Home position
 DEFAULT_BAUDRATE = 9600
 DEFAULT_TIMEOUT = 30.0  # Motor moves can take a while
 
@@ -115,14 +119,14 @@ MOTOR_CONFIGS = {
         min_steps=ALTITUDE_MIN_STEPS,
         max_steps=ALTITUDE_MAX_STEPS,
         home_position=0,  # Zenith
-        steps_per_degree=ALTITUDE_MAX_STEPS / 90.0,  # ~1555 steps/degree
+        steps_per_degree=ALTITUDE_STEPS_PER_DEGREE,  # ~1555 steps/degree
     ),
     MotorType.AZIMUTH: MotorConfig(
         axis_id=1,
         min_steps=AZIMUTH_MIN_STEPS,
         max_steps=AZIMUTH_MAX_STEPS,
-        home_position=0,  # Center
-        steps_per_degree=AZIMUTH_MAX_STEPS / 135.0,  # ~815 steps/degree (270° range)
+        home_position=0,  # Home
+        steps_per_degree=AZIMUTH_STEPS_PER_DEGREE,  # ~815 steps/degree
     ),
 }
 

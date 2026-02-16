@@ -296,6 +296,13 @@ def client(mock_asi, mock_sdk_path):
     """
     app = create_app(encoder=MockImageEncoder())
     with TestClient(app) as test_client:
+        # Disable timing simulation on the digital twin motor so tests
+        # don't block for realistic move durations (seconds per move).
+        # Web app tests validate HTTP contract, not motor timing.
+        from telescope_mcp.web import app as web_app_module
+
+        if web_app_module._motor and web_app_module._motor._instance:
+            web_app_module._motor._instance._config.simulate_timing = False
         yield test_client
 
 
@@ -1093,18 +1100,16 @@ class TestMotorAPIEndpoints:
         [
             ("altitude", 1000, None, 100),
             ("altitude", 500, 50, 50),
-            ("altitude", -200, 75, 75),
             ("azimuth", 2000, None, 100),
             ("azimuth", 1000, 60, 60),
-            ("azimuth", -500, None, 100),
+            ("azimuth", 500, None, 100),
         ],
         ids=[
             "altitude_default_speed",
             "altitude_custom_speed",
-            "altitude_negative",
             "azimuth_default_speed",
             "azimuth_custom_speed",
-            "azimuth_negative",
+            "azimuth_positive",
         ],
     )
     def test_motor_move(self, client, axis, steps, speed, expected_speed):
@@ -1150,6 +1155,35 @@ class TestMotorAPIEndpoints:
         assert data["steps"] == steps
         assert data["speed"] == expected_speed
 
+    @pytest.mark.parametrize(
+        "axis,steps",
+        [
+            ("altitude", 10000),
+            ("azimuth", -120000),
+        ],
+        ids=["altitude_exceeds_positive_limit", "azimuth_exceeds_range"],
+    )
+    def test_motor_move_out_of_bounds(self, client, axis, steps):
+        """Verifies motor move rejects steps that exceed position limits.
+
+        Business context:
+        Motor position limits protect hardware from damage. Moving
+        beyond configured limits must return HTTP 400 with a
+        descriptive error.
+
+        Args:
+            client: FastAPI TestClient fixture.
+            axis: Motor axis ("altitude" or "azimuth").
+            steps: Step count that would exceed motor limits.
+
+        Assertion Strategy:
+        Validates that out-of-bounds moves return 400 with error detail.
+        """
+        response = client.post(f"/api/motor/{axis}?steps={steps}")
+        assert response.status_code == 400
+        data = response.json()
+        assert "limits" in data["detail"] or "exceed" in data["detail"]
+
     def test_stop_motors(self, client):
         """Verifies POST /api/motor/stop halts all motor movement.
 
@@ -1185,18 +1219,12 @@ class TestMotorAPIEndpoints:
         "axis,direction,degrees",
         [
             ("altitude", "up", 0.1),
-            ("altitude", "down", 0.5),
-            ("azimuth", "cw", 0.1),
-            ("azimuth", "ccw", 1.0),
-            ("azimuth", "left", 0.2),
-            ("azimuth", "right", 0.3),
+            ("azimuth", "cw", 1.0),
+            ("azimuth", "right", 0.2),
         ],
         ids=[
             "altitude_up",
-            "altitude_down",
             "azimuth_cw",
-            "azimuth_ccw",
-            "azimuth_left",
             "azimuth_right",
         ],
     )
@@ -1242,6 +1270,94 @@ class TestMotorAPIEndpoints:
         assert data["degrees"] == degrees
         assert "steps" in data
         assert isinstance(data["steps"], int)
+
+    def test_motor_nudge_altitude_down_after_up(self, client):
+        """Verifies altitude nudge down works after moving up.
+
+        Business context:
+        Validates bidirectional nudge by first moving up, then
+        nudging down.
+
+        Arrangement:
+        Move altitude up 1° first.
+
+        Action:
+        Nudge altitude down 0.5° from elevated position.
+
+        Assertion Strategy:
+        - Both moves return HTTP 200.
+        - Nudge response confirms direction=down.
+        """
+        # Move up first to create room
+        resp_up = client.post("/api/motor/altitude/nudge?direction=up&degrees=1.0")
+        assert resp_up.status_code == 200
+
+        # Now nudge down — should succeed
+        resp_down = client.post("/api/motor/altitude/nudge?direction=down&degrees=0.5")
+        assert resp_down.status_code == 200
+        data = resp_down.json()
+        assert data["status"] == "ok"
+        assert data["direction"] == "down"
+
+    def test_motor_nudge_altitude_down_at_zero(self, client):
+        """Verifies altitude nudge down from position 0 succeeds.
+
+        Business context:
+        Position 0 is zenith. Negative direction moves toward horizon.
+        With limits at -60° (-93333 steps), a small nudge down from
+        zenith is valid.
+
+        Assertion Strategy:
+        - HTTP 200, direction is "down".
+        """
+        response = client.post("/api/motor/altitude/nudge?direction=down&degrees=0.5")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["direction"] == "down"
+
+    def test_motor_nudge_azimuth_ccw_from_positive(self, client):
+        """Verifies azimuth CCW nudge works after pre-moving to positive position.
+
+        Business context:
+        Azimuth range is 0 to +190° (home=0). Right/CW is positive.
+        CCW/left nudge goes negative, so it fails from position 0.
+        Pre-move right first, then CCW nudge.
+
+        Assertion Strategy:
+        - Pre-move right returns 200.
+        - CCW nudge returns 200 with correct direction.
+        """
+        # Move right first to create room for CCW nudge
+        resp_right = client.post("/api/motor/azimuth/nudge?direction=right&degrees=1.0")
+        assert resp_right.status_code == 200
+
+        # Now CCW nudge from positive position
+        resp_ccw = client.post("/api/motor/azimuth/nudge?direction=ccw&degrees=0.5")
+        assert resp_ccw.status_code == 200
+        data = resp_ccw.json()
+        assert data["status"] == "ok"
+        assert data["direction"] == "ccw"
+
+    def test_motor_nudge_azimuth_left_from_positive(self, client):
+        """Verifies azimuth left nudge works after pre-moving to positive position.
+
+        Business context:
+        Same as CCW — 'left' is an alias for CCW direction.
+
+        Assertion Strategy:
+        - Pre-move right returns 200.
+        - Left nudge returns 200 with correct direction.
+        """
+        # Move right first to create room
+        resp_right = client.post("/api/motor/azimuth/nudge?direction=right&degrees=1.0")
+        assert resp_right.status_code == 200
+
+        # Now left nudge from positive position
+        resp_left = client.post("/api/motor/azimuth/nudge?direction=left&degrees=0.5")
+        assert resp_left.status_code == 200
+        data = resp_left.json()
+        assert data["status"] == "ok"
+        assert data["direction"] == "left"
 
     @pytest.mark.parametrize(
         "axis,direction,speed",
@@ -1449,12 +1565,12 @@ class TestMotorAPIEndpoints:
     def test_generic_nudge_azimuth(self, client):
         """Verifies generic /api/motor/nudge route dispatches to azimuth."""
         response = client.post(
-            "/api/motor/nudge?axis=azimuth&direction=left&degrees=0.5"
+            "/api/motor/nudge?axis=azimuth&direction=right&degrees=0.5"
         )
         assert response.status_code == 200
         data = response.json()
         assert data["axis"] == "azimuth"
-        assert data["direction"] == "left"
+        assert data["direction"] == "right"
 
     def test_generic_start_altitude(self, client):
         """Verifies generic /api/motor/start route dispatches to altitude."""

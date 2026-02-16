@@ -46,16 +46,28 @@ __all__ = [
 ]
 
 # Default motor configuration matching real hardware
-DEFAULT_ALTITUDE_MAX_STEPS = 140000  # 0° (horizon)
-DEFAULT_ALTITUDE_MIN_STEPS = 0  # 90° (zenith)
-DEFAULT_AZIMUTH_MAX_STEPS = 110000
-DEFAULT_AZIMUTH_MIN_STEPS = -110000
-DEFAULT_ALTITUDE_STEPS_PER_DEGREE = DEFAULT_ALTITUDE_MAX_STEPS / 90.0  # ~1555
-DEFAULT_AZIMUTH_STEPS_PER_DEGREE = DEFAULT_AZIMUTH_MAX_STEPS / 135.0  # ~815
+# Steps-per-degree is a physical constant of the motor/gearing/microstep config.
+# Position 0 = zenith.  Positive → past zenith, Negative → toward horizon.
+DEFAULT_ALTITUDE_STEPS_PER_DEGREE = 140000 / 90.0  # ~1555.56 (hardware constant)
+DEFAULT_ALTITUDE_MAX_STEPS = int(
+    3 * DEFAULT_ALTITUDE_STEPS_PER_DEGREE
+)  # +3° past zenith
+DEFAULT_ALTITUDE_MIN_STEPS = int(
+    -60 * DEFAULT_ALTITUDE_STEPS_PER_DEGREE
+)  # -60° toward horizon
+DEFAULT_AZIMUTH_STEPS_PER_DEGREE = 110000 / 135.0  # ~814.81 (hardware constant)
+DEFAULT_AZIMUTH_MAX_STEPS = int(
+    190 * DEFAULT_AZIMUTH_STEPS_PER_DEGREE
+)  # +190° from home
+DEFAULT_AZIMUTH_MIN_STEPS = 0  # Home position
 
-# Timing simulation defaults
-DEFAULT_SLEW_SPEED_STEPS_PER_SEC = 5000  # Steps per second at 100% speed
-DEFAULT_ACCELERATION_TIME_SEC = 0.5  # Time to reach full speed
+# Timing simulation defaults — per-axis, matching burned-in stepper_amis settings
+# Altitude (Axis 0): 17HS24-2104S, 128 microsteps, 25600 μsteps/rev
+DEFAULT_ALTITUDE_SLEW_SPEED = 1200.0  # μsteps/sec (stepper_amis velocity)
+DEFAULT_ALTITUDE_ACCEL_TIME = 0.2  # seconds to reach velocity
+# Azimuth (Axis 1): 23HS41-1804S, 64 microsteps, 12800 μsteps/rev
+DEFAULT_AZIMUTH_SLEW_SPEED = 1100.0  # μsteps/sec (stepper_amis velocity)
+DEFAULT_AZIMUTH_ACCEL_TIME = 0.1  # seconds to reach velocity
 DEFAULT_SIMULATE_TIMING = True  # Whether to add realistic delays
 
 
@@ -64,16 +76,18 @@ class DigitalTwinMotorConfig:
     """Configuration for digital twin motor controller behavior.
 
     Attributes:
-        altitude_min_steps: Minimum allowed altitude position (zenith).
-        altitude_max_steps: Maximum allowed altitude position (horizon).
+        altitude_min_steps: Minimum allowed altitude position.
+        altitude_max_steps: Maximum allowed altitude position.
         azimuth_min_steps: Minimum allowed azimuth position (CCW limit).
         azimuth_max_steps: Maximum allowed azimuth position (CW limit).
         altitude_home_steps: Home position for altitude axis.
         azimuth_home_steps: Home position for azimuth axis.
         altitude_steps_per_degree: Steps per degree for altitude.
         azimuth_steps_per_degree: Steps per degree for azimuth.
-        slew_speed_steps_per_sec: Maximum slew speed at 100%.
-        acceleration_time_sec: Time to accelerate to full speed.
+        altitude_slew_speed: Altitude max velocity in μsteps/sec.
+        altitude_accel_time: Altitude acceleration ramp time in seconds.
+        azimuth_slew_speed: Azimuth max velocity in μsteps/sec.
+        azimuth_accel_time: Azimuth acceleration ramp time in seconds.
         simulate_timing: If True, add realistic movement delays.
         position_noise_steps: Random noise added to positions (0=none).
     """
@@ -92,9 +106,11 @@ class DigitalTwinMotorConfig:
     altitude_steps_per_degree: float = DEFAULT_ALTITUDE_STEPS_PER_DEGREE
     azimuth_steps_per_degree: float = DEFAULT_AZIMUTH_STEPS_PER_DEGREE
 
-    # Timing simulation
-    slew_speed_steps_per_sec: float = DEFAULT_SLEW_SPEED_STEPS_PER_SEC
-    acceleration_time_sec: float = DEFAULT_ACCELERATION_TIME_SEC
+    # Timing simulation — per-axis, matching stepper_amis hardware
+    altitude_slew_speed: float = DEFAULT_ALTITUDE_SLEW_SPEED
+    altitude_accel_time: float = DEFAULT_ALTITUDE_ACCEL_TIME
+    azimuth_slew_speed: float = DEFAULT_AZIMUTH_SLEW_SPEED
+    azimuth_accel_time: float = DEFAULT_AZIMUTH_ACCEL_TIME
     simulate_timing: bool = DEFAULT_SIMULATE_TIMING
 
     # Noise simulation (for testing error handling)
@@ -246,12 +262,14 @@ class DigitalTwinMotorInstance:
         else:
             return self._config.azimuth_home_steps
 
-    def _simulate_move_time(self, steps: int, speed: int) -> float:
+    def _simulate_move_time(self, motor: MotorType, steps: int, speed: int) -> float:
         """Calculate simulated move time based on distance and speed.
 
         Uses trapezoidal velocity profile with acceleration ramps.
+        Per-axis speed/accel matching real stepper_amis hardware.
 
         Args:
+            motor: Which motor axis (for per-axis speed/accel lookup).
             steps: Number of steps to move (absolute value used).
             speed: Speed percentage 1-100.
 
@@ -265,11 +283,18 @@ class DigitalTwinMotorInstance:
         if distance == 0:
             return 0.0
 
-        # Scale speed
-        effective_speed = self._config.slew_speed_steps_per_sec * (speed / 100.0)
+        # Per-axis speed and acceleration from config
+        if motor == MotorType.ALTITUDE:
+            max_speed = self._config.altitude_slew_speed
+            accel_time = self._config.altitude_accel_time
+        else:
+            max_speed = self._config.azimuth_slew_speed
+            accel_time = self._config.azimuth_accel_time
+
+        # Scale speed by percentage
+        effective_speed = max_speed * (speed / 100.0)
 
         # Simple model: acceleration + cruise + deceleration
-        accel_time = self._config.acceleration_time_sec
         accel_distance = effective_speed * accel_time / 2  # Distance during accel
 
         if distance < 2 * accel_distance:
@@ -330,7 +355,7 @@ class DigitalTwinMotorInstance:
             self._current_speeds[motor] = speed
 
         # Simulate move time (interruptible via _stop_event)
-        move_time = self._simulate_move_time(distance, speed)
+        move_time = self._simulate_move_time(motor, distance, speed)
         self._stop_event.clear()
         if move_time > 0:
             logger.debug(

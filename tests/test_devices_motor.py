@@ -68,7 +68,7 @@ class TestSetHome:
         Business context: User presses Set Home on dashboard. Both axes
         should read 0 afterward without any physical movement.
         """
-        await motor.move_to(MotorType.ALTITUDE, 70000)
+        await motor.move_to(MotorType.ALTITUDE, -50000)
         await motor.move_to(MotorType.AZIMUTH, 30000)
 
         await motor.set_home()
@@ -109,7 +109,7 @@ class TestZeroPosition:
     @pytest.mark.asyncio
     async def test_zero_altitude(self, motor: Motor) -> None:
         """zero_position zeros only the specified altitude axis."""
-        await motor.move_to(MotorType.ALTITUDE, 50000)
+        await motor.move_to(MotorType.ALTITUDE, -50000)
         await motor.move_to(MotorType.AZIMUTH, 30000)
 
         await motor.zero_position(MotorType.ALTITUDE)
@@ -120,12 +120,12 @@ class TestZeroPosition:
     @pytest.mark.asyncio
     async def test_zero_azimuth(self, motor: Motor) -> None:
         """zero_position zeros only the specified azimuth axis."""
-        await motor.move_to(MotorType.ALTITUDE, 50000)
+        await motor.move_to(MotorType.ALTITUDE, -50000)
         await motor.move_to(MotorType.AZIMUTH, 30000)
 
         await motor.zero_position(MotorType.AZIMUTH)
 
-        assert motor.get_status(MotorType.ALTITUDE).position_steps == 50000
+        assert motor.get_status(MotorType.ALTITUDE).position_steps == -50000
         assert motor.get_status(MotorType.AZIMUTH).position_steps == 0
 
     @pytest.mark.asyncio
