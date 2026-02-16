@@ -470,7 +470,9 @@ class ArduinoSensorInstance:
         lines_read = 0
         while not self._stop_reading and self._is_open:
             try:
-                raw_bytes = self._serial.read_until(b"\r\n")
+                # Use \n as terminator - Arduino Nano 33 BLE (ARM) sends \n only,
+                # unlike AVR Arduinos which send \r\n
+                raw_bytes = self._serial.read_until(b"\n")
                 line = raw_bytes.decode().strip()
                 lines_read += 1
                 if lines_read <= 5 or lines_read % 100 == 0:
@@ -1281,6 +1283,27 @@ class ArduinoSensorDriver:
                         description=port.description,
                     )
                 )
+
+        # Sort to prioritize specific Arduino devices over generic USB Serial
+        # Priority: "nano 33 ble" > "nano" > "arduino" > "ch340" > generic
+        def _device_priority(sensor: AvailableSensor) -> int:
+            desc = sensor["description"].lower()
+            if "nano 33 ble" in desc:
+                return 0
+            if "nano" in desc:
+                return 1
+            if "arduino" in desc:
+                return 2
+            if "ch340" in desc:
+                return 3
+            # Generic USB Serial or ACM-only match
+            return 4
+
+        sensors.sort(key=_device_priority)
+
+        # Reassign IDs after sorting so index 0 is best match
+        for idx, sensor in enumerate(sensors):
+            sensor["id"] = idx
 
         logger.debug("Found sensors", count=len(sensors))
         return sensors
