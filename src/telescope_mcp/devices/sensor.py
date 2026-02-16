@@ -431,6 +431,8 @@ class Sensor:
                 if match:
                     self._sample_rate_hz = float(match.group(1))
                     logger.debug("Parsed sample rate", rate=self._sample_rate_hz)
+                # Resume streaming after STATUS query (issue #8)
+                self._instance._send_command("START", wait_response=False)
             else:
                 self._sample_rate_hz = DEFAULT_SAMPLE_RATE_HZ
         except Exception as e:
