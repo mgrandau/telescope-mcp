@@ -331,6 +331,32 @@ The key insight: **YouTube/Twitch handle the hard part (CDN, scaling, chat, disc
 
 **The finder camera's all-sky FOV makes this nearly zero-effort — just point up and record.**
 
+### OpenClaw-Powered Telescope Bot
+
+**Concept:** Run the telescope as an OpenClaw bot — an always-on AI agent that operates the telescope autonomously, responds to commands via Discord/messaging, and proactively manages observing sessions.
+
+**How it would work:**
+- OpenClaw gateway running on the telescope controller (Pi or local machine)
+- telescope-mcp registered as an MCP tool available to the agent
+- The bot can be commanded via Discord: "Point at M42 and take a 30-second exposure" or "What's visible tonight from Verona?"
+- Proactive behavior via heartbeats/cron: check weather conditions, plan observing windows, alert when ISS passes overhead, auto-capture scheduled targets
+- Web dashboard still available for manual control alongside the AI
+
+**What makes this interesting:**
+- The telescope already has dual control paths (MCP + HTTP). OpenClaw is a third path — a persistent AI operator that uses MCP tools, not a one-shot conversation
+- Heartbeat-driven astronomy: the bot checks conditions, decides if it's a good night, and either starts an observing plan or stays idle
+- Discord integration means remote observers can request targets without SSH or local access
+- Session context: the bot remembers what it observed last night, tracks objects across sessions, builds an observing log over time
+- Could tie into the virtual star party idea — the bot announces "Going live on M31 in 10 minutes" in Discord, starts streaming, takes requests from chat
+
+**Challenges:**
+- Hardware safety: an autonomous agent moving motors needs hard limits and kill switches. Software limits aren't enough — the telescope can physically collide with the mount at extreme positions
+- Weather awareness: needs a way to detect rain/clouds and park the telescope. Manual for now; could add a weather sensor or API check
+- Error recovery: USB disconnects, camera timeouts, serial errors. The bot needs to handle hardware failures gracefully, not retry in a loop
+- Latency: OpenClaw → MCP tool calls add round-trip time. Fine for imaging, may be too slow for real-time tracking
+
+**This is the natural endpoint of the project — the telescope becomes an autonomous observing agent, not just a remote-controllable instrument.**
+
 ---
 
-*Last updated: 2026-02-15*
+*Last updated: 2026-03-04*
